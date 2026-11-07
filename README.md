@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.19.0-hfplus-alpha19` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.20.0-hfplus-alpha20` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha20 restricts SQL detection to the selected BW, removes the old closing-side 3 dB offset and adds short power averaging. An experimental one-shot measurement suggests a threshold for explicit user application. See [alpha20 validation](docs/validation/2026-11-07-alpha20.md) and [implementation provenance](docs/third-party-squelch.md); known-sample checks include 65 seconds without a false opening despite a persistent strong off-channel carrier. This is not a claim of completed on-site aviation acceptance.
 
 Alpha19 adds an optional mode station-memory switch (off freezes existing history), a raised panel arrow and a small frosted menu edge using pinned [BlurView](docs/third-party-blurview.md). See the [alpha19 record](docs/validation/2026-11-07-alpha19.md).
 
@@ -70,7 +72,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.19.0-hfplus-alpha19` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.20.0-hfplus-alpha20` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha20 将 SQL 判据限定到当前 BW，去掉关闭侧原有 3 dB 偏移，增加短时功率平均与实验性测量建议，由用户选择应用。详见 [alpha20 验证](docs/validation/2026-11-07-alpha20.md)和[来源记录](docs/third-party-squelch.md)。已知 IQ 样本在持续强带外载波下连续观察 65 秒没有误开启，不声称已完成用户现场航空验收。
 
 Alpha19 增加解调模式“电台记忆”开关，关闭时冻结既有记忆；上移面板箭头，使用固定版本 [BlurView](docs/third-party-blurview.md) 添加轻微磨砂菜单边缘。详见 [alpha19 记录](docs/validation/2026-11-07-alpha19.md)。
 

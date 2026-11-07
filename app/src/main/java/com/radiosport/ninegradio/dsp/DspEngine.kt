@@ -719,11 +719,9 @@ class DspEngine(private val device: IqSource) {
         val demodMode: String = "NFM",
         val squelchOpen: Boolean = false,
         val signalDb: Float = -120f,
-        /** Average power in a narrow window of FFT bins centred on the tuned
-         *  frequency (DC bin) — unlike [signalDb] (the wideband spectrum
-         *  peak, used for the live spectrum-display squelch), this reflects
-         *  only the channel currently tuned to and is what a channelized
-         *  scanner should gate on. See [FrequencyScanner] squelch fix notes. */
+        val channelPeakDb: Float = -200f,
+        val widebandPeakDb: Float = -200f,
+        /** Scanner's existing mean-bin power; listening signalDb is the BW-limited smoothed peak. */
         val narrowbandCenterDb: Float = -120f,
         val audioVolume: Float = 1f,
         val isRecordingIq: Boolean = false,
@@ -752,6 +750,9 @@ class DspEngine(private val device: IqSource) {
     private val audioQueueDrops = java.util.concurrent.atomic.AtomicLong()
     private var pcmPacketizer=com.radiosport.ninegradio.audio.PcmPacketizer(DEFAULT_AUDIO_SINK_RATE)
     private val listeningSquelch=ListeningSquelch()
+    private val channelSquelchMeter=ChannelSquelchMeter()
+    private val _squelchReading=MutableStateFlow(ChannelSquelchMeter.Reading())
+    val squelchReading: StateFlow<ChannelSquelchMeter.Reading> = _squelchReading.asStateFlow()
     @Volatile private var recordingSquelch=ListeningSquelch(false)
     private val recordingGateGeneration=java.util.concurrent.atomic.AtomicLong()
     @Volatile private var recordBySquelch=false
@@ -1667,45 +1668,22 @@ class DspEngine(private val device: IqSource) {
         }
 
         // ── FFT spectrum (rate-limited) ───────────────────────────────────────
-        // The FFT peak bin is also used as the squelch signal level (see below).
-        // We always run the FFT — even in frames that aren't emitted to the display —
-        // so that squelchSignalDb is updated every IQ block for responsive gating.
-        // The rate-limited path only controls when the result is published to the UI.
-        // fftSnapshot is FftEngine's internal `smoothed` buffer (no copy) — see
-        // FftEngine.processUint8 doc. Safe to read here (single DSP thread), but
-        // must be .copyOf()'d before handing off to the (rate-limited) flow emit
-        // below, since it will be mutated in place on the next IQ block.
+        // Reuse the displayed FFT reference; only new frames feed the BW-limited SQL meter.
         fftEngine.analysisIntervalSamples=(device.getSampleRate()/60).coerceAtLeast(1)
         val fftSnapshot = block.spectrum(fftEngine)
-        // Peak FFT bin in dBFS — computed inside FftEngine during the smoothing
-        // pass (fftEngine.lastPeakDb), avoiding a second O(n) maxOrNull() scan
-        // over the returned array on every IQ block.
-        // Used as signalDb for the squelch gate so the threshold the user drags on
-        // the spectrum display is in the same dBFS reference as the squelch decision.
-        val squelchSignalDb = fftEngine.lastPeakDb
+        val widebandPeakDb = fftEngine.lastPeakDb
+        val sqlConfiguration=ChannelSquelchMeter.Configuration(getDialFrequencyHz(),device.getCenterFrequency(),
+            demodMode,ChannelPassband.widthHz(demodMode,ifBandwidthHz,device.capabilities.maxChannelBandwidth(device.getSampleRate())),
+            device.getSampleRate(),fftEngine.decimationFactor,fftSnapshot.size)
+        val sqlReading=channelSquelchMeter.update(fftSnapshot,fftEngine.spectrumSequence,sqlConfiguration,System.nanoTime())
+        _squelchReading.value=sqlReading
+        val squelchSignalDb=if(sqlReading.valid) sqlReading.levelDb else -200f
         // Reuse the existing hysteresis/hold detector; capture raw IQ before any NB/DSP.
         recordingGateOpen=!recordBySquelch || recordingSquelch.update(squelchSignalDb,squelchLevel,block.sampleCount.toDouble()/device.getSampleRate())
         if(iqRecorder.isRecording && recordingGateOpen) iqRecorder.write(block)
 
         // ── Narrowband (channel-specific) signal level ──────────────────────
-        // fftEngine.lastPeakDb / squelchSignalDb above is the PEAK across the
-        // *entire* captured spectrum (e.g. a 2 MHz window) — correct for the
-        // live spectrum-display squelch (the user drags the SQL line against
-        // what they see across the whole waterfall). It is NOT correct for a
-        // channelized scanner: when FrequencyScanner retunes the device to a
-        // candidate channel, the tuned frequency sits at the FFT's centre
-        // (DC) bin, but any stronger signal *elsewhere* in the same capture
-        // window (an adjacent channel, a broadcast station, a birdie) would
-        // dominate squelchSignalDb regardless of whether the actual tuned
-        // channel has any traffic on it — so the scanner's squelch threshold
-        // had essentially no channel-specific effect (its "signal" reading
-        // barely varied between a dead channel and a busy one, since it
-        // wasn't measuring the tuned channel at all).
-        //
-        // Fix: average power over a small window of bins straddling the
-        // centre (DC) bin — sized to roughly one channel's worth of
-        // bandwidth (12.5 kHz) — and expose it separately as
-        // narrowbandCenterDb for channel-specific consumers like the scanner.
+        // Retain the scanner's existing 12.5 kHz mean-bin statistic separately from listening BW peak.
         val fftBinCount = fftSnapshot.size
         val hzPerBin = if (fftBinCount > 0)
             device.getSampleRate().toDouble() / fftEngine.decimationFactor / fftBinCount
@@ -1733,7 +1711,7 @@ class DspEngine(private val device: IqSource) {
             val snap = DebugBus.snapshot()[DebugBus.STAGE_FFT_ENGINE]
             if (snap.counter % 15L == 0L) {
                 val signalMin = fftSnapshot.minOrNull() ?: -200f
-                val signalMax = squelchSignalDb
+                val signalMax = widebandPeakDb
                 DebugBus.setDetail(DebugBus.STAGE_FFT_ENGINE,
                     "FFT size: ${fftEngine.fftSize}  " +
                     "peak: ${"%.1f".format(signalMax)} dBFS  " +
@@ -1875,8 +1853,8 @@ class DspEngine(private val device: IqSource) {
         }
 
         // ── Signal level → squelch gate ───────────────────────────────────────
-        // Keep the FFT peak as a diagnostic level. Listening is controlled only
-        // by the user's switch; scanner thresholds are evaluated by the scanner.
+        // Same dBFS bin reference as the trace, restricted to the selected BW.
+        // Decoder audio remains upstream of the listening gate; scanner has its own detector.
         val signalDb = squelchSignalDb
         squelchOpen = listeningEnabled && listeningSquelch.update(signalDb,squelchLevel,block.sampleCount.toDouble()/device.getSampleRate())
         DebugBus.tick(DebugBus.STAGE_DSP_PROCESS)
@@ -2178,6 +2156,8 @@ class DspEngine(private val device: IqSource) {
             demodMode = demodMode.displayName,
             squelchOpen = squelchOpen,
             signalDb = signalDb,
+            channelPeakDb = sqlReading.peakDb,
+            widebandPeakDb = widebandPeakDb,
             narrowbandCenterDb = narrowbandCenterDb,
             isRecordingIq = iqRecorder.isRecording,
             isRecordingAudio = audioEngine.isRecording,

@@ -47,6 +47,7 @@ class FftEngine(fftSize: Int = 2048) {
     }
 
     private var windowType = WindowType.BLACKMAN_HARRIS
+    @Synchronized fun analysisSettings() = Triple(windowType,frameAveragingCount,smoothingAlpha)
     private var window = buildWindow(fftSize, windowType)
     private var windowPower = window.sumOf { it * it.toDouble() }.toFloat()
     private var windowSum   = window.sumOf { it.toDouble() }.toFloat()
@@ -86,6 +87,8 @@ class FftEngine(fftSize: Int = 2048) {
     @Volatile var smoothingAlpha = 0.3f
 
     @Volatile var lastPeakDb: Float = -200f
+        private set
+    @Volatile var spectrumSequence: Long = 0
         private set
 
     // Peak hold
@@ -336,6 +339,7 @@ class FftEngine(fftSize: Int = 2048) {
             }
         }
         lastPeakDb = maxVal
+        spectrumSequence++
 
         // ── Per-bin noise floor estimation (minimum-statistics) ───────────────
         val riseRate = noiseFloorRiseRate

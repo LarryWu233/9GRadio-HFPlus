@@ -26,7 +26,7 @@ class PcmPacketizerTest {
         val gate=ListeningSquelch()
         assertTrue(gate.update(-50f,-60f,0.01))
         repeat(10) { assertTrue(gate.update(-80f,-60f,0.01)) }
-        assertTrue(gate.update(-61f,-60f,0.01))
+        assertTrue(gate.update(-59f,-60f,0.01)) // A return above the actual line resets hold.
         repeat(19) { assertTrue(gate.update(-80f,-60f,0.01)) }
         assertFalse(gate.update(-80f,-60f,0.02))
         assertTrue(gate.update(-200f,-120f,0.001))

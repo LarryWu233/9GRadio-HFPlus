@@ -8,11 +8,11 @@ class ListeningSquelch(initiallyOpen:Boolean=true) {
     private var gain=1f
     fun update(signalDb: Float, thresholdDb: Float, seconds: Double): Boolean {
         if(thresholdDb<=-120f) { open=true; belowSeconds=0.0 }
-        else if(signalDb>=thresholdDb) { open=true; belowSeconds=0.0 }
-        else if(open && signalDb<thresholdDb-3f) {
+        else if(!open && signalDb>=thresholdDb+1f) { open=true; belowSeconds=0.0 }
+        else if(open && signalDb<thresholdDb) {
             belowSeconds+=seconds
             if(belowSeconds>=0.2) open=false
-        } else if(signalDb>=thresholdDb-3f) belowSeconds=0.0
+        } else if(signalDb>=thresholdDb) belowSeconds=0.0
         return open
     }
     fun apply(interleaved: FloatArray,enabled: Boolean,rate: Int) {

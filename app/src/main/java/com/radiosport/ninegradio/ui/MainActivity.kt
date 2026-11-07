@@ -1187,6 +1187,16 @@ class MainActivity : RadioThemedActivity() {
             }
         }
 
+        val rfPage=pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)
+        rfPage?.findViewById<Button>(R.id.btnMeasureSquelch)?.let { measure ->
+            SquelchMeasurementControls(this,viewModel,measure,rfPage.findViewById(R.id.tvSqlChannelLevel)) { db ->
+                viewModel.setSquelch(db)
+                ctrlViews.sliderSquelch?.value=db
+                ctrlViews.tvSquelchValue?.text="${db.toInt()} dBFS"
+                binding.spectrumView.setSquelch(db)
+            }
+        }
+
         // Volume slider
         ctrlViews.sliderVolume!!.apply {
             valueFrom = 0f; valueTo = 2f; value = 1f
@@ -2746,38 +2756,14 @@ class MainActivity : RadioThemedActivity() {
      * observeViewModel() (mode / IF-bandwidth observers).
      */
     private fun channelHighlightHz(mode: DemodMode, ifBwHz: Int): Long {
-        val isNarrow = when (mode) {
-            DemodMode.AM, DemodMode.NFM,
-            DemodMode.USB, DemodMode.LSB,
-            DemodMode.CW, DemodMode.CWR,
-            DemodMode.DSB, DemodMode.APRS,
-            DemodMode.ACARS, DemodMode.FLEX -> true
+        val visible = when(mode) {
+            DemodMode.AM, DemodMode.NFM, DemodMode.USB, DemodMode.LSB,
+            DemodMode.CW, DemodMode.CWR, DemodMode.DSB, DemodMode.APRS,
+            DemodMode.ACARS, DemodMode.FLEX, DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO -> true
             else -> false
         }
-        if (!isNarrow) {
-            return when (mode) {
-                DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO ->
-                    // Use the actual WFM IF rate for the current device rate so the
-                    // spectrum highlight correctly spans the full WFM passband at every
-                    // sample rate (e.g. 240 kHz at 1.92 MS/s, capped at 250 kHz max).
-                    minOf((ifBwHz.takeIf { it > 0 } ?: 200_000).toLong(),viewModel.capabilities.value.maxChannelBandwidth(viewModel.sampleRate.value).toLong())
-                else -> 0L
-            }
-        }
-        // ifBwHz == 0 means "mode default" -- use defaultBwHz (actual channel passband width)
-        // NOT defaultIfRate() which is the DSP decimation rate and does not represent the
-        // visible filter width shown in the spectrum display. For example, NFM defaultBwHz=12500Hz
-        // (correct ±6.25kHz passband) vs defaultIfRate()=16000Hz (DSP intermediate rate).
-        val bw = if (ifBwHz > 0) ifBwHz else mode.defaultBwHz.coerceAtLeast(DspEngine.MIN_IF_BANDWIDTH_HZ)
-        // USB/LSB: SsbDemodulator always applies its own 3 kHz LPF internally, so the
-        // visible passband is always ≤ 3 kHz regardless of the IF decimation rate the
-        // slider may have set.  Cap the highlight to prevent the spectrum from ever
-        // showing a wider band (e.g. the old 12 kHz IF rate) than what the demodulator
-        // actually passes.
-        if (mode == DemodMode.USB || mode == DemodMode.LSB) {
-            return minOf(bw.toLong(), 3_000L)
-        }
-        return bw.toLong()
+        return if(visible) com.radiosport.ninegradio.dsp.ChannelPassband.widthHz(mode,ifBwHz,
+            viewModel.capabilities.value.maxChannelBandwidth(viewModel.sampleRate.value)).toLong() else 0L
     }
 
     /**
