@@ -66,9 +66,14 @@ class EtmController(private val activity: AppCompatActivity,
         fun action(label: String, block: () -> Unit) = (activity.layoutInflater.inflate(com.radiosport.ninegradio.R.layout.radio_compact_button,content,false) as Button)
             .apply { text=label; setOnClickListener { block() } }
         content.addView(LinearLayout(activity).apply {
-            addView(action("开始") { start() }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(action("停止") { stop() }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(action("清空") { if (task?.isActive != true) { stations.clear(); save(); render() } }, LinearLayout.LayoutParams(0, -2, 1f))
+            val actions=listOf(action("开始") { start() },action("停止") { stop() },
+                action("清空") { if(task?.isActive!=true) { stations.clear();save();render() } })
+            actions.forEachIndexed { index,button ->
+                addView(button,LinearLayout.LayoutParams(0,(48*resources.displayMetrics.density).toInt(),1f).apply {
+                    marginStart=if(index==0) 0 else pad/2
+                    marginEnd=if(index==actions.lastIndex) 0 else pad/2
+                })
+            }
         })
         content.addView(status)
         list=RadioDataTable(activity).apply {

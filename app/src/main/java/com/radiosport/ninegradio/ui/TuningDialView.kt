@@ -107,19 +107,14 @@ class TuningDialView @JvmOverloads constructor(
 
     // ── Paint ─────────────────────────────────────────────────────────────────
 
-    private val readoutPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface) }
-    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface)
+    // A single tonal channel defines the wheel; no outer card or boxed readout.
+    private val channelFill=Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface)
     }
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        shader = null  // set in onSizeChanged — vertical gradient for the "cylinder" body
-    }
-    private val trackRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = resources.displayMetrics.density
-        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioOutline)
+    private val channelOutline=Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style=Paint.Style.STROKE
+        strokeWidth=resources.displayMetrics.density
+        color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioOutline)
     }
     private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -152,9 +147,6 @@ class TuningDialView @JvmOverloads constructor(
         color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
         isFakeBoldText = true
     }
-    private val edgeFadePaint = Paint().apply {
-        style = Paint.Style.FILL
-    }
     private val centrePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 3f
@@ -177,8 +169,6 @@ class TuningDialView @JvmOverloads constructor(
     private var gestureAxis = 0
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val pointerPath = Path()
-    private val leftFadePaint = Paint()
-    private val rightFadePaint = Paint()
     private val labelCache = object : LinkedHashMap<Long, String>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>?) = size > 64
     }
@@ -240,12 +230,6 @@ class TuningDialView @JvmOverloads constructor(
     private var trackRadius=0f
     init {
         computeStep()
-        outlineProvider=object:android.view.ViewOutlineProvider() {
-            override fun getOutline(view:android.view.View,outline:android.graphics.Outline) {
-                outline.setRoundRect(0,0,view.width,view.height,resources.getDimension(com.radiosport.ninegradio.R.dimen.radio_corner_large))
-            }
-        }
-        clipToOutline=true
     }
 
     // ── Public helpers ────────────────────────────────────────────────────────
@@ -314,17 +298,6 @@ class TuningDialView @JvmOverloads constructor(
         // cylindrical "3D" highlight: bright band near the top-third (where
         // a light source would catch a horizontal cylinder), darker at the
         // extremes.
-        trackPaint.shader = LinearGradient(
-            0f, trackTop, 0f, trackBottom,
-            intArrayOf(
-                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),
-                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioCard),
-                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),
-                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface)
-            ),
-            floatArrayOf(0f, 0.32f, 0.7f, 1f),
-            Shader.TileMode.CLAMP
-        )
 
         // pxPerStep scales with width so the gesture feel is consistent
         // across phone/tablet sizes — roughly 1 step per 6% of view width.
@@ -335,34 +308,29 @@ class TuningDialView @JvmOverloads constructor(
         pointerPath.lineTo(cx - size * 0.6f, trackTop - size * 1.4f)
         pointerPath.lineTo(cx + size * 0.6f, trackTop - size * 1.4f)
         pointerPath.close()
-        leftFadePaint.shader = LinearGradient(trackLeft, 0f, trackLeft + trackW * 0.18f, 0f,
-            UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface), androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),0), Shader.TileMode.CLAMP)
-        rightFadePaint.shader = LinearGradient(trackRight - trackW * 0.18f, 0f, trackRight, 0f,
-            androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),0), UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface), Shader.TileMode.CLAMP)
+
     }
 
     // ── Draw ──────────────────────────────────────────────────────────────────
 
     override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat(); val h = height.toFloat()
-
-        // Background
-        canvas.drawRect(0f, 0f, w, h, bgPaint)
-
-        // Drum body
-        canvas.drawRoundRect(
-            trackLeft, trackTop, trackRight, trackBottom,
-            trackRadius, trackRadius, trackPaint
-        )
-        canvas.drawRoundRect(
-            trackLeft, trackTop, trackRight, trackBottom,
-            trackRadius, trackRadius, trackRimPaint
-        )
+        val h = height.toFloat()
+        canvas.drawRoundRect(trackLeft,trackTop,trackRight,trackBottom,trackRadius,trackRadius,channelFill)
+        canvas.drawRoundRect(trackLeft,trackTop,trackRight,trackBottom,trackRadius,trackRadius,channelOutline)
 
         // Clip tick rendering to the drum body so perspective-scaled ticks
         // never spill outside the rounded rect.
         canvas.save()
         canvas.clipPath(roundedTrack)
+        // Keep the readout legible without a separate plate inside the tonal channel.
+        val readout=if(showCurrentFrequency) frequencyText else choices.getOrNull(choiceIndex)?.label
+        val readoutHalf=if(readout!=null) {
+            labelPaint.textSize=13*resources.displayMetrics.scaledDensity
+            (labelPaint.measureText(readout)/2+12*resources.displayMetrics.density).coerceAtMost(trackW*0.43f)
+        } else 0f
+        val readoutTop=trackTop+trackH*0.22f
+        val readoutBottom=trackBottom-trackH*0.15f
+        if(readoutHalf>0) canvas.clipOutRect(cx-readoutHalf,readoutTop,cx+readoutHalf,readoutBottom)
 
         // Tick marks: an evenly-spaced horizontal scale, scrolled by
         // drumOffsetPx and rendered with a per-tick perspective transform so
@@ -438,21 +406,15 @@ class TuningDialView @JvmOverloads constructor(
         canvas.drawPath(pointerPath, pointerPaint)
 
         // Centre highlight line through the drum, marking the active frequency.
-        canvas.drawLine(cx, trackTop + 2f, cx, trackBottom - 2f, centrePaint)
-
-        // Left/right edge fade overlays — reinforce the "wrapping cylinder"
-        // illusion by darkening toward the extremes of the drum.
-        canvas.save(); canvas.clipPath(roundedTrack)
-        canvas.drawRect(trackLeft, trackTop, trackLeft + trackW * 0.18f, trackBottom, leftFadePaint)
-        canvas.drawRect(trackRight - trackW * 0.18f, trackTop, trackRight, trackBottom, rightFadePaint)
-        canvas.restore()
+        if(readoutHalf>0) {
+            canvas.drawLine(cx,trackTop+2f,cx,readoutTop,centrePaint)
+            canvas.drawLine(cx,readoutBottom,cx,trackBottom-2f,centrePaint)
+        } else canvas.drawLine(cx,trackTop+2f,cx,trackBottom-2f,centrePaint)
 
         if(choices.isNotEmpty()) {
             labelPaint.textSize=13*resources.displayMetrics.scaledDensity
             labelPaint.color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
             val selected=choices.getOrNull(choiceIndex)?.label.orEmpty()
-            val labelWidth=labelPaint.measureText(selected)
-            canvas.drawRoundRect(cx-labelWidth/2-8f,trackTop+trackH*0.22f,cx+labelWidth/2+8f,trackBottom-trackH*0.15f,8f,8f,readoutPaint)
             canvas.drawText(selected,cx,trackTop+trackH*0.7f,labelPaint)
         }
         if(showCurrentFrequency) {
@@ -462,8 +424,6 @@ class TuningDialView @JvmOverloads constructor(
             labelPaint.textSize=13*resources.displayMetrics.scaledDensity
             val length=labelPaint.measureText(frequencyText)
             if(length>trackW*0.76f) labelPaint.textSize*=trackW*0.76f/length
-            val labelWidth=labelPaint.measureText(frequencyText)
-            canvas.drawRoundRect(cx-labelWidth/2-12f,trackTop+trackH*0.22f,cx+labelWidth/2+12f,trackBottom-trackH*0.15f,8f,8f,readoutPaint)
             canvas.drawText(frequencyText,cx,trackTop+trackH*0.7f,labelPaint)
             labelPaint.typeface=face
         }

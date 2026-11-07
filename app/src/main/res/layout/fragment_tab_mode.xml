@@ -10,6 +10,6 @@
     <TextView android:layout_width="match_parent" android:layout_height="32dp" android:gravity="center_vertical" android:text="数字信号与数据" android:textSize="12sp" android:textColor="?attr/radioSecondary"/>
     <GridLayout android:id="@+id/chipGroupDigital" android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="3"/>
     <TextView android:layout_width="match_parent" android:layout_height="32dp" android:gravity="center_vertical" android:text="图像与节目表" android:textSize="12sp" android:textColor="?attr/radioSecondary"/>
-    <LinearLayout android:id="@+id/contentModeButtons" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    <GridLayout android:id="@+id/contentModeButtons" android:columnCount="3" android:layout_width="match_parent" android:layout_height="wrap_content"/>
   </LinearLayout>
 </ScrollView>

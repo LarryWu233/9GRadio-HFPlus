@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.23.0-hfplus-alpha23` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.24.0-hfplus-alpha24` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha24 refines Tune with a single tonal wheel channel and unboxed readouts, removes the rate-slider end arrows, separates ETM actions, and gives RF/digital/content choices one shared shape and 8 dp gaps. It retains all tuning and decoding behaviour. See [alpha24 validation](docs/validation/2026-11-08-alpha24.md).
 
 Alpha23 applies Material 3 principles to the existing **Kotlin/XML Views** stack, using the already-pinned Material Components 1.12.0. It adds shared dark colour/shape/spacing/type roles, MaterialSwitch, consistent sliders/buttons and Preference rows. Tune's rate control uses a Material Slider with a grip and an AndroidX spring return; release stops tuning immediately. Seven themes, fine/Step wheels and existing features remain. **No Compose migration.** See the [design system and stack audit](docs/ui/material3-views.md) and [alpha23 validation](docs/validation/2026-11-08-alpha23.md).
 
@@ -78,7 +80,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.23.0-hfplus-alpha23` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.24.0-hfplus-alpha24` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha24 将 Tune 精调与 Step 轮整理为单层色调刻度槽，读数不再单独套框；移除快调滑块两端箭头，拉开 ETM 操作按钮间距，并统一模拟／数字／内容选项的形状和 8 dp 间距。保留调谐、解码及既有内容。详见 [alpha24 验证](docs/validation/2026-11-08-alpha24.md)。
 
 Alpha23 在现有 **Kotlin/XML Views** 上采用 Material 3 原则，复用已固定的 Material Components 1.12.0：统一深色语义色、圆角、间距、排版、MaterialSwitch、滑条、按钮和 Preference 设置行。Tune 快速调频改为带握柄的 Material Slider，使用 AndroidX 弹簧回中；松手立即停止调频。保留七套主题、精调／Step 轮及现有功能，**没有迁移至 Compose**。详见[设计规范与技术栈检查](docs/ui/material3-views.md)和 [alpha23 验证](docs/validation/2026-11-08-alpha23.md)。
 

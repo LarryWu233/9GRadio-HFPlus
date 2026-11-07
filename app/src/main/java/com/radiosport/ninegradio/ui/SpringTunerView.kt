@@ -11,7 +11,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import androidx.core.content.ContextCompat
 import androidx.dynamicanimation.animation.FloatValueHolder
@@ -57,13 +56,7 @@ class SpringTunerView @JvmOverloads constructor(context:Context,attrs:AttributeS
             } }
         }
         addView(slider,LayoutParams(-1,dp(48),Gravity.CENTER_VERTICAL).apply { marginStart=dp(24);marginEnd=dp(24) })
-        for((label,side) in listOf("‹" to Gravity.START,"›" to Gravity.END)) {
-            addView(TextView(context).apply {
-                text=label;textSize=24f;gravity=Gravity.CENTER
-                setTextColor(UiThemes.color(context,R.attr.radioSecondary))
-                importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            },LayoutParams(dp(28),-1,side))
-        }
+
     }
     private fun begin() {
         if(active) return

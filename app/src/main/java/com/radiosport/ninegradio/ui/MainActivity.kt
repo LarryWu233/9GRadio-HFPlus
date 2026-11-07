@@ -1070,24 +1070,15 @@ class MainActivity : RadioThemedActivity() {
         groups.forEach { it.removeAllViews() }
         val analog=setOf(DemodMode.AM,DemodMode.NFM,DemodMode.WFM,DemodMode.WFM_STEREO,
             DemodMode.USB,DemodMode.LSB,DemodMode.CW,DemodMode.CWR,DemodMode.DSB)
-        val states=arrayOf(intArrayOf(-android.R.attr.state_enabled),intArrayOf(android.R.attr.state_selected),intArrayOf())
-        val density=resources.displayMetrics.density
         for (mode in modes) {
             val group=groups[if(mode in analog) 0 else 1]
             val cell=group.childCount
-            group.addView(com.google.android.material.button.MaterialButton(this).apply {
+            group.addView(ModeChoiceUi.button(this).apply {
             id=View.generateViewId()
             text = if(mode==DemodMode.WFM_STEREO) "WFM 立体声" else mode.displayName
             tag=mode; isCheckable=false; isSelected=mode==viewModel.demodMode.value
             isEnabled=viewModel.capabilities.value.supportsMode(mode)
-            isAllCaps=false; textSize=12f; setSingleLine(true); setHorizontallyScrolling(false)
-            setPadding((4*density).toInt(),0,(4*density).toInt(),0)
-            minWidth=0; minimumWidth=0; minHeight=0; minimumHeight=0
-            insetTop=0; insetBottom=0; cornerRadius=0; elevation=0f; stateListAnimator=null
-            backgroundTintList=android.content.res.ColorStateList(states,intArrayOf(UiThemes.color(this@MainActivity,R.attr.radioSurface),UiThemes.color(this@MainActivity,R.attr.radioSelected),UiThemes.color(this@MainActivity,R.attr.radioSurface)))
-            setTextColor(android.content.res.ColorStateList(states,intArrayOf(UiThemes.color(this@MainActivity,R.attr.radioMuted),UiThemes.color(this@MainActivity,R.attr.radioAccent),UiThemes.color(this@MainActivity,R.attr.radioText))))
-            strokeColor=android.content.res.ColorStateList.valueOf(UiThemes.color(this@MainActivity,R.attr.radioOutline)); strokeWidth=(density*0.5f).toInt().coerceAtLeast(1)
-            layoutParams=GridLayout.LayoutParams(GridLayout.spec(cell/3),GridLayout.spec(cell%3,1f)).apply { width=0; height=(44*density).toInt() }
+            layoutParams=ModeChoiceUi.cell(this@MainActivity,cell)
             setOnClickListener {
                 contentController?.explicitRfMode(mode)
                 val hasHistory=viewModel.rememberedModeFrequency(mode)!=null
@@ -1108,8 +1099,7 @@ class MainActivity : RadioThemedActivity() {
                 val cell=group.childCount
                 group.addView(View(this).apply {
                     importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    background=android.graphics.drawable.GradientDrawable().apply { setColor(UiThemes.color(this@MainActivity,R.attr.radioSurface)); setStroke((density*0.5f).toInt().coerceAtLeast(1),UiThemes.color(this@MainActivity,R.attr.radioOutline)) }
-                    layoutParams=GridLayout.LayoutParams(GridLayout.spec(cell/3),GridLayout.spec(cell%3,1f)).apply { width=0; height=(44*density).toInt() }
+                    layoutParams=ModeChoiceUi.cell(this@MainActivity,cell)
                 })
             }
         }

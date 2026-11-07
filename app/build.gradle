@@ -13,8 +13,8 @@ android {
         applicationId "com.radiosport.ninegradio.hfplus"
         minSdk 26
         targetSdk 35
-        versionCode 24
-        versionName "0.23.0-hfplus-alpha23"
+        versionCode 25
+        versionName "0.24.0-hfplus-alpha24"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {

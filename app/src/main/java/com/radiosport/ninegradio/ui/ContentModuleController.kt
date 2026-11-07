@@ -70,8 +70,14 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val eibiRoot=pager.getViewAt(18) as FrameLayout
         eibi=EibiPanel().also { eibiRoot.addView(it.root); it.load() }
         val modeRoot=pager.getViewAt(ControlsPagerAdapter.TAB_MODE)
-        val host=modeRoot?.findViewById<LinearLayout>(R.id.contentModeButtons)
-        host?.addView(row(button("SSTV") { select(16) },button("SAT") { select(17) },button("EiBi") { select(18) }))
+        val host=modeRoot?.findViewById<GridLayout>(R.id.contentModeButtons)
+        host?.removeAllViews()
+        listOf(16 to "SSTV",17 to "SAT",18 to "EiBi").forEachIndexed { cell,(module,label) ->
+            host?.addView(ModeChoiceUi.button(activity).apply {
+                text=label;tag=module;layoutParams=ModeChoiceUi.cell(activity,cell)
+                setOnClickListener { select(module) }
+            })
+        }
         bindService(); refreshVisibility(); modeChanged(viewModel.demodMode.value)
     }
     private fun id(kind: AudioContentKind)=15+kind.ordinal
@@ -84,6 +90,9 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         } }
     }
     private fun refreshVisibility() {
+        pager.getViewAt(ControlsPagerAdapter.TAB_MODE)?.findViewById<GridLayout>(R.id.contentModeButtons)?.let { host ->
+            for(i in 0 until host.childCount) host.getChildAt(i).isSelected=host.getChildAt(i).tag==selected
+        }
         val current=getService()?.audioContent?.state?.value
         for(i in 15..18) visibility(i,ModulePreferences(activity).visible(i) &&
             (selected==i || (i==15 && viewModel.demodMode.value in listOf(DemodMode.CW,DemodMode.CWR)) ||
