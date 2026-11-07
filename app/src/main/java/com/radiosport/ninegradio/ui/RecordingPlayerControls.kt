@@ -22,8 +22,7 @@ import kotlinx.coroutines.*
 import java.io.File
 
 @androidx.media3.common.util.UnstableApi
-class RecordingPlayerControls(private val activity:ComponentActivity,private val host:FrameLayout,
-    private val expand:(()->Unit)?=null):DefaultLifecycleObserver {
+class RecordingPlayerControls(private val activity:ComponentActivity,private val host:FrameLayout):DefaultLifecycleObserver {
     private var future:ListenableFuture<MediaController>?=null
     var controller:MediaController?=null
         private set
@@ -39,13 +38,14 @@ class RecordingPlayerControls(private val activity:ComponentActivity,private val
     }
     private fun text(size:Float)=TextView(activity).apply { textSize=size;setTextColor(UiThemes.color(activity,R.attr.radioText));gravity=Gravity.CENTER_VERTICAL }
     private val title=text(12f).apply { text="录音播放器";maxLines=1;ellipsize=TextUtils.TruncateAt.MIDDLE }
-    private val expandButton=Button(activity).apply { id=R.id.recordingPlaybackExpand;text="展开";textSize=12f;isAllCaps=false;setTextColor(UiThemes.color(activity,R.attr.radioAccent));background=null;contentDescription="展开录音页" }
     val progress=Slider(activity).apply { id=R.id.recordingPlaybackProgress;valueFrom=0f;valueTo=1f;contentDescription="播放进度" }
     private val time=text(11f).apply { typeface=android.graphics.Typeface.MONOSPACE;text="00:00 / 00:00";setTextColor(UiThemes.color(activity,R.attr.radioSecondary)) }
     private fun icon(resource:Int,description:String,idValue:Int)=ImageButton(activity).apply {
         id=idValue;setImageResource(resource);contentDescription=description
         setColorFilter(UiThemes.color(activity,R.attr.radioAccent));setPadding(dp(10),dp(10),dp(10),dp(10))
-        background=GradientDrawable().apply { cornerRadius=dp(14).toFloat();setColor(UiThemes.color(activity,R.attr.radioSelected)) }
+        val ripple=android.util.TypedValue()
+        activity.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless,ripple,true)
+        setBackgroundResource(ripple.resourceId)
     }
     private val backward=icon(android.R.drawable.ic_media_rew,"后退 10 秒；长按连续快退",R.id.recordingPlaybackBack)
     private val play=icon(android.R.drawable.ic_media_play,"播放",R.id.recordingPlaybackPlay)
@@ -54,8 +54,7 @@ class RecordingPlayerControls(private val activity:ComponentActivity,private val
     init {
         activity.lifecycle.addObserver(this);host.addView(root,FrameLayout.LayoutParams(-1,-2))
         val heading=LinearLayout(activity).apply { gravity=Gravity.CENTER_VERTICAL }
-        heading.addView(title,LinearLayout.LayoutParams(0,dp(32),1f));heading.addView(expandButton,LinearLayout.LayoutParams(dp(64),dp(32)));root.addView(heading)
-        expandButton.visibility=if(expand==null) View.GONE else View.VISIBLE;expandButton.setOnClickListener { expand?.invoke() }
+        heading.addView(title,LinearLayout.LayoutParams(-1,dp(32)));root.addView(heading)
         root.addView(progress,LinearLayout.LayoutParams(-1,dp(36)))
         val bar=LinearLayout(activity).apply { gravity=Gravity.CENTER_VERTICAL }
         bar.addView(time,LinearLayout.LayoutParams(0,dp(44),1f))
@@ -80,7 +79,6 @@ class RecordingPlayerControls(private val activity:ComponentActivity,private val
         } }
         render()
     }
-    fun setExpanded(value:Boolean) { expandButton.text=if(value) "还原" else "展开" }
     private fun connect() {
         if(future!=null) return
         val requested=MediaController.Builder(activity,SessionToken(activity,ComponentName(activity,RecordingPlaybackService::class.java))).buildAsync()

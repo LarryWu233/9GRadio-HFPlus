@@ -1402,7 +1402,11 @@ class MainActivity : RadioThemedActivity() {
         }
 
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById<android.widget.FrameLayout>(R.id.recordingPlayerHost)?.let { host ->
-            recordingPlayer=RecordingPlayerControls(this,host) { setPanelFullscreen(!panelFullscreen) }
+            recordingPlayer=RecordingPlayerControls(this,host)
+            pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById<Button>(R.id.recordingPlaybackExpand)?.apply {
+                text=if(panelFullscreen) "还原" else "展开"
+                setOnClickListener { setPanelFullscreen(!panelFullscreen) }
+            }
         }
         // IQ Record button
         ctrlViews.btnRecordIq!!.setOnClickListener {
@@ -2559,7 +2563,10 @@ class MainActivity : RadioThemedActivity() {
 
     private fun setPanelFullscreen(full: Boolean) {
         panelFullscreen=full
-        recordingPlayer?.setExpanded(full)
+        findViewById<Button>(R.id.recordingPlaybackExpand)?.apply {
+            text=if(full) "还原" else "展开"
+            contentDescription=if(full) "还原录音页" else "展开录音页"
+        }
         positionControlsPanel?.invoke()
         BottomSheetBehavior.from(binding.controlsBottomSheet).state=BottomSheetBehavior.STATE_EXPANDED
         binding.controlsScrollView.scrollTo(0,0)

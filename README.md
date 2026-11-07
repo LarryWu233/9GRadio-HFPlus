@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.21.0-hfplus-alpha21` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.22.0-hfplus-alpha22` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha22 moves the recording-page expand/restore action to the right of its section heading and removes the coloured backgrounds around the playback controls. See [alpha22 validation](docs/validation/2026-11-08-alpha22.md).
 
 Alpha21 adds a full frosted menu backdrop, an integrated arrow/header, rounded tuning wheels/dialogs and a hidden body when collapsed. Recording rows show duration. Audio recording now offers M4A/AAC, device-supported OGG/Opus and 16/24-bit PCM or 32-bit float WAV. The Media3 in-panel audio player supports pause, seek, long-press forward/back and expansion below the frequency display; IQ retains its existing replay. See [alpha21 validation](docs/validation/2026-11-08-alpha21.md) and [recording/playback provenance](docs/third-party-recording-playback.md).
 
@@ -74,7 +76,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.21.0-hfplus-alpha21` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.22.0-hfplus-alpha22` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha22 将录音页的展开／还原移到“录制”标题行右侧，取消播放控制图标的彩色底框。详见 [alpha22 验证](docs/validation/2026-11-08-alpha22.md)。
 
 Alpha21 将磨砂扩展到整个控制菜单，箭头合入顶栏，调谐轮／弹窗圆角化，收起时隐藏正文。录音列表显示时长；声音录制可选 M4A/AAC、设备支持的 OGG/Opus，以及 16／24-bit PCM、32-bit float WAV。基于 Media3 的页内播放器支持暂停、进度拖动、长按快进／快退及展开到主频率下方；IQ 保留原回放。详见 [alpha21 验证](docs/validation/2026-11-08-alpha21.md)和[录制／播放来源](docs/third-party-recording-playback.md)。
 
