@@ -79,11 +79,13 @@
     </com.google.android.material.appbar.AppBarLayout>
 
     <!-- Main content: fills space above the bottom sheet peek -->
+    <eightbitlab.com.blurview.BlurTarget android:id="@+id/panelBlurTarget"
+        android:layout_width="match_parent" android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+        android:orientation="vertical">
 
         <!-- Status bar: Demod, Rate, Signal -->
         <LinearLayout
@@ -203,6 +205,8 @@
 
     </LinearLayout>
 
+    </eightbitlab.com.blurview.BlurTarget>
+
     <!-- Controls Bottom Sheet
          The direct child is a plain LinearLayout (not NestedScrollView) so the
          drag handle and TabLayout sit OUTSIDE the scrollable region and therefore
@@ -216,23 +220,30 @@
          peekHeight = drag handle (12dp total) + TabLayout (44dp) + nav-bar inset.
          This is identical to before — the tab bar is always the topmost visible
          element when the sheet is collapsed. -->
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/controlsBottomSheet"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:background="?attr/radioSurface"
+        android:background="@drawable/control_panel_surface"
         android:elevation="8dp"
         app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior"
         app:behavior_peekHeight="100dp"
         app:behavior_hideable="false">
+
+        <!-- Only the edge is translucent; controls are drawn sharply above it. -->
+        <eightbitlab.com.blurview.BlurView android:id="@+id/panelEdgeBlur"
+            android:layout_width="match_parent" android:layout_height="44dp"
+            android:importantForAccessibility="no" android:clickable="false"/>
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+            android:orientation="vertical">
 
         <!-- Tab bar — always visible, never scrolls away -->
         <com.google.android.material.tabs.TabLayout
             android:id="@+id/controlTabLayout"
             android:layout_width="match_parent"
             android:layout_height="44dp"
-            android:background="?attr/radioMain"
+            android:background="@android:color/transparent"
             app:tabMode="scrollable"
             app:tabGravity="center"
             app:tabMinWidth="48dp"
@@ -249,6 +260,7 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
+            android:background="?attr/radioSurface"
             android:clipToPadding="false">
 
             <LinearLayout
@@ -275,13 +287,17 @@
             </LinearLayout>
         </androidx.core.widget.NestedScrollView>
 
-    </LinearLayout>
+        </LinearLayout>
+        <View android:layout_width="match_parent" android:layout_height="12dp"
+            android:background="@drawable/control_panel_edge" android:importantForAccessibility="no"
+            android:clickable="false" android:focusable="false"/>
+    </FrameLayout>
 
     <com.radiosport.ninegradio.ui.PanelToggleView android:id="@+id/sheetToggle"
         android:layout_width="48dp" android:layout_height="32dp"
         android:contentDescription="控制面板" android:clickable="true" android:focusable="true"
         android:elevation="12dp" android:background="@android:color/transparent"
-        android:translationY="4dp"
+        android:translationY="-2dp"
         app:layout_anchor="@id/controlsBottomSheet" app:layout_anchorGravity="top|center_horizontal"
         android:layout_gravity="center"/>
 

@@ -111,13 +111,19 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         }
         refreshVisibility(); showModule(module); resize()
     }
-    private fun prepareRf(kind: AudioContentKind) {
+    private fun prepareRf(kind: AudioContentKind, explicitFrequency: Long?=null) {
         if(kind==AudioContentKind.CW) return
         val key="${kind}_frequency"
-        val hz=prefs.getLong(key,if(kind==AudioContentKind.SAT) 145_800_000 else 14_230_000)
+        val hz=explicitFrequency ?: if(viewModel.modeStationMemory.value)
+            prefs.getLong(key,if(kind==AudioContentKind.SAT) 145_800_000 else 14_230_000)
+            else viewModel.centerFreqHz.value
         restoring=true
         try {
-            if(viewModel.setFrequency(hz)) viewModel.finishTuning()
+            if(viewModel.setFrequency(hz)) {
+                viewModel.finishTuning()
+                if(explicitFrequency!=null && viewModel.modeStationMemory.value)
+                    prefs.edit().putLong(key,hz).apply()
+            }
             viewModel.setDemodMode(if(kind==AudioContentKind.SAT) DemodMode.NFM else DemodMode.USB,automatic=true)
             viewModel.setIfBandwidth(if(kind==AudioContentKind.SAT) 50_000 else 3_000)
         } finally { restoring=false }
@@ -125,9 +131,25 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     fun frequencyChanged(hz: Long) {
         val kind=when(selected) { 16 -> AudioContentKind.SSTV; 17 -> AudioContentKind.SAT; else -> null }
         frequencySaveJob?.cancel()
-        if(!restoring && kind!=null && panels[kind]?.microphone?.isChecked==false && viewModel.capabilities.value.supportsFrequency(hz))
-            frequencySaveJob=activity.lifecycleScope.launch { delay(400); prefs.edit().putLong("${kind}_frequency",hz).apply() }
+        if(!restoring && viewModel.modeStationMemory.value && kind!=null && panels[kind]?.microphone?.isChecked==false && viewModel.capabilities.value.supportsFrequency(hz))
+            frequencySaveJob=activity.lifecycleScope.launch {
+                delay(400)
+                if(viewModel.modeStationMemory.value) prefs.edit().putLong("${kind}_frequency",hz).apply()
+            }
         eibi?.frequencyChanged(hz)
+    }
+
+    fun freezeStationMemory() {
+        frequencySaveJob?.cancel()
+        val kind=when(selected) { 16 -> AudioContentKind.SSTV; 17 -> AudioContentKind.SAT; else -> null }
+        if(viewModel.modeStationMemory.value && kind!=null && panels[kind]?.microphone?.isChecked==false &&
+            viewModel.capabilities.value.supportsFrequency(viewModel.centerFreqHz.value))
+            prefs.edit().putLong("${kind}_frequency",viewModel.centerFreqHz.value).apply()
+    }
+
+    fun stationMemoryChanged(enabled: Boolean) {
+        val kind=when(selected) { 16 -> AudioContentKind.SSTV; 17 -> AudioContentKind.SAT; else -> null }
+        if(enabled && kind!=null && panels[kind]?.microphone?.isChecked==false) prepareRf(kind)
     }
     fun onBackground() { getService()?.audioContent?.stopMicrophone() }
     fun microphoneResult(granted: Boolean) {
@@ -244,12 +266,12 @@ class ContentModuleController(private val activity: MainActivity, private val pa
                 .setItems(arrayOf("ISS SSTV · 145.800 MHz FM","ARISS 活动安排")) { _,index ->
                     if(index==1) activity.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.ariss.org/upcoming-sstv-events.html")))
                     else { apt=false; mode="Auto"; updateOption()
-                        if(!microphone.isChecked) { prefs.edit().putLong("SAT_frequency",145_800_000).apply(); prepareRf(kind) }
+                        if(!microphone.isChecked) prepareRf(kind,145_800_000)
                         status.text="ISS SSTV · 按活动安排播出"
                     }
                 }.setNegativeButton("取消",null).show()
             else AlertDialog.Builder(activity).setTitle("SSTV 接收频率").setItems(arrayOf("14.230 MHz USB","当前频率")) { _,index ->
-                if(index==0 && !microphone.isChecked) { prefs.edit().putLong("SSTV_frequency",14_230_000).apply(); prepareRf(kind) }
+                if(index==0 && !microphone.isChecked) prepareRf(kind,14_230_000)
             }.setNegativeButton("取消",null).show()
         }
     }

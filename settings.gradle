@@ -1,2 +1,4 @@
 rootProject.name = "9GRadio"
 include ':app'
+include ':blurview'
+project(':blurview').projectDir = file('third_party/blurview')

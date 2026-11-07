@@ -50,6 +50,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putFloat("nrStrength", strength).apply()
     }
     private val _autoDemod = MutableStateFlow(prefs.getBoolean("autoDemod", false))
+    private val _modeStationMemory = MutableStateFlow(prefs.getBoolean("modeStationMemory", true))
+    val modeStationMemory = _modeStationMemory.asStateFlow()
+
+    fun setModeStationMemory(enabled: Boolean) {
+        if (_modeStationMemory.value == enabled) return
+        saveJob?.cancel()
+        // Flush the last enabled-session frequency before freezing the store.
+        if (!enabled) saveDeviceSettings()
+        _modeStationMemory.value = enabled
+        prefs.edit().putBoolean("modeStationMemory", enabled).apply()
+        // Restore before any delayed/device save can copy the disabled-session dial.
+        if (enabled && restoreModeStation(_demodMode.value)) saveDeviceSettings()
+    }
+
+    private fun restoreModeStation(mode: DemodMode): Boolean {
+        if (!prefs.contains(modeKey(mode, "freq"))) return false
+        val remembered = prefs.getLong(modeKey(mode, "freq"), _centerFreqHz.value)
+        if (_capabilities.value.supportsFrequency(remembered)) {
+            _centerFreqHz.value = remembered
+            sdrService?.setFrequency(remembered, immediate = true)
+            return true
+        } else _messages.tryEmit("该模式的历史频率不适用于当前设备")
+        return false
+    }
     private val _listeningAudio=MutableStateFlow(com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings(
         leveling=prefs.getBoolean("audioLeveling",false),limitDb=prefs.getFloat("audioLevelLimit",12f),
         notch=prefs.getBoolean("audioNotch",false),notchSpeed=prefs.getFloat("audioNotchSpeed",0.005f)))
@@ -82,7 +106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun saveDeviceSettings() {
         val key = "device_${profileId}_"
         val editor=prefs.edit()
-        if(_capabilities.value.supportsFrequency(_centerFreqHz.value))
+        if(_modeStationMemory.value && _capabilities.value.supportsFrequency(_centerFreqHz.value))
             editor.putLong(modeKey(_demodMode.value,"freq"),_centerFreqHz.value)
         editor.putString("activeDevice", profileId)
             .putLong(key + "freq", _centerFreqHz.value).putString(key + "mode", _demodMode.value.name)
@@ -535,7 +559,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun saveSettingsForMode(mode: DemodMode,frequencyHz: Long=_centerFreqHz.value) {
         val dp = displayPrefs()
         val editor=prefs.edit()
-        if(_capabilities.value.supportsFrequency(frequencyHz)) editor.putLong(modeKey(mode,"freq"),frequencyHz)
+        if(_modeStationMemory.value && _capabilities.value.supportsFrequency(frequencyHz)) editor.putLong(modeKey(mode,"freq"),frequencyHz)
         editor
             .putInt    (modeKey(mode, "gain"),          _gainIndex.value)
             .putInt    (modeKey(mode, "gainMode"),      _gainMode.value)
@@ -780,13 +804,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else if(previousMode==DemodMode.ADSB) restoreRfAfterAdsb(mode)
         // Manual type selection restores this device's last valid frequency.
         // Automatic mode selection follows the dial and must never retune it.
-        if(!automatic && prefs.contains(modeKey(mode,"freq"))) {
-            val remembered=prefs.getLong(modeKey(mode,"freq"),_centerFreqHz.value)
-            if(_capabilities.value.supportsFrequency(remembered)) {
-                _centerFreqHz.value=remembered
-                sdrService?.setFrequency(remembered)
-            } else _messages.tryEmit("该模式的历史频率不适用于当前设备")
-        }
+        if(!automatic && _modeStationMemory.value) restoreModeStation(mode)
         val width = validWidth(mode, prefs.getInt(modeKey(mode, "ifBandwidth"), 0))
         _ifBandwidthHz.value = width
         val requiredRate = if (mode == DemodMode.ADSB) com.radiosport.ninegradio.dsp.ReadsbReceiver.SAMPLE_RATE else kotlin.math.ceil(mode.defaultBwHz / 0.86).toInt()

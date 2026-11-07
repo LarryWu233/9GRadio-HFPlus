@@ -1,0 +1,9 @@
+{
+  "project": "Dimezis/BlurView",
+  "version": "3.2.0",
+  "commit": "e81564e1338d962b7050336c56917cff26e96c3c",
+  "url": "https://github.com/Dimezis/BlurView",
+  "license": "Apache-2.0",
+  "source_changes": ["AndroidManifest package attribute removed; namespace is supplied by local AGP build configuration. Java and resource sources unmodified."],
+  "integration": "Unmodified library/src/main; local Android library build configuration targets SDK 35."
+}

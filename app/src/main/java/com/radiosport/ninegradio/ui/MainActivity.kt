@@ -1053,6 +1053,19 @@ class MainActivity : RadioThemedActivity() {
             DemodMode.DMR, DemodMode.YSF, DemodMode.DSTAR, DemodMode.DIG)
         val groups=modeChipGroups()
         if(groups.size!=2) return
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_MODE)
+            ?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchModeStationMemory)?.apply {
+                setOnCheckedChangeListener(null)
+                isChecked = viewModel.modeStationMemory.value
+                setOnCheckedChangeListener { _, enabled ->
+                    if (enabled == viewModel.modeStationMemory.value) return@setOnCheckedChangeListener
+                    regionalReception.cancelPendingAutoTune()
+                    contentController?.freezeStationMemory()
+                    viewModel.setModeStationMemory(enabled)
+                    contentController?.stationMemoryChanged(enabled)
+                    syncFrequencyDisplay()
+                }
+            }
         groups.forEach { it.removeAllViews() }
         val analog=setOf(DemodMode.AM,DemodMode.NFM,DemodMode.WFM,DemodMode.WFM_STEREO,
             DemodMode.USB,DemodMode.LSB,DemodMode.CW,DemodMode.CWR,DemodMode.DSB)
@@ -1080,10 +1093,10 @@ class MainActivity : RadioThemedActivity() {
                 viewModel.setDemodMode(mode)
                 selectDemodChip(viewModel.demodMode.value)
                 if (mode == DemodMode.ADSB) {
-                    viewModel.setFrequency(1_090_000_000)
+                    if(viewModel.modeStationMemory.value && !hasHistory) viewModel.setFrequency(1_090_000_000)
                     updateAdsbTabVisibility(mode)
                 }
-                if(hasHistory) regionalReception.cancelPendingAutoTune()
+                if(hasHistory || !viewModel.modeStationMemory.value) regionalReception.cancelPendingAutoTune()
                 else regionalReception.onModeSelected(mode,viewModel.centerFreqHz.value)
                 syncFrequencyDisplay()
             }
@@ -2390,6 +2403,11 @@ class MainActivity : RadioThemedActivity() {
         lifecycleScope.launch { viewModel.autoDemod.collect { enabled ->
             pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchAutoDemod)?.isChecked = enabled
         } }
+        lifecycleScope.launch { viewModel.modeStationMemory.collect { enabled ->
+            pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_MODE)
+                ?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchModeStationMemory)
+                ?.isChecked = enabled
+        } }
         // Sync dial with current frequency and mode
         dial.compact = true
         dial.showLabels = false
@@ -2530,6 +2548,11 @@ class MainActivity : RadioThemedActivity() {
         for(id in listOf(R.id.btnAdsbPanelFull,R.id.btnAprsPanelFull)) findViewById<Button>(id)?.text=if(full) "还原" else "展开"
     }
     private fun setupBottomSheet() {
+        binding.controlsBottomSheet.clipToOutline = true
+        binding.panelEdgeBlur.setupWith(binding.panelBlurTarget)
+            .setFrameClearDrawable(android.graphics.drawable.ColorDrawable(UiThemes.color(this,R.attr.radioMain)))
+            .setBlurRadius(12f)
+            .setOverlayColor(androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(this,R.attr.radioSurface),208))
         binding.btnToolbarSettings.setOnClickListener {
             bookmarkLauncher.launch(Intent(this,SettingsActivity::class.java))
         }

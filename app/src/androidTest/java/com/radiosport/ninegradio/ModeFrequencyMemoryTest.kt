@@ -23,7 +23,7 @@ class ModeFrequencyMemoryTest {
             val prefs=context.getSharedPreferences("rtlsdr_prefs",Context.MODE_PRIVATE)
             prefs.edit().putString("activeDevice","airspyhf").putString("demod","AM")
                 .putString("device_airspyhf_mode","AM").putLong("device_airspyhf_freq",10000000)
-                .putBoolean("autoDemod",false).putLong("freq",10000000)
+                .putBoolean("autoDemod",false).putBoolean("modeStationMemory",true).putLong("freq",10000000)
                 .putLong("device_airspyhf_mode_APRS_freq",145825000)
                 .putLong("device_airspyhf_mode_WFM_freq",87800000)
                 .remove("device_airspyhf_mode_CW_freq").commit()

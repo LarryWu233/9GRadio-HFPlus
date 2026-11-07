@@ -116,10 +116,15 @@ class Alpha17InteractionTest {
     }
     @Test fun inlineMapPanAndPinchDoNotScrollThePanel() {
         ReceiverTestPreferences(context).use {
+            context.getSharedPreferences("rtlsdr_prefs",android.content.Context.MODE_PRIVATE).edit()
+                .putString("activeDevice","rtl").putBoolean("receiverEnabled",false).commit()
             ActivityScenario.launch(MainActivity::class.java).use { main ->
                 Thread.sleep(3000)
                 main.onActivity { a ->
-                    ViewModelProvider(a)[MainViewModel::class.java].apply { setReceiverEnabled(false); setAutoDemod(false); setDemodMode(DemodMode.ADSB) }
+                    ViewModelProvider(a)[MainViewModel::class.java].apply {
+                        setReceiverEnabled(false); setAutoDemod(false); setDemodMode(DemodMode.ADSB)
+                        assertEquals("Map check needs an ADS-B-capable source profile",DemodMode.ADSB,demodMode.value)
+                    }
                 }
                 Thread.sleep(800)
                 main.onActivity { a ->
@@ -139,7 +144,7 @@ class Alpha17InteractionTest {
                         return null
                     }
                     mapView=find(panel)!!
-                    mapView.getGlobalVisibleRect(area)
+                    assertTrue("Map must be visible before injecting gestures",mapView.getGlobalVisibleRect(area))
                     assertTrue(area.height()>300)
                     before=panel.nativeMap!!.cameraPosition
                     scrollY=a.findViewById<androidx.core.widget.NestedScrollView>(R.id.controlsScrollView).scrollY

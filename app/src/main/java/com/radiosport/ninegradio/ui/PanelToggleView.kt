@@ -10,7 +10,7 @@ import android.view.View
 /** A shallow, round-ended chevron; no full-width handle background. */
 class PanelToggleView @JvmOverloads constructor(context: Context, attrs: AttributeSet?=null) : View(context,attrs) {
     private val stroke=Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color=0xffa3becf.toInt(); style=Paint.Style.STROKE; strokeWidth=2.8f*resources.displayMetrics.density
+        color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSecondary); style=Paint.Style.STROKE; strokeWidth=2.8f*resources.displayMetrics.density
         strokeCap=Paint.Cap.ROUND; strokeJoin=Paint.Join.ROUND
     }
     private val line=Path()

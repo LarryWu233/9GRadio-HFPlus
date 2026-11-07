@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.18.0-hfplus-alpha18` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.19.0-hfplus-alpha19` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha19 adds an optional mode station-memory switch (off freezes existing history), a raised panel arrow and a small frosted menu edge using pinned [BlurView](docs/third-party-blurview.md). See the [alpha19 record](docs/validation/2026-11-07-alpha19.md).
 
 ### Source baseline
 
@@ -60,7 +62,7 @@ APK output: `app/build/outputs/apk/debug/`. Device scripts accept `--adb`, or fi
 
 Distributed under [GNU GPL v3](LICENSE), retaining upstream copyrights and bundled component licences. Exact sources, pinned revisions and modifications are documented in [third-party reuse](docs/third-party-reuse.md), [audio decoder provenance](docs/third-party-audio-content.md), [DSEG licensing](docs/third-party-DSEG.md) and bundled licence files.
 
-Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for creating and publishing the application that made this project possible. Thanks also to Airspy, libusb, SDR++, WDSP, readsb, Robot36, multimon-ng, aptdec, GNU Radio, MapLibre, EiBi, OurAirports, DSEG and the other upstream contributors credited in the source and licence records.
+Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for creating and publishing the application that made this project possible. Thanks also to Airspy, libusb, SDR++, WDSP, readsb, Robot36, multimon-ng, aptdec, GNU Radio, BlurView, MapLibre, EiBi, OurAirports, DSEG and the other upstream contributors credited in the source and licence records.
 
 ---
 
@@ -68,7 +70,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.18.0-hfplus-alpha18` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.19.0-hfplus-alpha19` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha19 增加解调模式“电台记忆”开关，关闭时冻结既有记忆；上移面板箭头，使用固定版本 [BlurView](docs/third-party-blurview.md) 添加轻微磨砂菜单边缘。详见 [alpha19 记录](docs/validation/2026-11-07-alpha19.md)。
 
 ### 源码基线
 
@@ -122,4 +126,4 @@ APK 位于 `app/build/outputs/apk/debug/`。设备脚本支持 `--adb`，也会�
 
 按 [GNU GPL v3](LICENSE) 分发，保留上游版权与各组件许可。具体来源、固定提交及修改见[第三方复用记录](docs/third-party-reuse.md)、[音频解码来源](docs/third-party-audio-content.md)、[DSEG 字体许可](docs/third-party-DSEG.md)和随源码提供的许可文件。
 
-感谢 **9GRadio 原作者 rkarikari / RadioSport** 创作并公开这款应用，让本项目有了可以继续改进的基础。也感谢 Airspy、libusb、SDR++、WDSP、readsb、Robot36、multimon-ng、aptdec、GNU Radio、MapLibre、EiBi、OurAirports、DSEG，以及源码与许可记录中列出的其他上游项目和贡献者。
+感谢 **9GRadio 原作者 rkarikari / RadioSport** 创作并公开这款应用，让本项目有了可以继续改进的基础。也感谢 Airspy、libusb、SDR++、WDSP、readsb、Robot36、multimon-ng、aptdec、GNU Radio、BlurView、MapLibre、EiBi、OurAirports、DSEG，以及源码与许可记录中列出的其他上游项目和贡献者。
