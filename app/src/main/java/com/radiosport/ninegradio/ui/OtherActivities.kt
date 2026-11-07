@@ -366,6 +366,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
             }
         }
         compact(preferenceScreen)
+        findPreference<Preference>("pref_recording_files")?.setOnPreferenceClickListener {
+            startActivity(Intent(requireContext(),RecordingSettingsActivity::class.java));true
+        }
         findPreference<Preference>("receiver_controls_hint")?.isVisible=false
         findPreference<ListPreference>("pref_ui_theme")?.apply {
             entries=UiThemes.presets.map { it.label }.toTypedArray()
@@ -579,10 +582,12 @@ class RecordingActivity : RadioThemedActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private lateinit var adapter: RecordingAdapter
+    private var playerControls:RecordingPlayerControls?=null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_recording)
+        playerControls=RecordingPlayerControls(this,findViewById(R.id.standaloneRecordingPlayer))
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         title = "Recordings"
 
@@ -593,6 +598,7 @@ class RecordingActivity : RadioThemedActivity() {
             onPlay = { meta -> playRecording(meta) },
             onShare = { meta -> shareRecording(meta) },
             onDelete = { meta ->
+                if(playerControls?.controller?.currentMediaItem?.mediaId==meta.id.toString()) playerControls?.stopPlayback()
                 File(meta.filePath).delete()
                 com.radiosport.ninegradio.recording.IqRecordingInfo.metadataFile(File(meta.filePath)).delete()
                 lifecycleScope.launch {
@@ -619,16 +625,8 @@ class RecordingActivity : RadioThemedActivity() {
     }
 
     private fun playRecording(meta: RecordingMeta) {
-        if (meta.type == "AUDIO") {
-            val uri = FileProvider.getUriForFile(this,
-                "$packageName.fileprovider", File(meta.filePath))
-            startActivity(Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "audio/wav")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            })
-        } else {
-            Toast.makeText(this, "IQ files require an external SDR app to play", Toast.LENGTH_LONG).show()
-        }
+        if(meta.type=="AUDIO") playerControls?.play(meta)
+        else { playerControls?.stopPlayback();viewModel.playIqRecording(meta) }
     }
 
     private fun shareRecording(meta: RecordingMeta) {
@@ -647,7 +645,7 @@ class RecordingActivity : RadioThemedActivity() {
         }
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
-                type = if (meta.type == "AUDIO") "audio/wav" else "application/octet-stream"
+                type = if (meta.type == "AUDIO") com.radiosport.ninegradio.recording.AudioRecordingProfile.mime(meta.filePath) else "application/octet-stream"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }, "分享 ${file.name}"
@@ -661,11 +659,20 @@ class RecordingAdapter(
     private val onDelete: (RecordingMeta) -> Unit
 ) : ListAdapter<RecordingMeta, RecordingAdapter.VH>(DiffCb()) {
 
+    private var durationScope=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()+kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1))
+    override fun onViewRecycled(holder:VH) { holder.durationJob?.cancel();super.onViewRecycled(holder) }
+    override fun onDetachedFromRecyclerView(recyclerView:RecyclerView) { durationScope.coroutineContext[kotlinx.coroutines.Job]?.cancel();super.onDetachedFromRecyclerView(recyclerView) }
+    override fun onAttachedToRecyclerView(recyclerView:RecyclerView) {
+        if(durationScope.coroutineContext[kotlinx.coroutines.Job]?.isActive!=true) durationScope=kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()+kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1))
+        super.onAttachedToRecyclerView(recyclerView)
+    }
     inner class VH(v: View) : RecyclerView.ViewHolder(v) {
         val tvName: TextView = v.findViewById(R.id.tvRecName)
         val tvInfo: TextView = v.findViewById(R.id.tvRecInfo)
         val tvSize: TextView = v.findViewById(R.id.tvRecSize)
         val tvDate: TextView = v.findViewById(R.id.tvRecDate)
+        val tvDuration:TextView=v.findViewById(R.id.tvRecDuration)
+        var durationJob:Job?=null
         val btnPlay: View    = v.findViewById(R.id.btnRecPlay)
         val btnShare: View   = v.findViewById(R.id.btnRecShare)
         val btnDelete: View  = v.findViewById(R.id.btnRecDelete)
@@ -678,7 +685,17 @@ class RecordingAdapter(
         val rec = getItem(pos)
         val file = File(rec.filePath)
         h.tvName.text  = file.name
-        h.tvInfo.text  = "${"%.4f".format(rec.frequencyHz / 1e6)} MHz  ${rec.demodMode}  ${rec.sampleRate / 1000} kS/s"
+        h.tvInfo.text="${"%.4f".format(rec.frequencyHz/1e6)} MHz  ${rec.demodMode}  ${rec.sampleRate/1000} ${if(rec.type=="AUDIO") "kHz · ${file.extension.uppercase()}" else "kS/s"}"
+        h.durationJob?.cancel()
+        h.tvDuration.text=if(rec.durationMs>0) RecordingPlayerControls.formatTime(rec.durationMs) else "—:—"
+        if(rec.durationMs<=0) h.durationJob=durationScope.launch {
+            val duration=com.radiosport.ninegradio.recording.RecordingDetails.duration(rec)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if(h.bindingAdapterPosition!=androidx.recyclerview.widget.RecyclerView.NO_POSITION && h.itemView.tag==rec.id)
+                    h.tvDuration.text=duration?.let { RecordingPlayerControls.formatTime(it) } ?: "—:—"
+            }
+        }
+        h.itemView.tag=rec.id
         h.tvSize.text  = "${"%.2f".format(rec.fileSizeBytes / 1e6)} MB"
         val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(rec.createdAt))
         h.tvDate.text  = "[${rec.type}]  $dateStr"

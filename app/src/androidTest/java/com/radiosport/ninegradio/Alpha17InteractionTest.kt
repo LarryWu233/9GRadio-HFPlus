@@ -186,14 +186,13 @@ class Alpha17InteractionTest {
                         val tab=tabs.getTabAt(i)!!.view
                         val rect=Rect()
                         if(i!=current && tab.isShown && tab.getGlobalVisibleRect(rect)) {
-                            val hit=Rect(rect)
-                            if(hit.intersect(handleRect) && hit.width()>3) {
-                                target=i; x=hit.exactCenterX(); y=rect.top+12*a.resources.displayMetrics.density
+                            if(!Rect.intersects(rect,handleRect) && rect.width()>3) {
+                                target=i; x=rect.exactCenterX(); y=rect.exactCenterY()
                                 break
                             }
                         }
                     }
-                    assertTrue("A tab lies under the old handle touch bounds",target>=0)
+                    assertTrue("A visible tab is separate from the header arrow",target>=0)
                 }
                 val start=SystemClock.uptimeMillis()
                 MotionEvent.obtain(start,start,MotionEvent.ACTION_DOWN,x,y,0).also { inst.sendPointerSync(it); it.recycle() }

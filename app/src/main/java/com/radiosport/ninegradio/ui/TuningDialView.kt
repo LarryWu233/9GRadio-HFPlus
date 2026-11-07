@@ -241,7 +241,17 @@ class TuningDialView @JvmOverloads constructor(
         })
 
     // ── Init ──────────────────────────────────────────────────────────────────
-    init { computeStep() }
+    private val roundedTrack=Path()
+    private var trackRadius=0f
+    init {
+        computeStep()
+        outlineProvider=object:android.view.ViewOutlineProvider() {
+            override fun getOutline(view:android.view.View,outline:android.graphics.Outline) {
+                outline.setRoundRect(0,0,view.width,view.height,18*resources.displayMetrics.density)
+            }
+        }
+        clipToOutline=true
+    }
 
     // ── Public helpers ────────────────────────────────────────────────────────
 
@@ -301,6 +311,9 @@ class TuningDialView @JvmOverloads constructor(
         trackBottom = h * 0.74f
         trackW = trackRight - trackLeft
         trackH = trackBottom - trackTop
+        trackRadius=minOf(trackH/2,18*resources.displayMetrics.density)
+        roundedTrack.reset()
+        roundedTrack.addRoundRect(trackLeft,trackTop,trackRight,trackBottom,trackRadius,trackRadius,Path.Direction.CW)
 
         // Vertical gradient across the track gives the drum body a curved,
         // cylindrical "3D" highlight: bright band near the top-third (where
@@ -344,23 +357,23 @@ class TuningDialView @JvmOverloads constructor(
         // Glow shadow behind the drum
         canvas.drawRoundRect(
             trackLeft - 6f, trackTop - 6f, trackRight + 6f, trackBottom + 6f,
-            trackH * 0.18f, trackH * 0.18f, shadowPaint
+            trackRadius+3f, trackRadius+3f, shadowPaint
         )
 
         // Drum body
         canvas.drawRoundRect(
             trackLeft, trackTop, trackRight, trackBottom,
-            trackH * 0.16f, trackH * 0.16f, trackPaint
+            trackRadius, trackRadius, trackPaint
         )
         canvas.drawRoundRect(
             trackLeft, trackTop, trackRight, trackBottom,
-            trackH * 0.16f, trackH * 0.16f, trackRimPaint
+            trackRadius, trackRadius, trackRimPaint
         )
 
         // Clip tick rendering to the drum body so perspective-scaled ticks
         // never spill outside the rounded rect.
         canvas.save()
-        canvas.clipRect(trackLeft, trackTop, trackRight, trackBottom)
+        canvas.clipPath(roundedTrack)
 
         // Tick marks: an evenly-spaced horizontal scale, scrolled by
         // drumOffsetPx and rendered with a per-tick perspective transform so
@@ -440,8 +453,10 @@ class TuningDialView @JvmOverloads constructor(
 
         // Left/right edge fade overlays — reinforce the "wrapping cylinder"
         // illusion by darkening toward the extremes of the drum.
+        canvas.save(); canvas.clipPath(roundedTrack)
         canvas.drawRect(trackLeft, trackTop, trackLeft + trackW * 0.18f, trackBottom, leftFadePaint)
         canvas.drawRect(trackRight - trackW * 0.18f, trackTop, trackRight, trackBottom, rightFadePaint)
+        canvas.restore()
 
         if(choices.isNotEmpty()) {
             labelPaint.textSize=13*resources.displayMetrics.scaledDensity

@@ -46,7 +46,7 @@
 <item name="android:textColorPrimary">?attr/radioText</item>
 <item name="colorControlNormal">?attr/radioSecondary</item>
 <item name="colorControlActivated">?attr/radioAccent</item>
-<item name="alertDialogTheme">@style/NineGRadioDialog</item>
+<item name="alertDialogTheme">@style/RadioRoundedDialog</item>
         <!-- Chip style -->
         <item name="chipStyle">@style/NineGRadioChip</item>
 

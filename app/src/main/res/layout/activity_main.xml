@@ -230,14 +230,20 @@
         app:behavior_peekHeight="100dp"
         app:behavior_hideable="false">
 
-        <!-- Only the edge is translucent; controls are drawn sharply above it. -->
+        <!-- Full-panel backdrop blur; controls are rendered sharply above it. -->
         <eightbitlab.com.blurview.BlurView android:id="@+id/panelEdgeBlur"
-            android:layout_width="match_parent" android:layout_height="44dp"
+            android:layout_width="match_parent" android:layout_height="match_parent"
             android:importantForAccessibility="no" android:clickable="false"/>
 
         <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
             android:orientation="vertical">
 
+        <LinearLayout android:id="@+id/controlsHeader" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:orientation="vertical">
+            <com.radiosport.ninegradio.ui.PanelToggleView android:id="@+id/sheetToggle"
+                android:layout_width="64dp" android:layout_height="24dp" android:layout_gravity="center_horizontal"
+                android:contentDescription="控制面板" android:clickable="true" android:focusable="true"
+                android:background="@android:color/transparent"/>
         <!-- Tab bar — always visible, never scrolls away -->
         <com.google.android.material.tabs.TabLayout
             android:id="@+id/controlTabLayout"
@@ -253,6 +259,7 @@
             app:tabIndicatorHeight="3dp"
             app:tabIconTint="@color/module_tab_icon"
             app:tabTextAppearance="@android:style/TextAppearance.Small"/>
+        </LinearLayout>
 
         <!-- Scrollable content region — only this part scrolls -->
         <androidx.core.widget.NestedScrollView
@@ -260,7 +267,7 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:background="?attr/radioSurface"
+            android:background="@android:color/transparent"
             android:clipToPadding="false">
 
             <LinearLayout
@@ -293,17 +300,12 @@
             android:clickable="false" android:focusable="false"/>
     </FrameLayout>
 
-    <com.radiosport.ninegradio.ui.PanelToggleView android:id="@+id/sheetToggle"
-        android:layout_width="48dp" android:layout_height="32dp"
-        android:contentDescription="控制面板" android:clickable="true" android:focusable="true"
-        android:elevation="12dp" android:background="@android:color/transparent"
-        android:translationY="-2dp"
-        app:layout_anchor="@id/controlsBottomSheet" app:layout_anchorGravity="top|center_horizontal"
-        android:layout_gravity="center"/>
+
 
     <!-- FABs -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabBookmark"
+        android:visibility="gone" android:importantForAccessibility="noHideDescendants"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
@@ -315,6 +317,7 @@
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabScan"
+        android:visibility="gone" android:importantForAccessibility="noHideDescendants"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"

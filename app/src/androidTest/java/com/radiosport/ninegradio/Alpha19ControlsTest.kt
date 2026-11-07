@@ -33,6 +33,7 @@ class Alpha19ControlsTest {
             for(device in listOf("rtl","airspyhf")) prefs.edit()
                 .putLong("device_${device}_mode_APRS_freq",144_800_000)
                 .putLong("device_${device}_mode_WFM_freq",87_800_000)
+                .putLong("device_${device}_mode_WFM_STEREO_freq",87_800_000)
                 .putLong("device_${device}_mode_ADSB_freq",1_090_000_000).commit()
             val content=context.getSharedPreferences("audio_content",Context.MODE_PRIVATE)
             content.edit().putLong("SSTV_frequency",14_230_000).putLong("SAT_frequency",145_800_000).commit()
@@ -42,6 +43,10 @@ class Alpha19ControlsTest {
                     val model=ViewModelProvider(activity)[MainViewModel::class.java]
                     model.setReceiverEnabled(false); model.setAutoDemod(false)
                     model.setDemodMode(DemodMode.AM); model.setFrequency(11_920_000); model.finishTuning()
+                    // Selecting AM legitimately saves the phone's previous FM station; seed after that transition.
+                    for(device in listOf("rtl","airspyhf")) prefs.edit()
+                        .putLong("device_${device}_mode_WFM_freq",87_800_000)
+                        .putLong("device_${device}_mode_WFM_STEREO_freq",87_800_000).commit()
                     val toggle=activity.findViewById<SwitchMaterial>(R.id.switchModeStationMemory)
                     assertNotNull(toggle); assertTrue(toggle.isChecked)
                     toggle.performClick()
@@ -88,7 +93,7 @@ class Alpha19ControlsTest {
                     assertTrue(model.modeStationMemory.value)
                     assertEquals(87_800_000L,model.centerFreqHz.value)
                     val arrow=activity.findViewById<View>(R.id.sheetToggle)
-                    assertEquals(-2f*activity.resources.displayMetrics.density,arrow.translationY,0.1f)
+                    assertSame(activity.findViewById<View>(R.id.controlsHeader),arrow.parent)
                     val blur=activity.findViewById<BlurView>(R.id.panelEdgeBlur)
                     assertTrue(blur.isHardwareAccelerated)
                     val behavior=BottomSheetBehavior.from(activity.findViewById<View>(R.id.controlsBottomSheet))

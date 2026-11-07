@@ -511,10 +511,15 @@ class DspEngine(private val device: IqSource) {
     @Volatile private var squelchOpen = true
     @Volatile private var contentAudioSink: ((FloatArray) -> Unit)? = null
     @Volatile private var externalCaptureMuted = false
+    @Volatile private var recordingPlaybackMuted=false
+    fun setRecordingPlaybackMuted(muted:Boolean) {
+        recordingPlaybackMuted=muted
+        audioEngine.setVolume(if(receptionAvailable && !externalCaptureMuted && !muted) volume.coerceIn(0f,1f) else 0f)
+    }
     fun setContentAudioSink(sink: ((FloatArray) -> Unit)?) { contentAudioSink = sink }
     fun setExternalCaptureMuted(muted: Boolean) {
         externalCaptureMuted = muted
-        audioEngine.setVolume(if(receptionAvailable && !muted) volume.coerceIn(0f,1f) else 0f)
+        audioEngine.setVolume(if(receptionAvailable && !recordingPlaybackMuted && !muted) volume.coerceIn(0f,1f) else 0f)
     }
     @Volatile private var listeningEnabled = true
     @Volatile private var receptionAvailable = true
@@ -529,7 +534,7 @@ class DspEngine(private val device: IqSource) {
         if (!available) {
             stopIqRecording(); stopAudioRecording()
         }
-        else { fftEngine.resetSpectrumAveraging(); audioEngine.setVolume(if(!externalCaptureMuted) volume.coerceIn(0f, 1f) else 0f) }
+        else { fftEngine.resetSpectrumAveraging(); audioEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted) volume.coerceIn(0f, 1f) else 0f) }
     }
     fun setListeningEnabled(enabled: Boolean) { listeningEnabled = enabled }
     fun setNoiseReductionStrength(strength: Float) { noiseReducer.setStrength(strength); stereoAudio.setStrength(strength) }
@@ -768,6 +773,8 @@ class DspEngine(private val device: IqSource) {
     }
     fun iqRecordedDurationMs()=iqRecorder.capturedDurationMs()
     fun audioRecordedDurationMs()=audioEngine.recordingDurationMs()
+    fun audioRecordingError()=audioEngine.recordingError
+    fun isAudioRecording()=audioEngine.isRecording
     private data class PlaybackBlock(val samples:FloatArray,val recordAllowed:Boolean,val generation:Long)
     private val listeningAudio=ListeningAudioProcessor()
     fun setListeningAudio(settings: ListeningAudioProcessor.Settings) { listeningAudio.settings=settings }
@@ -1024,7 +1031,7 @@ class DspEngine(private val device: IqSource) {
 
     fun start() {
         audioEngine.start()
-        audioEngine.setVolume(if(!externalCaptureMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
+        audioEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
         // Re-arm the peak-hold warm-up so the initial-acquisition transient
         // (filter/decimator settling, AGC convergence) doesn't get latched
         // in as a permanent false peak line on the spectrogram.
@@ -1292,7 +1299,7 @@ class DspEngine(private val device: IqSource) {
         // Android devices.  Clamp here so the intent is explicit: hardware level handles
         // attenuation (0–1.0) and processIqBlock applies a software sample-gain for
         // values above 1.0, giving the full 0–2× range to the user.
-        audioEngine.setVolume(if (receptionAvailable && !externalCaptureMuted) vol.coerceIn(0f, 1f) else 0f)
+        audioEngine.setVolume(if (receptionAvailable && !externalCaptureMuted && !recordingPlaybackMuted) vol.coerceIn(0f, 1f) else 0f)
         updateStats()
     }
 
@@ -1337,7 +1344,7 @@ class DspEngine(private val device: IqSource) {
         audioEngine = newEngine   // swap before start so write() goes to new engine
         oldEngine.stop()
         newEngine.start()
-        newEngine.setVolume(if(!externalCaptureMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
+        newEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
         startAudioWriter()   // re-launch writer bound to the new AudioEngine instance
         startDigVoiceAudio() // re-launch with updated audioSinkRate for upsampling ratio
         DebugBus.setStatus(DebugBus.STAGE_AUDIO_TRACK, DebugBus.StageStatus.OK,
@@ -1359,8 +1366,9 @@ class DspEngine(private val device: IqSource) {
         updateStats()
     }
 
-    fun startAudioRecording(filePath: String) {
-        audioEngine.startRecording(filePath)
+    fun startAudioRecording(filePath:String,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile=
+        com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(filePath)) {
+        audioEngine.startRecording(filePath,profile)
         updateStats()
     }
 

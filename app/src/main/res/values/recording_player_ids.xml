@@ -1,0 +1,8 @@
+<resources>
+    <item name="recordingPlaybackExpand" type="id" />
+    <item type="id" name="recordingPlaybackProgress"/>
+    <item type="id" name="recordingPlaybackBack"/>
+    <item type="id" name="recordingPlaybackForward"/>
+    <item type="id" name="recordingPlaybackPlay"/>
+    <item type="id" name="recordingPlaybackStop"/>
+</resources>

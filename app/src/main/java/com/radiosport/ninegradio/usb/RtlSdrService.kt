@@ -231,6 +231,7 @@ class RtlSdrService : Service() {
                 engine.setFmDeemphasis(androidx.preference.PreferenceManager.getDefaultSharedPreferences(this@RtlSdrService)
                     .getString("pref_deemph_us","75")?.toIntOrNull() ?: 75)
                 dspEngine = engine
+                engine.setRecordingPlaybackMuted(playbackMonitorMuted)
                 audioContent.attach(engine)
                 if (next.capabilities.floatIq) engine.setDemodMode(DemodMode.AM)
                 if (pendingFftSize > 0) engine.setFftSize(pendingFftSize)
@@ -411,6 +412,10 @@ class RtlSdrService : Service() {
         pendingNoiseReducer = enabled
         dspEngine?.setNoiseReducerEnabled(enabled)
     }
+    @Volatile private var playbackMonitorMuted=false
+    fun setRecordingPlaybackMuted(muted:Boolean) {
+        playbackMonitorMuted=muted;dspEngine?.setRecordingPlaybackMuted(muted)
+    }
     fun setAudioSinkRate(rate: Int) {
         pendingAudioSinkRate = rate
         control { if(dspEngine?.getAudioSinkRate()!=rate) finishCapture(true); dspEngine?.setAudioSinkRate(rate) }
@@ -431,7 +436,7 @@ class RtlSdrService : Service() {
         val session=if(audio) audioSession else iqSession
         return session?.takeIf { it.limitMs>0 }?.let { (it.limitMs-(SystemClock.elapsedRealtime()-it.started)).coerceAtLeast(0) }
     }
-    private fun beginCapture(path:String,audio:Boolean) {
+    private fun beginCapture(path:String,audio:Boolean,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile?=null) {
         finishCapture(audio)
         val engine=dspEngine ?: return
         engine.setRecordingSquelch(capturePrefs.getBoolean("pref_record_squelch",false))
@@ -446,11 +451,17 @@ class RtlSdrService : Service() {
             }
             return
         }
-        if(audio) engine.startAudioRecording(path) else engine.startIqRecording(path)
-        val running=if(audio) engine.statsFlow.value.isRecordingAudio else engine.statsFlow.value.isRecordingIq
-        if(!running) { if(!audio) com.radiosport.ninegradio.recording.IqRecordingInfo.metadataFile(java.io.File(path)).delete(); return }
+        if(audio) engine.startAudioRecording(path,profile ?: com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(path)) else engine.startIqRecording(path)
+        val running=if(audio) engine.isAudioRecording() else engine.statsFlow.value.isRecordingIq
+        if(!running) {
+            if(!audio) com.radiosport.ninegradio.recording.IqRecordingInfo.metadataFile(java.io.File(path)).delete()
+            else android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(this,"声音录制未开始，请检查格式与存储空间",android.widget.Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         val meta=com.radiosport.ninegradio.data.RecordingMeta(filePath=path,type=if(audio) "AUDIO" else "IQ",
-            frequencyHz=engine.getDialFrequencyHz(),sampleRate=if(audio) engine.getAudioSinkRate() else source?.getSampleRate() ?: 0,
+            frequencyHz=engine.getDialFrequencyHz(),sampleRate=if(audio) (profile ?: com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(path)).fileSampleRate(engine.getAudioSinkRate()) else source?.getSampleRate() ?: 0,
             demodMode=(requestedMode ?: DemodMode.AM).name,durationMs=0,fileSizeBytes=0)
         val id=(application as RtlSdrApplication).database.recordingMetaDao().insertSession(meta)
         val session=CaptureSession(id,path,SystemClock.elapsedRealtime(),capturePrefs.getString("pref_record_stop_seconds","0")?.toLongOrNull()?.coerceAtLeast(0)?.times(1000) ?: 0L)
@@ -461,7 +472,7 @@ class RtlSdrService : Service() {
                 for(isAudio in listOf(false,true)) {
                     val active=(if(isAudio) audioSession else iqSession) ?: continue
                     val stats=dspEngine?.statsFlow?.value
-                    val stillRecording=if(isAudio) stats?.isRecordingAudio==true else stats?.isRecordingIq==true
+                    val stillRecording=if(isAudio) dspEngine?.isAudioRecording()==true else stats?.isRecordingIq==true
                     if(!stillRecording || (active.limitMs>0 && SystemClock.elapsedRealtime()-active.started>=active.limitMs)) finishCapture(isAudio)
                 }
             }
@@ -474,10 +485,14 @@ class RtlSdrService : Service() {
         if(audio) engine?.stopAudioRecording() else engine?.stopIqRecording()
         val duration=if(audio) engine?.audioRecordedDurationMs() else engine?.iqRecordedDurationMs()
         (application as RtlSdrApplication).database.recordingMetaDao().finishSession(session.id,duration ?: 0L,java.io.File(session.path).length())
+        if(audio && engine?.audioRecordingError()!=null) android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(this,"录制已停止：${engine.audioRecordingError()}",android.widget.Toast.LENGTH_LONG).show()
+        }
     }
     fun startRecording(path: String) = control { beginCapture(path,false) }
     fun stopRecording() = control { finishCapture(false) }
-    fun startAudioRecording(path: String) = control { beginCapture(path,true) }
+    fun startAudioRecording(path:String,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile=
+        com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(path)) = control { beginCapture(path,true,profile) }
     fun stopAudioRecording() = control { finishCapture(true) }
 
     // ── Legacy device accessor (null when using TCP source) ───────────────────

@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.20.0-hfplus-alpha20` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.21.0-hfplus-alpha21` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha21 adds a full frosted menu backdrop, an integrated arrow/header, rounded tuning wheels/dialogs and a hidden body when collapsed. Recording rows show duration. Audio recording now offers M4A/AAC, device-supported OGG/Opus and 16/24-bit PCM or 32-bit float WAV. The Media3 in-panel audio player supports pause, seek, long-press forward/back and expansion below the frequency display; IQ retains its existing replay. See [alpha21 validation](docs/validation/2026-11-08-alpha21.md) and [recording/playback provenance](docs/third-party-recording-playback.md).
 
 Alpha20 restricts SQL detection to the selected BW, removes the old closing-side 3 dB offset and adds short power averaging. An experimental one-shot measurement suggests a threshold for explicit user application. See [alpha20 validation](docs/validation/2026-11-07-alpha20.md) and [implementation provenance](docs/third-party-squelch.md); known-sample checks include 65 seconds without a false opening despite a persistent strong off-channel carrier. This is not a claim of completed on-site aviation acceptance.
 
@@ -26,7 +28,7 @@ The [upstream README](docs/upstream-README.md) and [initial source/APK compariso
 | Tuning | Coalesced serial background commands; direct spectrum tuning and draggable BW edges; spring-centred speed control, fine tuning and Step wheels with haptics; numeric SPAN/BW input. CLOSED stops and releases the receiver. |
 | Display and UI | SDR++-informed peak-preserving spectrum/waterfall resampling; original palettes, automatic levels and optional long-press crosshair; seven dark themes, grouped main frequency digits, separate settings page, reorderable/hideable modules and compact tables. |
 | Audio | FM playback-clock/continuity fixes, functional stereo and 50/75 μs de-emphasis, listening SQL, spectral NR, automatic notch and level compensation. WDSP/SDR++ components support pre-demodulation impulse suppression. Digital decoding bypasses listening noise processing; software audio decoders receive pre-NR audio. |
-| Scan and recording | Integrated shortwave/FM ETM and range scanning, improved noise rejection, optional regional recommendations; IQ/audio recording with automatic stop and SQL gating; floating-point IQ and SigMF recording/replay metadata. |
+| Scan and recording | Integrated shortwave/FM ETM and range scanning, improved noise rejection, optional regional recommendations; IQ/audio recording with automatic stop and SQL gating; floating-point IQ and SigMF metadata; configurable compressed/PCM audio and an internal audio player. |
 | Integrated tools | RTL-SDR Blog V4/readsb ADS-B, in-panel map/radar switching, distance/track information, compact aircraft rows, APRS map gestures and a basic compass/signal-strength direction-finding panel. Existing map providers are retained. |
 | New content tabs | **CW/CWR** Morse text using multimon-ng, **SSTV** using Robot36, **SAT** satellite SSTV and historical APT audio images using aptdec. Software audio, microphone and WAV input. **EiBi** shortwave programme schedule with UTC/language filters and click-to-tune; it is not an audio decoder. |
 
@@ -62,9 +64,9 @@ APK output: `app/build/outputs/apk/debug/`. Device scripts accept `--adb`, or fi
 
 ### Licence and thanks
 
-Distributed under [GNU GPL v3](LICENSE), retaining upstream copyrights and bundled component licences. Exact sources, pinned revisions and modifications are documented in [third-party reuse](docs/third-party-reuse.md), [audio decoder provenance](docs/third-party-audio-content.md), [DSEG licensing](docs/third-party-DSEG.md) and bundled licence files.
+Distributed under [GNU GPL v3](LICENSE), retaining upstream copyrights and bundled component licences. Exact sources, pinned revisions and modifications are documented in [third-party reuse](docs/third-party-reuse.md), [audio decoder provenance](docs/third-party-audio-content.md), [recording/player provenance](docs/third-party-recording-playback.md), [DSEG licensing](docs/third-party-DSEG.md) and bundled licence files.
 
-Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for creating and publishing the application that made this project possible. Thanks also to Airspy, libusb, SDR++, WDSP, readsb, Robot36, multimon-ng, aptdec, GNU Radio, BlurView, MapLibre, EiBi, OurAirports, DSEG and the other upstream contributors credited in the source and licence records.
+Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for creating and publishing the application that made this project possible. Thanks also to Airspy, libusb, SDR++, WDSP, readsb, Robot36, multimon-ng, aptdec, GNU Radio, BlurView, AndroidX Media3, MapLibre, EiBi, OurAirports, DSEG and the other upstream contributors credited in the source and licence records.
 
 ---
 
@@ -72,7 +74,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.20.0-hfplus-alpha20` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.21.0-hfplus-alpha21` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha21 将磨砂扩展到整个控制菜单，箭头合入顶栏，调谐轮／弹窗圆角化，收起时隐藏正文。录音列表显示时长；声音录制可选 M4A/AAC、设备支持的 OGG/Opus，以及 16／24-bit PCM、32-bit float WAV。基于 Media3 的页内播放器支持暂停、进度拖动、长按快进／快退及展开到主频率下方；IQ 保留原回放。详见 [alpha21 验证](docs/validation/2026-11-08-alpha21.md)和[录制／播放来源](docs/third-party-recording-playback.md)。
 
 Alpha20 将 SQL 判据限定到当前 BW，去掉关闭侧原有 3 dB 偏移，增加短时功率平均与实验性测量建议，由用户选择应用。详见 [alpha20 验证](docs/validation/2026-11-07-alpha20.md)和[来源记录](docs/third-party-squelch.md)。已知 IQ 样本在持续强带外载波下连续观察 65 秒没有误开启，不声称已完成用户现场航空验收。
 
@@ -92,7 +96,7 @@ Alpha19 增加解调模式“电台记忆”开关，关闭时冻结既有记忆
 | 调谐 | 后台串行合并硬件命令；拖动频谱调谐及 BW 两侧边界；自动回中变速滑条、精调与 Step 滚轮、振动、SPAN/BW 数字输入；CLOSED 真正停止并释放接收机。 |
 | 显示与界面 | 参考 SDR++ 的保峰重采样；保留原版频谱／瀑布配色、自动电平及可选长按十字光标；七套暗色主题、主频率分组段码数字、独立设置页、模块排序／隐藏和紧凑表格。 |
 | 声音 | 修复 FM 播放时钟与连续性，补齐立体声及 50/75 μs 去加重；监听静噪、频谱降噪、自动陷波、响度补偿；复用 WDSP／SDR++ 内容进行解调前脉冲抑制。数字解码旁路监听降噪，软件音频解码取得 NR 之前的信号。 |
-| 扫描与录制 | 整合短波／FM ETM 与范围扫描，改进噪声过滤，可选地区推荐；IQ／声音录制、定时停止、静噪门控；浮点 IQ 和 SigMF 录制回放元数据。 |
+| 扫描与录制 | 整合短波／FM ETM 与范围扫描，改进噪声过滤，可选地区推荐；IQ／声音录制、定时停止、静噪门控；浮点 IQ 和 SigMF 元数据；可配置压缩／PCM 声音格式及页内播放器。 |
 | 集成功能 | RTL-SDR Blog V4／readsb ADS-B，模块内地图／雷达切换、距离与轨迹、紧凑飞机列表、APRS 地图手势；基础指南针／场强测向页。地图沿用原有服务方案。 |
 | 新增内容页 | **CW/CWR** 使用 multimon-ng 解摩尔斯；**SSTV** 使用 Robot36；**SAT** 为卫星 SSTV 和 aptdec 历史 APT 音频图像；可选软件内、麦克风或 WAV 输入。**EiBi** 为短波节目表，支持 UTC／语言筛选、点击调谐，不是音频解码器。 |
 

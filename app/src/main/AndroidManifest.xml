@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -60,6 +61,7 @@
             android:configChanges="orientation|screenSize" android:label="@string/spectrum" />
         <activity android:name=".ui.MemoryActivity"   android:exported="false" android:label="@string/memory_channels" />
         <activity android:name=".ui.RecordingActivity" android:exported="false" android:label="@string/recordings" />
+        <activity android:name=".ui.RecordingSettingsActivity" android:exported="false" android:label="录制文件"/>
         <activity android:name=".ui.BookmarkActivity"  android:exported="false" android:label="Bookmarks" />
         <activity android:name=".ui.AdsbActivity"     android:exported="false"
             android:configChanges="orientation|screenSize" android:label="ADS-B Radar" />
@@ -75,6 +77,10 @@
 
         <service android:name=".usb.RtlSdrService" android:exported="false"
             android:foregroundServiceType="specialUse" />
+        <service android:name=".recording.RecordingPlaybackService" android:exported="false"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter><action android:name="androidx.media3.session.MediaSessionService"/></intent-filter>
+        </service>
 
         <provider android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

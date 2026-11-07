@@ -382,11 +382,12 @@ class MainActivity : RadioThemedActivity() {
         // keep the tab bar above the nav bar.
         ViewCompat.setOnApplyWindowInsetsListener(binding.controlTabLayout) { view, insets ->
             val navBar = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            // peekHeight: handle(4) + marginTop(6) + marginBottom(2) + tab bar(44) = ~56dp
+            // The measured header contains the arrow row and tab bar.
             // Add nav bar inset as breathing room below the tab bar.
             val density = resources.displayMetrics.density
-            val peekPx = (44 * density).toInt() + navBar.bottom
+            val peekPx = binding.controlsHeader.height.takeIf { it>0 }?.plus(navBar.bottom) ?: ((68*density).toInt()+navBar.bottom)
             val behavior = BottomSheetBehavior.from(binding.controlsBottomSheet)
+            behavior.isGestureInsetBottomIgnored = true
             behavior.peekHeight = peekPx
             // Save for use in applyExpandedOffset -- do NOT set sheet paddingBottom here;
             // applyExpandedOffset owns that to avoid the two callbacks fighting.
@@ -1400,6 +1401,9 @@ class MainActivity : RadioThemedActivity() {
             setOnCheckedChangeListener { _,enabled -> sdrService?.setRecordingSquelch(enabled) ?: recordingPrefs.edit().putBoolean("pref_record_squelch",enabled).apply().let { } }
         }
 
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById<android.widget.FrameLayout>(R.id.recordingPlayerHost)?.let { host ->
+            recordingPlayer=RecordingPlayerControls(this,host) { setPanelFullscreen(!panelFullscreen) }
+        }
         // IQ Record button
         ctrlViews.btnRecordIq!!.setOnClickListener {
             if (viewModel.dspStats.value.isRecordingIq) {
@@ -1422,8 +1426,9 @@ class MainActivity : RadioThemedActivity() {
                 ctrlViews.btnRecordAudio!!.text = "录制声音"
                 styleRecordingAction(ctrlViews.btnRecordAudio,false)
             } else {
-                val path = getAudioFilePath()
-                viewModel.startAudioRecording(path)
+                val profile=com.radiosport.ninegradio.recording.AudioRecordingProfile.read(this)
+                val path = getAudioFilePath(profile.format.extension)
+                viewModel.startAudioRecording(path,profile)
                 ctrlViews.btnRecordAudio!!.text = "停止录音"
                 styleRecordingAction(ctrlViews.btnRecordAudio,true)
                 showSnackbar("正在录制声音")
@@ -1440,6 +1445,7 @@ class MainActivity : RadioThemedActivity() {
             onPlay = { meta -> playRecordingFromTab(meta) },
             onShare = { meta -> shareRecordingFromTab(meta) },
             onDelete = { meta ->
+                if(recordingPlayer?.controller?.currentMediaItem?.mediaId==meta.id.toString()) recordingPlayer?.stopPlayback()
                 File(meta.filePath).delete()
                 lifecycleScope.launch {
                     (application as com.radiosport.ninegradio.RtlSdrApplication)
@@ -2544,6 +2550,7 @@ class MainActivity : RadioThemedActivity() {
         }
     }
 
+    private var recordingPlayer:RecordingPlayerControls?=null
     private var panelFullscreen=false
     private var positionControlsPanel: (() -> Unit)?=null
     private var adsbMapPanel: RadioMapPanel?=null
@@ -2552,9 +2559,12 @@ class MainActivity : RadioThemedActivity() {
 
     private fun setPanelFullscreen(full: Boolean) {
         panelFullscreen=full
+        recordingPlayer?.setExpanded(full)
         positionControlsPanel?.invoke()
         BottomSheetBehavior.from(binding.controlsBottomSheet).state=BottomSheetBehavior.STATE_EXPANDED
         binding.controlsScrollView.scrollTo(0,0)
+        if(::pagerAdapter.isInitialized && pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_RECORDING)
+            binding.controlViewPager.post { resizePagerToCurrentPage() }
         for(id in listOf(R.id.btnAdsbPanelFull,R.id.btnAprsPanelFull)) findViewById<Button>(id)?.text=if(full) "还原" else "展开"
     }
     private fun setupBottomSheet() {
@@ -2562,7 +2572,7 @@ class MainActivity : RadioThemedActivity() {
         binding.panelEdgeBlur.setupWith(binding.panelBlurTarget)
             .setFrameClearDrawable(android.graphics.drawable.ColorDrawable(UiThemes.color(this,R.attr.radioMain)))
             .setBlurRadius(12f)
-            .setOverlayColor(androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(this,R.attr.radioSurface),208))
+            .setOverlayColor(androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(this,R.attr.radioSurface),184))
         binding.btnToolbarSettings.setOnClickListener {
             bookmarkLauncher.launch(Intent(this,SettingsActivity::class.java))
         }
@@ -2570,7 +2580,11 @@ class MainActivity : RadioThemedActivity() {
         behavior.isFitToContents = false
         behavior.isDraggable = false
         behavior.isHideable = false
-        behavior.peekHeight = (44 * resources.displayMetrics.density).toInt() + navBarHeightPx
+        behavior.isGestureInsetBottomIgnored = true
+        behavior.peekHeight = (68 * resources.displayMetrics.density).toInt() + navBarHeightPx
+        binding.controlsHeader.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            behavior.peekHeight = binding.controlsHeader.height + navBarHeightPx
+        }
         behavior.state = BottomSheetBehavior.STATE_EXPANDED
         binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(defaultModule()), false)
         fun positionPanel() {
@@ -2589,7 +2603,7 @@ class MainActivity : RadioThemedActivity() {
             val offset=if(panelFullscreen) frequencyY[1]-rootY[1]+binding.frequencyView.height else normal
             if (behavior.expandedOffset != offset) behavior.expandedOffset = offset
             binding.controlsScrollView.setPadding(0, 0, 0, offset + navBarHeightPx)
-            val visualHeight=if(panelFullscreen) (h-offset-binding.controlTabLayout.height-(150*resources.displayMetrics.density).toInt()-navBarHeightPx).coerceAtLeast((220*resources.displayMetrics.density).toInt()) else (260*resources.displayMetrics.density).toInt()
+            val visualHeight=if(panelFullscreen) (h-offset-binding.controlsHeader.height-(150*resources.displayMetrics.density).toInt()-navBarHeightPx).coerceAtLeast((220*resources.displayMetrics.density).toInt()) else (260*resources.displayMetrics.density).toInt()
             for(id in listOf(R.id.adsbVisualization,R.id.aprsMapHost)) findViewById<View>(id)?.let { visual ->
                 if(visual.layoutParams.height!=visualHeight) { visual.layoutParams=visual.layoutParams.apply { height=visualHeight }; binding.controlViewPager.post { resizePagerToCurrentPage() } }
             }
@@ -2607,8 +2621,11 @@ class MainActivity : RadioThemedActivity() {
             override fun onStateChanged(sheet: View, state: Int) {
                 if(state==BottomSheetBehavior.STATE_COLLAPSED || state==BottomSheetBehavior.STATE_EXPANDED)
                     binding.sheetToggle.isCollapsed = state == BottomSheetBehavior.STATE_COLLAPSED
+                binding.controlsScrollView.visibility=if(state==BottomSheetBehavior.STATE_COLLAPSED) View.GONE else View.VISIBLE
             }
-            override fun onSlide(sheet: View, offset: Float) {}
+            override fun onSlide(sheet: View, offset: Float) {
+                binding.controlsScrollView.visibility=if(offset<=0f) View.GONE else View.VISIBLE
+            }
         })
         binding.sheetToggle.isCollapsed = false
         binding.sheetToggle.setOnClickListener {
@@ -3956,18 +3973,18 @@ class MainActivity : RadioThemedActivity() {
     private fun getIqFilePath(): String {
         val dir = File(getExternalFilesDir(null), "IQ")
         dir.mkdirs()
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val mhz = "%.3f".format(viewModel.centerFreqHz.value / 1e6)
         val rate = "${viewModel.sampleRate.value / 1000}kSps"
         return File(dir, "iq_${mhz}MHz_${rate}_$ts.${if (viewModel.capabilities.value.floatIq) "cf32" else "iq"}").absolutePath
     }
 
-    private fun getAudioFilePath(): String {
+    private fun getAudioFilePath(extension:String): String {
         val dir = File(getExternalFilesDir(null), "Audio")
         dir.mkdirs()
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val mhz = "%.3f".format(viewModel.centerFreqHz.value / 1e6)
-        return File(dir, "audio_${mhz}MHz_$ts.wav").absolutePath
+        return File(dir, "audio_${mhz}MHz_$ts.$extension").absolutePath
     }
 
     private fun showSnackbar(msg: String) {
@@ -3980,16 +3997,8 @@ class MainActivity : RadioThemedActivity() {
     // separate standalone Activity with its own Context.
 
     private fun playRecordingFromTab(meta: RecordingMeta) {
-        if (meta.type == "AUDIO") {
-            val uri = FileProvider.getUriForFile(this,
-                "$packageName.fileprovider", File(meta.filePath))
-            startActivity(Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "audio/wav")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            })
-        } else {
-            viewModel.playIqRecording(meta)
-        }
+        if(meta.type=="AUDIO") recordingPlayer?.play(meta)
+        else { recordingPlayer?.stopPlayback();viewModel.playIqRecording(meta) }
     }
 
     private fun shareRecordingFromTab(meta: RecordingMeta) {
@@ -3998,7 +4007,7 @@ class MainActivity : RadioThemedActivity() {
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
-                type = if (meta.type == "AUDIO") "audio/wav" else "application/octet-stream"
+                type = if (meta.type == "AUDIO") com.radiosport.ninegradio.recording.AudioRecordingProfile.mime(meta.filePath) else "application/octet-stream"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }, "Share ${file.name}"

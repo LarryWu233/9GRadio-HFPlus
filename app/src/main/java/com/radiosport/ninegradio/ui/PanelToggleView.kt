@@ -16,11 +16,6 @@ class PanelToggleView @JvmOverloads constructor(context: Context, attrs: Attribu
     private val line=Path()
     var isCollapsed=false
         set(value) { field=value; contentDescription=if(value) "展开控制面板" else "收起控制面板"; invalidate() }
-    override fun dispatchTouchEvent(event:android.view.MotionEvent):Boolean {
-        // The lower part overlaps the tab row. Let those taps reach its buttons.
-        if(event.actionMasked==android.view.MotionEvent.ACTION_DOWN && event.y>height/2f+4*resources.displayMetrics.density) return false
-        return super.dispatchTouchEvent(event)
-    }
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val d=resources.displayMetrics.density

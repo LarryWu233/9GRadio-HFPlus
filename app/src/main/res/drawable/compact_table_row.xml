@@ -1,4 +1,5 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <solid android:color="?attr/radioSurface"/>
     <stroke android:width="0.5dp" android:color="?attr/radioOutline"/>
+    <corners android:radius="12dp"/>
 </shape>

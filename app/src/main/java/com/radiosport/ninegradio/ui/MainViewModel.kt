@@ -1073,7 +1073,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startIqRecording(path: String) { sdrService?.startRecording(path) }
     fun stopIqRecording() { sdrService?.stopRecording() }
-    fun startAudioRecording(path: String) { sdrService?.startAudioRecording(path) }
+    fun startAudioRecording(path:String,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile=
+        com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(path)) { sdrService?.startAudioRecording(path,profile) }
     fun stopAudioRecording() { sdrService?.stopAudioRecording() }
 
     // ─── Memory channels ──────────────────────────────────────────────────────

@@ -1,0 +1,12 @@
+<resources>
+    <style name="ShapeAppearance.Radio.Rounded" parent="ShapeAppearance.MaterialComponents.MediumComponent">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">24dp</item>
+    </style>
+    <style name="RadioRoundedDialog" parent="NineGRadioDialog">
+        <item name="android:windowBackground">@drawable/radio_dialog_background</item>
+        <item name="colorSurface">?attr/radioSurface</item>
+        <item name="colorPrimary">?attr/radioAccent</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Radio.Rounded</item>
+    </style>
+</resources>

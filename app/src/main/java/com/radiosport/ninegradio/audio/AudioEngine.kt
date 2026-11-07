@@ -29,7 +29,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
     }
 
     private var audioTrack: AudioTrack? = null
-    @Volatile private var pcmRecorder: PcmRecorder? = null
+    @Volatile private var pcmRecorder: AudioFileRecorder? = null
     private val writeFails = AtomicInteger(0)
     private var prefilling=true
     private var primedFrames=0
@@ -179,7 +179,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         }
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_PLAY, "STOPPED")
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_LAST_WRITE, "—")
-        pcmRecorder?.stop()
+        stopRecording()
     }
 
     fun write(samples: FloatArray, recordingAllowed: () -> Boolean = { true }) {
@@ -282,104 +282,23 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         }
     }
 
-    @Synchronized fun startRecording(filePath: String) {
-        pcmRecorder?.stop()
-        pcmRecorder = PcmRecorder(filePath, sampleRate, 2).also { it.start() }
+    @Volatile var recordingError:String?=null
+        private set
+    @Synchronized fun startRecording(filePath:String,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile=
+        com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(filePath)) {
+        stopRecording();lastRecordedDurationMs=0;recordingError=null
+        val recorder=AudioFileRecorder(filePath,sampleRate,2,profile)
+        try { recorder.start();pcmRecorder=recorder }
+        catch(error:Exception) { recordingError=error.message ?: "无法开始录制";pcmRecorder=null }
     }
-
     @Synchronized fun stopRecording() {
-        pcmRecorder?.let { it.stop(); lastRecordedDurationMs=it.capturedDurationMs() }
-        pcmRecorder = null
+        pcmRecorder?.let { recorder ->
+            runCatching { recorder.stop() }.onFailure { recordingError=it.message ?: "录制未能完成" }
+            lastRecordedDurationMs=recorder.capturedDurationMs()
+            recordingError=recorder.error ?: recordingError
+        }
+        pcmRecorder=null
     }
     private var lastRecordedDurationMs=0L
     @Synchronized fun recordingDurationMs()=pcmRecorder?.capturedDurationMs() ?: lastRecordedDurationMs
-}
-
-/**
- * Records demodulated audio to a WAV file.
- */
-class PcmRecorder(private val filePath: String, private val sampleRate: Int, private val channels: Int = 1) {
-    var isRecording = false
-        private set
-
-    private var outputStream: DataOutputStream? = null
-    private var bytesWritten = 0
-
-    @Synchronized fun start() {
-        try {
-            val file = File(filePath)
-            file.parentFile?.mkdirs()
-            outputStream = DataOutputStream(BufferedOutputStream(FileOutputStream(file)))
-            // Write placeholder WAV header (will be updated on stop)
-            writeWavHeader(outputStream!!, 0)
-            isRecording = true
-            Log.i("PcmRecorder", "Recording to $filePath")
-        } catch (e: IOException) {
-            Log.e("PcmRecorder", "Failed to start recording", e)
-        }
-    }
-
-    @Synchronized fun writeSamples(samples: FloatArray) {
-        if (!isRecording) return
-        val stream = outputStream ?: return
-        val buf = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
-        for (s in samples) {
-            buf.putShort((s.coerceIn(-1f, 1f) * 32767f).toInt().toShort())
-        }
-        try {
-            stream.write(buf.array())
-            bytesWritten += buf.array().size
-        } catch(error:IOException) {
-            Log.e("PcmRecorder","Audio recording write failed",error)
-            stop()
-        }
-    }
-
-    @Synchronized fun stop() {
-        if (!isRecording) return
-        isRecording = false
-        try {
-            outputStream?.flush()
-            outputStream?.close()
-            // Update WAV header with actual size
-            val raf = RandomAccessFile(filePath, "rw")
-            raf.seek(4)
-            raf.write(intToLe(36 + bytesWritten))
-            raf.seek(40)
-            raf.write(intToLe(bytesWritten))
-            raf.close()
-            Log.i("PcmRecorder", "Saved $bytesWritten bytes to $filePath")
-        } catch (e: IOException) {
-            Log.e("PcmRecorder", "Error finalizing WAV", e)
-        }
-    }
-
-    @Synchronized fun capturedDurationMs()=bytesWritten.toLong()*1000/(sampleRate*channels*2)
-
-    private fun writeWavHeader(stream: DataOutputStream, dataLen: Int) {
-        val bitsPerSample = 16
-        val byteRate = sampleRate * channels * bitsPerSample / 8
-        stream.writeBytes("RIFF")
-        stream.write(intToLe(36 + dataLen))
-        stream.writeBytes("WAVE")
-        stream.writeBytes("fmt ")
-        stream.write(intToLe(16))
-        stream.write(shortToLe(1))        // PCM
-        stream.write(shortToLe(channels.toShort()))
-        stream.write(intToLe(sampleRate))
-        stream.write(intToLe(byteRate))
-        stream.write(shortToLe((channels * bitsPerSample / 8).toShort()))
-        stream.write(shortToLe(bitsPerSample.toShort()))
-        stream.writeBytes("data")
-        stream.write(intToLe(dataLen))
-    }
-
-    private fun intToLe(v: Int): ByteArray = byteArrayOf(
-        (v and 0xFF).toByte(), (v shr 8 and 0xFF).toByte(),
-        (v shr 16 and 0xFF).toByte(), (v shr 24 and 0xFF).toByte()
-    )
-
-    private fun shortToLe(v: Short): ByteArray = byteArrayOf(
-        (v.toInt() and 0xFF).toByte(), (v.toInt() shr 8 and 0xFF).toByte()
-    )
 }

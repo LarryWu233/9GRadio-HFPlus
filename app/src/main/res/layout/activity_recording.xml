@@ -12,6 +12,7 @@
             android:textSize="13sp"/>
     </LinearLayout>
 
+    <FrameLayout android:id="@+id/standaloneRecordingPlayer" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="10dp"/>
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerRecordings"
         android:layout_width="match_parent" android:layout_height="match_parent"/>
