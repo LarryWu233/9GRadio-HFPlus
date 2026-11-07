@@ -20,7 +20,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="text"
-            android:textColor="#FFFFFF"/>
+            android:textColor="?attr/radioText"/>
     </com.google.android.material.textfield.TextInputLayout>
 
     <!-- Frequency -->
@@ -35,7 +35,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="numberDecimal"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/radioText"
             android:fontFamily="monospace"/>
     </com.google.android.material.textfield.TextInputLayout>
 
@@ -44,7 +44,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Demodulation Mode"
-        android:textColor="#AAFFFFFF"
+        android:textColor="?attr/radioSecondary"
         android:textSize="13sp"
         android:layout_marginTop="12dp"/>
     <Spinner
@@ -58,7 +58,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Bookmark List"
-        android:textColor="#AAFFFFFF"
+        android:textColor="?attr/radioSecondary"
         android:textSize="13sp"
         android:layout_marginTop="12dp"/>
     <Spinner
@@ -79,7 +79,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="textMultiLine"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/radioText"
             android:minLines="2"/>
     </com.google.android.material.textfield.TextInputLayout>
 
@@ -96,7 +96,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Marker Color"
-            android:textColor="#AAFFFFFF"
+            android:textColor="?attr/radioSecondary"
             android:textSize="13sp"/>
 
         <View
@@ -127,7 +127,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="numberSigned|numberDecimal"
-            android:textColor="#FFFFFF"/>
+            android:textColor="?attr/radioText"/>
     </com.google.android.material.textfield.TextInputLayout>
 
 </LinearLayout>

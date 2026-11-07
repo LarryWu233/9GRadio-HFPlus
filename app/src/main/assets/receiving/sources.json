@@ -1,0 +1,17 @@
+{
+  "source": "https://ourairports.com/data/",
+  "license": "Public Domain",
+  "retrieved_utc": "2026-11-05T20:37:56.838328+00:00",
+  "files": {
+    "airports.csv": {
+      "url": "https://davidmegginson.github.io/ourairports-data/airports.csv",
+      "sha256": "55bd82106c8ac1c9559cf5879ae9b69eb9c6e748df01514632dd5fbbb9e8b474"
+    },
+    "airport-frequencies.csv": {
+      "url": "https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv",
+      "sha256": "c1b1f04b42040cdb50c470ce75962459ee9d168c27843046c0c66d540fd1f171"
+    }
+  },
+  "airports": 10708,
+  "channels": 27009
+}

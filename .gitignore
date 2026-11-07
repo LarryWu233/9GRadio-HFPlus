@@ -42,3 +42,22 @@ firebase.json
 # Temporary folders
 **/temp/
 **/tmp/
+
+# Private machine state, credentials and signing material
+.codex/
+.agents/
+.aws/
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+credentials.json
+secrets.properties
+key.properties
+__pycache__/
+*.pyc

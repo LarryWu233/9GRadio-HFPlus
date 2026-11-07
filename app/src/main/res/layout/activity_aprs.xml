@@ -5,30 +5,30 @@
 
     <!-- Status row -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="40dp"
-        android:background="#0D1117" android:gravity="center_vertical"
+        android:background="?attr/radioMain" android:gravity="center_vertical"
         android:paddingHorizontal="12dp" android:orientation="horizontal">
         <TextView android:id="@+id/tvAprsStatus"
             android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="Listening…"
+            android:layout_weight="1" android:text="等待信号…"
             android:textColor="#44FF88" android:textSize="13sp" android:fontFamily="monospace"/>
         <TextView android:id="@+id/tvAprsCount"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Packets: 0" android:textColor="#FFAA00"
+            android:text="数据包：0" android:textColor="#FFAA00"
             android:textSize="13sp" android:fontFamily="monospace"/>
     </LinearLayout>
 
     <!-- Frequency buttons -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="44dp"
-        android:orientation="horizontal" android:background="#161B22">
+        android:orientation="horizontal" android:background="?attr/radioSurface">
         <Button android:id="@+id/btnAprsNA"
             android:layout_width="0dp" android:layout_height="match_parent"
             android:layout_weight="1" android:text="NA 144.390 MHz"
-            android:backgroundTint="#22004488" android:textColor="#00CCFF"
+            android:backgroundTint="#22004488" android:textColor="?attr/radioLink"
             android:textSize="12sp" android:layout_marginEnd="1dp"/>
         <Button android:id="@+id/btnAprsEU"
             android:layout_width="0dp" android:layout_height="match_parent"
             android:layout_weight="1" android:text="EU 144.800 MHz"
-            android:backgroundTint="#22004488" android:textColor="#00CCFF"
+            android:backgroundTint="#22004488" android:textColor="?attr/radioLink"
             android:textSize="12sp"/>
     </LinearLayout>
 
@@ -37,7 +37,7 @@
         android:layout_width="match_parent" android:layout_height="28dp"
         android:gravity="center_vertical"
         android:paddingHorizontal="12dp"
-        android:background="#0D1117"
+        android:background="?attr/radioMain"
         android:text="Initialising…"
         android:textColor="#8899AA"
         android:textSize="11sp"
@@ -55,13 +55,13 @@
     <!-- Packet log -->
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="Packet Log (tap for details):"
-        android:textColor="#88FFFFFF" android:textSize="12sp"
+        android:textColor="?attr/radioSecondary" android:textSize="12sp"
         android:paddingHorizontal="12dp" android:paddingVertical="4dp"
-        android:background="#161B22"/>
+        android:background="?attr/radioSurface"/>
 
     <ListView android:id="@+id/listAprsPackets"
         android:layout_width="match_parent" android:layout_height="0dp"
-        android:layout_weight="1" android:background="#0D1117"
+        android:layout_weight="1" android:background="?attr/radioMain"
         android:divider="#22FFFFFF" android:dividerHeight="0.5dp"/>
 
 </LinearLayout>

@@ -79,7 +79,7 @@ import kotlinx.coroutines.flow.collectLatest
  * keep the UI thread free.  Only the resulting packets flow back to Main for
  * display.
  */
-class AprsActivity : AppCompatActivity() {
+class AprsActivity : RadioThemedActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 

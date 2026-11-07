@@ -1,0 +1,4 @@
+<resources>
+    <item name="plotValueInput" type="id"/>
+    <item name="plotValueUnit" type="id"/>
+</resources>

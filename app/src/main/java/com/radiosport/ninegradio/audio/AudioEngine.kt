@@ -12,7 +12,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
 
     companion object {
         private const val TAG = "AudioEngine"
-        private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_OUT_MONO
+        private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_OUT_STEREO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_FLOAT
 
         private fun playStateName(state: Int) = when (state) {
@@ -29,8 +29,26 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
     }
 
     private var audioTrack: AudioTrack? = null
-    private var pcmRecorder: PcmRecorder? = null
+    @Volatile private var pcmRecorder: PcmRecorder? = null
     private val writeFails = AtomicInteger(0)
+    private var prefilling=true
+    private var primedFrames=0
+    @Volatile var underruns=0
+        private set
+    @Volatile var writtenFramesTotal=0L
+        private set
+
+    // Platform clock observation only; called by the diagnostic test, not
+    // from the signal-processing loop. Keep lifetime protection on the track.
+    fun playbackClock(): Map<String,Long> = synchronized(trackLock) {
+        val track=audioTrack ?: return@synchronized emptyMap()
+        val timestamp=AudioTimestamp()
+        val valid=track.getTimestamp(timestamp)
+        mapOf("writtenFrames" to writtenFramesTotal,
+            "playbackHeadFrames" to (track.playbackHeadPosition.toLong() and 0xffffffffL),
+            "timestampFrames" to if(valid) timestamp.framePosition else -1L,
+            "timestampNanos" to if(valid) timestamp.nanoTime else -1L)
+    }
 
     // ─── Thread-safety ──────────────────────────────────────────────────────
     // start()/stop() are called from the UI/service thread (engine lifecycle,
@@ -46,34 +64,12 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
     val isRecording: Boolean get() = pcmRecorder?.isRecording == true
 
     fun start() {
+        synchronized(trackLock) { if(audioTrack?.state==AudioTrack.STATE_INITIALIZED) return }
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, CHANNEL_CONFIG, AUDIO_FORMAT)
-        // Buffer sizing rationale:
-        //
-        // The DSP pipeline delivers audio in blocks driven by the USB IQ transfer
-        // cadence (~4 ms per 16,384-byte DSP_CHUNK_SIZE block at 2 MS/s).
-        // The AudioTrack buffer must hold AT LEAST 2× one DSP block so that while
-        // the DSP is computing the next block the track can continue draining the
-        // previous one without underrunning.
-        //
-        // At low sink rates (e.g. 16 kHz) the 150 ms formula previously used gave
-        // only 9600 B = 2400 float samples ≈ 150 ms — barely half a DSP block.
-        // Any jitter in the USB transfer (XFER_MAX can spike to 274 ms even with
-        // JITTER reported as 2.9 ms) caused the AudioTrack to underrun and produce
-        // the audible "skip" with no error in the debug panel (because AudioTrack
-        // write() returned OK — the samples were accepted — but the ring buffer had
-        // already emptied before they arrived).
-        //
-        // Fix: use a 500 ms floor (in bytes at ENCODING_PCM_FLOAT = 4 B/sample).
-        // 500 ms comfortably spans any realistic IQ block + scheduler jitter at every
-        // supported sink rate, while keeping latency well below the 1–2 s threshold
-        // where SDR radio feels sluggish.
-        //
-        // The previous 150 ms comment claimed "avoids 500 ms lag" — that lag came
-        // from WRITE_NON_BLOCKING + a large pre-fill, not from the buffer size
-        // itself.  With WRITE_BLOCKING there is no pre-fill and no lag: the DSP
-        // simply blocks while the buffer drains, perfectly rate-limiting to real time.
-        val targetMs   = 500                                  // ms headroom
-        val targetBytes = sampleRate * targetMs / 1000 * 4   // ENCODING_PCM_FLOAT = 4 B/sample
+        // Hardware buffer and fixed-duration PCM queue absorb scheduler and USB jitter.
+        // Playback starts after 80 ms of audio is primed, below the 160 ms buffer floor.
+        val targetMs   = 160 // scheduling headroom; the duration based PCM queue handles USB bursts
+        val targetBytes = sampleRate * targetMs / 1000 * 4 * 2
         val bufSize = minBuf.coerceAtLeast(targetBytes)
 
         // PERFORMANCE_MODE_LOW_LATENCY is incompatible with USAGE_MEDIA on many
@@ -101,7 +97,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
 
         val state = track.state
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_BUF_SIZE,
-            "${bufSize}B (${bufSize / 4 * 1000 / sampleRate}ms)")
+            "${bufSize}B (${bufSize / 8 * 1000 / sampleRate}ms)")
 
         if (state != AudioTrack.STATE_INITIALIZED) {
             val reason = "AudioTrack init FAILED — ${initStateName(state)}"
@@ -117,7 +113,9 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_INIT,
             initStateName(state))
 
-        track.play()
+        // Prime 80 ms before starting the hardware clock. USB callbacks arrive
+        // in bursts; starting an empty track leaves no jitter margin at all.
+        prefilling=true; primedFrames=0; underruns=0
 
         // Register a no-op routing-changed listener so the framework does NOT
         // attempt to call listAudioPorts() via AudioTrack.broadcastRoutingChange()
@@ -136,8 +134,8 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         // Verify play actually started
         val playState = track.playState
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_PLAY,
-            playStateName(playState))
-        if (playState != AudioTrack.PLAYSTATE_PLAYING) {
+            if(prefilling) "PRIMING" else playStateName(playState))
+        if (!prefilling && playState != AudioTrack.PLAYSTATE_PLAYING) {
             val msg = "play() called but state is ${playStateName(playState)}"
             Log.w(TAG, msg)
             DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_PLAY,
@@ -151,7 +149,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         synchronized(trackLock) {
             audioTrack = track
         }
-        Log.i(TAG, "AudioTrack started: $sampleRate Hz, buf=${bufSize}B (${bufSize / 4 * 1000 / sampleRate}ms)")
+        Log.i(TAG, "AudioTrack started: $sampleRate Hz, buf=${bufSize}B (${bufSize / 8 * 1000 / sampleRate}ms)")
     }
 
     fun stop() {
@@ -184,7 +182,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         pcmRecorder?.stop()
     }
 
-    fun write(samples: FloatArray) {
+    fun write(samples: FloatArray, recordingAllowed: () -> Boolean = { true }) {
         // Hold trackLock for the duration of the write so a concurrent stop()
         // cannot release the native AudioTrack out from under this call.
         // The lock is held across the (possibly blocking) native write —
@@ -200,7 +198,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
                 Log.w(TAG, "AudioTrack.playState threw (track released?)", e)
                 return
             }
-            if (currentPlayState != AudioTrack.PLAYSTATE_PLAYING) {
+            if (!prefilling && currentPlayState != AudioTrack.PLAYSTATE_PLAYING) {
                 DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_PLAY,
                     "⚠ ${playStateName(currentPlayState)} — not playing!")
                 // Attempt to resume if paused (e.g. transient audio focus loss then regained)
@@ -221,7 +219,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
             var written = 0
             while (written < samples.size) {
                 val n = try {
-                    track.write(samples, written, samples.size - written, AudioTrack.WRITE_BLOCKING)
+                    track.write(samples, written, minOf(samples.size-written,sampleRate/50*2), AudioTrack.WRITE_BLOCKING)
                 } catch (e: IllegalStateException) {
                     // Native AudioTrack pointer is gone — the track was released
                     // concurrently (e.g. stop() raced this write()). Treat as a
@@ -254,14 +252,21 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
                     break
                 }
                 written += n
+                writtenFramesTotal+=n/2
+                if(prefilling) {
+                    primedFrames+=n/2
+                    if(primedFrames>=sampleRate*80/1000) { track.play(); prefilling=false }
+                }
             }
 
             if (written > 0) {
+                underruns=track.underrunCount
+                DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, "AT_UNDERRUNS", underruns.toString())
                 DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_LAST_WRITE,
                     "OK ($written samples)")
             }
         }
-        pcmRecorder?.writeSamples(samples)
+        if(recordingAllowed()) pcmRecorder?.writeSamples(samples)
     }
 
     fun setVolume(vol: Float) {
@@ -269,29 +274,38 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
             audioTrack?.setVolume(vol.coerceIn(0f, AudioTrack.getMaxVolume()))
         }
     }
-
-    fun startRecording(filePath: String) {
-        pcmRecorder?.stop()
-        pcmRecorder = PcmRecorder(filePath, sampleRate).also { it.start() }
+    fun clearPendingAudio() {
+        synchronized(trackLock) {
+            audioTrack?.let { track ->
+                runCatching { track.pause(); track.flush(); prefilling=true; primedFrames=0 }
+            }
+        }
     }
 
-    fun stopRecording() {
+    @Synchronized fun startRecording(filePath: String) {
         pcmRecorder?.stop()
+        pcmRecorder = PcmRecorder(filePath, sampleRate, 2).also { it.start() }
+    }
+
+    @Synchronized fun stopRecording() {
+        pcmRecorder?.let { it.stop(); lastRecordedDurationMs=it.capturedDurationMs() }
         pcmRecorder = null
     }
+    private var lastRecordedDurationMs=0L
+    @Synchronized fun recordingDurationMs()=pcmRecorder?.capturedDurationMs() ?: lastRecordedDurationMs
 }
 
 /**
  * Records demodulated audio to a WAV file.
  */
-class PcmRecorder(private val filePath: String, private val sampleRate: Int) {
+class PcmRecorder(private val filePath: String, private val sampleRate: Int, private val channels: Int = 1) {
     var isRecording = false
         private set
 
     private var outputStream: DataOutputStream? = null
     private var bytesWritten = 0
 
-    fun start() {
+    @Synchronized fun start() {
         try {
             val file = File(filePath)
             file.parentFile?.mkdirs()
@@ -305,18 +319,23 @@ class PcmRecorder(private val filePath: String, private val sampleRate: Int) {
         }
     }
 
-    fun writeSamples(samples: FloatArray) {
+    @Synchronized fun writeSamples(samples: FloatArray) {
         if (!isRecording) return
         val stream = outputStream ?: return
         val buf = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
         for (s in samples) {
             buf.putShort((s.coerceIn(-1f, 1f) * 32767f).toInt().toShort())
         }
-        stream.write(buf.array())
-        bytesWritten += buf.array().size
+        try {
+            stream.write(buf.array())
+            bytesWritten += buf.array().size
+        } catch(error:IOException) {
+            Log.e("PcmRecorder","Audio recording write failed",error)
+            stop()
+        }
     }
 
-    fun stop() {
+    @Synchronized fun stop() {
         if (!isRecording) return
         isRecording = false
         try {
@@ -335,8 +354,9 @@ class PcmRecorder(private val filePath: String, private val sampleRate: Int) {
         }
     }
 
+    @Synchronized fun capturedDurationMs()=bytesWritten.toLong()*1000/(sampleRate*channels*2)
+
     private fun writeWavHeader(stream: DataOutputStream, dataLen: Int) {
-        val channels = 1
         val bitsPerSample = 16
         val byteRate = sampleRate * channels * bitsPerSample / 8
         stream.writeBytes("RIFF")

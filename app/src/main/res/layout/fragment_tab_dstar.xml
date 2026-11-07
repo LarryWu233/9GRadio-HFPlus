@@ -32,7 +32,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Not active"
-        android:textColor="#66FFFFFF"
+        android:textColor="?attr/radioMuted"
         android:textSize="10sp"
         android:fontFamily="monospace"
         android:layout_marginBottom="4dp"
@@ -90,14 +90,14 @@
 
     <!-- Divider -->
     <View android:layout_width="match_parent" android:layout_height="0.5dp"
-        android:background="#33FFFFFF" android:layout_marginBottom="6dp"/>
+        android:background="?attr/radioOutline" android:layout_marginBottom="6dp"/>
 
     <!-- Frame log label -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Recent Calls (tap for detail)"
-        android:textColor="#88FFFFFF"
+        android:textColor="?attr/radioSecondary"
         android:textSize="10sp"
         android:layout_marginBottom="4dp"/>
 
@@ -106,7 +106,7 @@
         android:id="@+id/listDstarTabFrames"
         android:layout_width="match_parent"
         android:layout_height="220dp"
-        android:background="#0D1117"
+        android:background="?attr/radioMain"
         android:divider="#22FFFFFF"
         android:dividerHeight="0.5dp"
         android:nestedScrollingEnabled="true"/>

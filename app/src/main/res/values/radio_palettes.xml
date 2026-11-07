@@ -1,0 +1,107 @@
+<resources>
+<style name="Theme.NineGRadio.Classic" parent="Theme.NineGRadio.Base">
+<item name="radioMain">#071018</item>
+<item name="radioSurface">#0D1822</item>
+<item name="radioCard">#12202B</item>
+<item name="radioElevated">#192935</item>
+<item name="radioText">#FFFFFF</item>
+<item name="radioSecondary">#B7CDD9</item>
+<item name="radioMuted">#71838E</item>
+<item name="radioAccent">#FFB56B</item>
+<item name="radioSlider">#75AAA9</item>
+<item name="radioOutline">#304957</item>
+<item name="radioSelected">#263D43</item>
+<item name="radioLink">#68BDDF</item>
+<item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item>
+</style>
+<style name="Theme.NineGRadio.Ocean" parent="Theme.NineGRadio.Base">
+<item name="radioMain">#0C2340</item>
+<item name="radioSurface">#12324E</item>
+<item name="radioCard">#1A4A6E</item>
+<item name="radioElevated">#205C7A</item>
+<item name="radioText">#EAF7FA</item>
+<item name="radioSecondary">#BCDDE3</item>
+<item name="radioMuted">#83AEBB</item>
+<item name="radioAccent">#79E1DC</item>
+<item name="radioSlider">#2D8A9E</item>
+<item name="radioOutline">#39677D</item>
+<item name="radioSelected">#235B70</item>
+<item name="radioLink">#5CBDB9</item>
+<item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item>
+</style>
+<style name="Theme.NineGRadio.Sage" parent="Theme.NineGRadio.Base">
+<item name="radioMain">#171C17</item>
+<item name="radioSurface">#20281F</item>
+<item name="radioCard">#293428</item>
+<item name="radioElevated">#354331</item>
+<item name="radioText">#EFF2E6</item>
+<item name="radioSecondary">#C5CEB7</item>
+<item name="radioMuted">#91A186</item>
+<item name="radioAccent">#DFE9AC</item>
+<item name="radioSlider">#94BDA2</item>
+<item name="radioOutline">#475A42</item>
+<item name="radioSelected">#3A5138</item>
+<item name="radioLink">#CFDBAB</item>
+<item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item>
+</style>
+<style name="Theme.NineGRadio.Black" parent="Theme.NineGRadio.Base">
+<item name="radioMain">#000000</item>
+<item name="radioSurface">#111111</item>
+<item name="radioCard">#171717</item>
+<item name="radioElevated">#222222</item>
+<item name="radioText">#FFFFFF</item>
+<item name="radioSecondary">#CCCCCC</item>
+<item name="radioMuted">#888888</item>
+<item name="radioAccent">#FFAE66</item>
+<item name="radioSlider">#90AAA8</item>
+<item name="radioOutline">#444444</item>
+<item name="radioSelected">#303030</item>
+<item name="radioLink">#BBBBBB</item>
+<item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item>
+</style>
+<style name="Theme.NineGRadio.Carbon" parent="Theme.NineGRadio.Base">
+<item name="radioMain">#0D1117</item>
+<item name="radioSurface">#161B22</item>
+<item name="radioCard">#1D2630</item>
+<item name="radioElevated">#253140</item>
+<item name="radioText">#C9D1D9</item>
+<item name="radioSecondary">#A7B4C2</item>
+<item name="radioMuted">#768695</item>
+<item name="radioAccent">#83BCFF</item>
+<item name="radioSlider">#79A8AD</item>
+<item name="radioOutline">#344455</item>
+<item name="radioSelected">#263D55</item>
+<item name="radioLink">#58A6FF</item>
+<item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item>
+</style>
+<style name="Theme.NineGRadio.Arctic" parent="Theme.NineGRadio.Base">
+<item name="radioMain">#091521</item>
+<item name="radioSurface">#101F2D</item>
+<item name="radioCard">#172D3C</item>
+<item name="radioElevated">#223D50</item>
+<item name="radioText">#E8F0F8</item>
+<item name="radioSecondary">#B8D4E8</item>
+<item name="radioMuted">#7E9DB3</item>
+<item name="radioAccent">#9DD8FF</item>
+<item name="radioSlider">#83B9C5</item>
+<item name="radioOutline">#335065</item>
+<item name="radioSelected">#294C65</item>
+<item name="radioLink">#9DD8FF</item>
+<item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item>
+</style>
+<style name="Theme.NineGRadio.Soft" parent="Theme.NineGRadio.Base">
+<item name="radioMain">#22252A</item>
+<item name="radioSurface">#292D32</item>
+<item name="radioCard">#30353A</item>
+<item name="radioElevated">#383F46</item>
+<item name="radioText">#FFFFFF</item>
+<item name="radioSecondary">#C2CBD3</item>
+<item name="radioMuted">#8A99A6</item>
+<item name="radioAccent">#74C0FF</item>
+<item name="radioSlider">#78A6B0</item>
+<item name="radioOutline">#48535D</item>
+<item name="radioSelected">#254B66</item>
+<item name="radioLink">#69B8FA</item>
+<item name="android:windowLightStatusBar">false</item><item name="android:windowLightNavigationBar">false</item>
+</style>
+</resources>

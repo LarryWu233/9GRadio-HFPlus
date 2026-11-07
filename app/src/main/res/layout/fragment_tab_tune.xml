@@ -16,39 +16,51 @@
     android:paddingTop="8dp"
     android:paddingBottom="12dp">
 
+    <com.radiosport.ninegradio.ui.SpringTunerView
+        android:id="@+id/springTuner" android:layout_width="match_parent"
+        android:layout_height="58dp" android:layout_marginBottom="4dp"/>
     <!-- Tuning dial: horizontal 3D film-strip, swipe left/right to tune -->
     <com.radiosport.ninegradio.ui.TuningDialView
         android:id="@+id/tuningDial"
         android:layout_width="match_parent"
-        android:layout_height="140dp"
+        android:layout_height="108dp"
         android:layout_marginVertical="4dp"/>
+
+    <TextView android:id="@+id/tvTuneFrequency" android:visibility="gone" android:layout_width="match_parent"
+        android:layout_height="32dp" android:gravity="center" android:text="— Hz"
+        android:textColor="?attr/radioSecondary" android:textSize="14sp" android:fontFamily="monospace"/>
+    <com.radiosport.ninegradio.ui.SegmentedSelectorView android:id="@+id/tuningParameterSelector" android:visibility="gone"
+        android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="8dp"/>
+    <LinearLayout android:id="@+id/stepParameter" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:orientation="vertical">
 
     <!-- Step size quick-select chips -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="STEP SIZE"
-        android:textColor="#00CCFF"
+        android:text="Step"
+        android:visibility="gone"
+        android:textColor="?attr/radioLink"
         android:textSize="11sp"
         android:textAllCaps="true"
         android:letterSpacing="0.1"
         android:layout_marginTop="4dp"
         android:layout_marginBottom="2dp"/>
 
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:scrollbars="none">
-        <com.google.android.material.chip.ChipGroup
+        <com.google.android.material.chip.ChipGroup android:visibility="gone"
             android:id="@+id/chipGroupStep"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:singleSelection="true"
             app:selectionRequired="true"/>
-    </HorizontalScrollView>
+
+
+    <com.radiosport.ninegradio.ui.TuningDialView android:id="@+id/stepPicker"
+        android:layout_width="match_parent" android:layout_height="80dp"/>
+    </LinearLayout>
 
     <!-- Coarse / Fine toggle -->
-    <LinearLayout
+    <LinearLayout android:visibility="gone"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
@@ -63,14 +75,14 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Fine Tune"
-                android:textColor="#AAFFFFFF"
+                android:textColor="?attr/radioSecondary"
                 android:textSize="13sp"/>
             <TextView
                 android:id="@+id/tvFineTuneSub"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Long-press dial, or toggle here"
-                android:textColor="#66FFFFFF"
+                android:textColor="?attr/radioMuted"
                 android:textSize="10sp"/>
         </LinearLayout>
         <com.google.android.material.switchmaterial.SwitchMaterial
@@ -79,34 +91,66 @@
             android:layout_height="wrap_content"/>
     </LinearLayout>
 
-    <!-- Divider -->
+    <LinearLayout android:id="@+id/bandwidthParameter" android:visibility="gone" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:orientation="vertical" >
+    <!-- Protocol Filter / IF Bandwidth -->
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="@string/receive_filter"
+        android:visibility="gone"
+        android:textColor="?attr/radioLink" android:textSize="13sp" android:textAllCaps="true"
+        android:letterSpacing="0.1" android:layout_marginBottom="4dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:layout_width="80dp" android:layout_height="wrap_content"
+            android:text="BW" android:textColor="?attr/radioSecondary" android:textSize="13sp"/>
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderIfBandwidth"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:valueFrom="0" android:valueTo="29" android:value="14"
+            android:stepSize="1"
+            app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider"
+            xmlns:app="http://schemas.android.com/apk/res-auto"/>
+        <TextView android:id="@+id/tvIfBandwidthValue"
+            android:layout_width="110dp" android:layout_height="wrap_content"
+            android:text="Auto" android:textColor="?attr/radioLink" android:textSize="12sp"
+            android:gravity="end" android:fontFamily="monospace"/>
+    </LinearLayout>
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+        <Button android:id="@+id/btnBandwidthNarrow" style="@style/RadioCompactButton" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="48dp" android:text="−" android:textSize="22sp" android:contentDescription="收窄带宽"/>
+        <Button android:id="@+id/btnAutoBandwidth" style="@style/RadioCompactButton" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="48dp" android:text="Auto"/>
+        <Button android:id="@+id/btnBandwidthWide" style="@style/RadioCompactButton" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="48dp" android:text="+" android:textSize="22sp" android:contentDescription="放宽带宽"/>
+    </LinearLayout>
+    </LinearLayout><!-- bandwidthParameter -->
+
     <View android:layout_width="match_parent" android:layout_height="1dp"
-        android:background="#33FFFFFF" android:layout_marginVertical="10dp"/>
+        android:background="?attr/radioOutline" android:layout_marginVertical="12dp"/>
+
 
     <!-- Band presets -->
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="BAND PRESETS"
-        android:textColor="#00CCFF"
+        android:text="频段"
+        android:textColor="?attr/radioLink"
         android:textSize="11sp"
         android:textAllCaps="true"
         android:letterSpacing="0.1"
         android:layout_marginBottom="4dp"/>
 
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:scrollbars="none">
-        <com.google.android.material.chip.ChipGroup
-            android:id="@+id/chipGroupBands"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:singleSelection="false"/>
-    </HorizontalScrollView>
+    <TextView android:id="@+id/btnBandPresets" android:layout_width="match_parent"
+        android:layout_height="48dp" android:gravity="center_vertical" android:text="频段预设  ›"
+        android:textSize="14sp" android:textColor="?attr/radioSecondary" android:background="?attr/selectableItemBackground"
+        android:clickable="true" android:focusable="true"/>
+    <com.google.android.material.chip.ChipGroup android:id="@+id/chipGroupBands"
+        android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone"/>
 
-    <!-- Snap to channel -->
-    <LinearLayout
+    <!-- Legacy snap binding -->
+    <LinearLayout android:visibility="gone"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
@@ -121,13 +165,13 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Snap to Channel Grid"
-                android:textColor="#AAFFFFFF"
+                android:textColor="?attr/radioSecondary"
                 android:textSize="13sp"/>
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Auto-align to band channel spacing"
-                android:textColor="#66FFFFFF"
+                android:textColor="?attr/radioMuted"
                 android:textSize="10sp"/>
         </LinearLayout>
         <com.google.android.material.switchmaterial.SwitchMaterial
@@ -137,6 +181,12 @@
             android:checked="true"/>
     </LinearLayout>
 
+    <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switchAutoDemod"
+        android:layout_width="match_parent" android:layout_height="48dp" android:text="@string/auto_demod"/>
+    <Button style="@style/RadioCompactButton" android:id="@+id/btnRegionalRecommendations" android:layout_width="match_parent"
+        android:layout_height="48dp" android:text="@string/region_recommendations"/>
+    <Button style="@style/RadioCompactButton" android:visibility="gone" android:id="@+id/btnEtmScan" android:layout_width="match_parent"
+        android:layout_height="48dp" android:text="@string/etm_scan"/>
 </LinearLayout>
 
 </ScrollView>

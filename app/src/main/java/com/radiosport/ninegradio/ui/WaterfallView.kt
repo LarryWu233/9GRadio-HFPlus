@@ -42,6 +42,8 @@ class WaterfallView @JvmOverloads constructor(
         private const val DB_MIN = -120f
         private const val DB_MAX = 0f
         private const val AXIS_H = 26f
+        private const val HISTORY_ROWS = 1024
+        private const val TILE_ROWS = 32
 
         // How long after this view is constructed a 0×0 size is treated as the
         // normal "not laid out yet" startup blip rather than a real fault. Android
@@ -149,9 +151,19 @@ class WaterfallView @JvmOverloads constructor(
     private var displayBwHz  : Long = sampleRateHz.toLong()
 
     // ─── Ring-buffer bitmap ───────────────────────────────────────────────────
-    private var waterfallBitmap: Bitmap? = null
+    // Android uploads a whole mutable bitmap after setPixels. Split history so
+    // adding a line uploads only 32 rows, rather than the entire 1024-row image.
+    private var historyTiles = emptyArray<Bitmap>()
+    private var bitmapWidth = 0
+    private var rawHistory = ShortArray(0)
+    private val validRows = BooleanArray(HISTORY_ROWS)
+    private var manualFloor: Float? = null
+    private var manualCeiling = -55f
+    private var recolorNeeded = false
+    private var lastRecolor = 0L
     private var writeRow    = 0
     private var pixelRow: IntArray? = null
+    private var displayRow = FloatArray(0)
 
     // ─── Speed throttle ───────────────────────────────────────────────────────
     private var maxLinesPerSecond   = 0
@@ -176,13 +188,13 @@ class WaterfallView @JvmOverloads constructor(
 
     /**
      * When enabled, the engine tracks the running min/max of incoming spectra
-     * and automatically adjusts dbMin/dbMax every [AUTO_STRETCH_WINDOW] lines.
+     * and smoothly follows robust noise and signal percentiles.
      */
     private var autoStretch = false
-    private var autoStretchMin  = Float.MAX_VALUE
-    private var autoStretchMax  = Float.MIN_VALUE
-    private var autoStretchLines = 0
-    private val AUTO_STRETCH_WINDOW = 60   // update every N lines (~2 s at 30 l/s)
+    // Original 9GRadio automatic min/max window; keep display character intact.
+    private var autoStretchMin=Float.MAX_VALUE
+    private var autoStretchMax=-Float.MAX_VALUE
+    private var autoStretchLines=0
 
     /** Show elapsed-time tick marks on the right edge. */
     private var showTimestamp  = true
@@ -198,14 +210,11 @@ class WaterfallView @JvmOverloads constructor(
     // ─── Paints ───────────────────────────────────────────────────────────────
     private val bitmapPaint = Paint().apply {
         isAntiAlias    = false
-        isFilterBitmap = true
+        isFilterBitmap = true // original 9GRadio smooth bitmap presentation
         isDither       = false
     }
-    private val srcRectUpper = RectF()
-    private val dstRectUpper = RectF()
-    private val srcRectLower = RectF()
-    private val dstRectLower = RectF()
-    private val drawMatrix   = Matrix()
+    private val tileSource = Rect()
+    private val tileDestination = RectF()
 
     private val axisBgPaint = Paint().apply {
         color = 0xCC000000.toInt()
@@ -300,21 +309,14 @@ class WaterfallView @JvmOverloads constructor(
         }
 
         // ── Auto-stretch: track min/max before any limiting ───────────────────
-        if (autoStretch && spectrum.isNotEmpty()) {
-            val sMin = spectrum.minOrNull() ?: dbMin
-            val sMax = spectrum.maxOrNull() ?: dbMax
-            if (sMin < autoStretchMin) autoStretchMin = sMin
-            if (sMax > autoStretchMax) autoStretchMax = sMax
-            autoStretchLines++
-            if (autoStretchLines >= AUTO_STRETCH_WINDOW) {
-                // Apply with a small margin
-                val margin = (autoStretchMax - autoStretchMin) * 0.05f
-                dbMin = autoStretchMin - margin
-                dbMax = autoStretchMax + margin
-                // Slow decay: drift back toward centre to handle changing conditions
-                autoStretchMin += 0.5f
-                autoStretchMax -= 0.5f
-                autoStretchLines = 0
+        if (spectrum.isEmpty()) return
+        if(autoStretch) {
+            autoStretchMin=minOf(autoStretchMin,spectrum.minOrNull() ?: dbMin)
+            autoStretchMax=maxOf(autoStretchMax,spectrum.maxOrNull() ?: dbMax)
+            if(++autoStretchLines>=60) {
+                val margin=(autoStretchMax-autoStretchMin)*0.05f
+                dbMin=autoStretchMin-margin; dbMax=autoStretchMax+margin
+                autoStretchMin+=0.5f; autoStretchMax-=0.5f; autoStretchLines=0
             }
         }
 
@@ -364,7 +366,7 @@ class WaterfallView @JvmOverloads constructor(
             }
             return
         }
-        val bitmapH = (h - AXIS_H).toInt()
+        val bitmapH = HISTORY_ROWS
         if (bitmapH <= 0) {
             DebugBus.setExtra(DebugBus.STAGE_WATERFALL_VIEW, DebugBus.EXTRA_WF_BITMAP_WH,
                 "⚠ NOT_CREATED — bitmapH=${bitmapH}")
@@ -384,10 +386,12 @@ class WaterfallView @JvmOverloads constructor(
         DebugBus.setExtra(DebugBus.STAGE_WATERFALL_VIEW, DebugBus.EXTRA_WF_BITMAP_WH, "${w}×${bitmapH}px")
         ensureBitmap(w, bitmapH)
 
-        val wfBitmap = waterfallBitmap ?: return
+        if (historyTiles.isEmpty()) return
         val n        = spectrum.size
         lastBinCount = n
-        val range    = (dbMax - dbMin).let { if (it < 1f) 1f else it }
+        val colourFloor = manualFloor ?: dbMin
+        val colourCeiling = if (manualFloor != null) manualCeiling else dbMax
+        val range = (colourCeiling - colourFloor).coerceAtLeast(1f)
 
         if (pixelRow == null || pixelRow!!.size != w) pixelRow = IntArray(w)
         val pixels = pixelRow!!
@@ -431,16 +435,20 @@ class WaterfallView @JvmOverloads constructor(
         // pixel through pixelToRelHz first makes the waterfall bitmap honour
         // the exact same pan/zoom state as the trace, keeping them locked
         // together.
+        if(displayRow.size!=w) displayRow=FloatArray(w)
+        val leftHz=pixelToRelHz(0f,wF).toDouble()
+        val rightHz=pixelToRelHz(wF,wF).toDouble()
+        SpectrumRasterizer.peakBinsToPixels(spectrum,
+            (leftHz-hwOffsetHz)/hzPerBin+nF/2.0,(rightHz-leftHz)/hzPerBin/wF,displayRow)
         for (px in 0 until w) {
-            val relHz = pixelToRelHz(px.toFloat() + 0.5f, wF)
-            val binF  = ((relHz - hwOffsetHz) / hzPerBin + nF / 2.0 - 0.5).toFloat()
-            val bin0 = binF.toInt().coerceIn(0, n - 1)
-            val bin1 = (bin0 + 1).coerceIn(0, n - 1)
-            val frac = (binF - bin0).coerceIn(0f, 1f)
-            val db   = spectrum[bin0] * (1f - frac) + spectrum[bin1] * frac
+            // SDR++ preserves the strongest bin covered by a display pixel.
+            // Interpolating two bin centres can erase narrow carriers when
+            // several FFT bins map to one pixel, or smear them when zoomed in.
+            val db=displayRow[px]
+            rawHistory[writeRow * w + px] = (db.coerceIn(-200f, 20f) * 10).toInt().toShort()
 
             // Normalise to 0..1
-            var norm = ((db - dbMin) / range).coerceIn(0f, 1f)
+            var norm = ((db - colourFloor) / range).coerceIn(0f, 1f)
 
             // Apply brightness and contrast:  (norm - 0.5) * contrast + 0.5 + brightness
             norm = ((norm - 0.5f) * co + 0.5f + br).coerceIn(0f, 1f)
@@ -448,7 +456,8 @@ class WaterfallView @JvmOverloads constructor(
             pixels[px] = palette256[(norm * 255f).toInt().coerceIn(0, 255)]
         }
 
-        wfBitmap.setPixels(pixels, 0, w, 0, writeRow, w, 1)
+        historyTiles[writeRow / TILE_ROWS].setPixels(pixels, 0, w, 0, writeRow % TILE_ROWS, w, 1)
+        validRows[writeRow] = true
         postInvalidateOnAnimation()
     }
 
@@ -463,7 +472,7 @@ class WaterfallView @JvmOverloads constructor(
         // desyncing the waterfall from the spectrum trace.
         val binHz = if (sampleRateHz > 0 && lastBinCount > 0)
             sampleRateHz.toDouble() / lastBinCount else 1.0
-        tuningOffsetHz = (tuningOffsetHz + delta) % binHz
+        tuningOffsetHz = 0.0
         postInvalidate()
     }
 
@@ -513,7 +522,10 @@ class WaterfallView @JvmOverloads constructor(
         postInvalidate()
     }
 
+    private var selectedPalette = Palette.RAINBOW
     fun setPalette(p: Palette) {
+        if (p == selectedPalette) return
+        selectedPalette = p
         palette256 = buildPalette(p)
         // Redraw the bitmap with the new palette? We can't easily recolour historical
         // data without storing the original float values, so just clear and start fresh.
@@ -530,7 +542,8 @@ class WaterfallView @JvmOverloads constructor(
     }
 
     fun clearHistory() {
-        waterfallBitmap?.eraseColor(Color.BLACK)
+        historyTiles.forEach { it.eraseColor(Color.BLACK) }
+        validRows.fill(false)
         writeRow = 0
         totalLinesWritten = 0
         postInvalidate()
@@ -567,12 +580,9 @@ class WaterfallView @JvmOverloads constructor(
      * min/max tracked from incoming spectra.
      */
     fun setAutoStretch(enable: Boolean) {
+        if (autoStretch == enable) return
         autoStretch = enable
-        if (enable) {
-            autoStretchMin  = Float.MAX_VALUE
-            autoStretchMax  = Float.MIN_VALUE
-            autoStretchLines = 0
-        }
+        autoStretchMin=Float.MAX_VALUE; autoStretchMax=-Float.MAX_VALUE; autoStretchLines=0
     }
 
     /** Show or hide the elapsed-time ruler on the right edge. */
@@ -584,11 +594,16 @@ class WaterfallView @JvmOverloads constructor(
     // ─── Drawing ──────────────────────────────────────────────────────────────
 
     override fun onDraw(canvas: Canvas) {
-        val wfBitmap = waterfallBitmap ?: run { canvas.drawColor(Color.BLACK); return }
+        if (historyTiles.isEmpty()) { canvas.drawColor(Color.BLACK); return }
+        if (recolorNeeded) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastRecolor >= 80) { recolorHistory(); lastRecolor = now; recolorNeeded = false }
+            else postInvalidateDelayed(80)
+        }
         val sw = width.toFloat()
         val sh = height.toFloat()
-        val bw = wfBitmap.width
-        val bh = wfBitmap.height
+        val bw = bitmapWidth
+        val bh = HISTORY_ROWS
 
         // The bitmap is always written edge-to-edge across its full width
         // (see addLine(): each row already maps px 0..w-1 through
@@ -603,19 +618,19 @@ class WaterfallView @JvmOverloads constructor(
         // drawFrequencyAxis/drawTunerMarker below and SpectrumView's
         // pixelToFrequency), never where data is actually drawn.
         val waterfallBottom = sh - AXIS_H
-        val upperRows = bh - writeRow
-
-        if (upperRows > 0) {
-            srcRectUpper.set(0f, writeRow.toFloat(), bw.toFloat(), bh.toFloat())
-            dstRectUpper.set(0f, 0f, sw, upperRows.toFloat())
-            drawMatrix.setRectToRect(srcRectUpper, dstRectUpper, Matrix.ScaleToFit.FILL)
-            canvas.drawBitmap(wfBitmap, drawMatrix, bitmapPaint)
-        }
-        if (writeRow > 0) {
-            srcRectLower.set(0f, 0f, bw.toFloat(), writeRow.toFloat())
-            dstRectLower.set(0f, upperRows.toFloat(), sw, waterfallBottom)
-            drawMatrix.setRectToRect(srcRectLower, dstRectLower, Matrix.ScaleToFit.FILL)
-            canvas.drawBitmap(wfBitmap, drawMatrix, bitmapPaint)
+        // Upstream presentation: one incoming row per visible pixel row.
+        // Retain extra backing rows for resizing, rather than compressing them.
+        val visibleRows=min(bh,waterfallBottom.toInt().coerceAtLeast(1))
+        var drawnRows = 0
+        while (drawnRows < visibleRows) {
+            val row = (writeRow + drawnRows) % bh
+            val localRow = row % TILE_ROWS
+            val count = min(TILE_ROWS - localRow, visibleRows - drawnRows)
+            tileSource.set(0, localRow, bw, localRow + count)
+            tileDestination.set(0f, waterfallBottom * drawnRows / visibleRows,
+                sw, waterfallBottom * (drawnRows + count) / visibleRows)
+            canvas.drawBitmap(historyTiles[row / TILE_ROWS], tileSource, tileDestination, bitmapPaint)
+            drawnRows += count
         }
 
         if (showTunerMarker)            drawTunerMarker(canvas, sw, sh)
@@ -625,25 +640,51 @@ class WaterfallView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        waterfallBitmap?.recycle()
-        waterfallBitmap = null
-        pixelRow        = null
-        val bitmapH = (h - AXIS_H).toInt()
-        if (w > 0 && bitmapH > 0) ensureBitmap(w, bitmapH)
+        // History size does not follow the divider: resizing preserves reception
+        // history and avoids allocating/recycling a bitmap for each drag frame.
+        if (w > 0 && h > AXIS_H) ensureBitmap(w, HISTORY_ROWS)
     }
 
     private fun ensureBitmap(w: Int, bitmapH: Int) {
-        if (waterfallBitmap == null ||
-            waterfallBitmap!!.width  != w ||
-            waterfallBitmap!!.height != bitmapH) {
-            waterfallBitmap?.recycle()
-            waterfallBitmap = Bitmap.createBitmap(w, bitmapH, Bitmap.Config.ARGB_8888)
-            waterfallBitmap!!.eraseColor(Color.BLACK)
+        if (historyTiles.isEmpty() || bitmapWidth != w) {
+            historyTiles.forEach { it.recycle() }
+            historyTiles = Array(bitmapH / TILE_ROWS) {
+                Bitmap.createBitmap(w, TILE_ROWS, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLACK) }
+            }
+            bitmapWidth = w
+            rawHistory = ShortArray(w * bitmapH)
+            validRows.fill(false)
             writeRow = 0
         }
     }
 
     // ─── Overlay layers ───────────────────────────────────────────────────────
+    fun setManualLevels(floor: Float?, ceiling: Float = -55f) {
+        if (floor == manualFloor && (floor == null || ceiling == manualCeiling)) return
+        manualFloor = floor
+        manualCeiling = ceiling
+        recolorNeeded = true
+        postInvalidateOnAnimation()
+    }
+
+    private fun recolorHistory() {
+        val w = bitmapWidth
+        if (w <= 0) return
+        if (pixelRow == null || pixelRow!!.size != w) pixelRow = IntArray(w)
+        val pixels = pixelRow!!
+        val floor = manualFloor ?: dbMin
+        val ceiling = if (manualFloor != null) manualCeiling else dbMax
+        val scale = 1f / (ceiling - floor).coerceAtLeast(1f)
+        for (row in 0 until HISTORY_ROWS) {
+            if (!validRows[row]) continue
+            for (x in 0 until w) {
+                val normalized = ((rawHistory[row * w + x] / 10f - floor) * scale).coerceIn(0f, 1f)
+                val adjusted = ((normalized - 0.5f) * contrast + 0.5f + brightness).coerceIn(0f, 1f)
+                pixels[x] = palette256[(adjusted * 255).toInt()]
+            }
+            historyTiles[row / TILE_ROWS].setPixels(pixels, 0, w, 0, row % TILE_ROWS, w, 1)
+        }
+    }
 
     /**
      * Dashed vertical line at the tuned/dialed frequency -- the same
@@ -683,7 +724,7 @@ class WaterfallView @JvmOverloads constructor(
         if (waterfallH <= 0f) return
         val lps         = measuredLps                          // lines per second
         if (lps <= 0f) return
-        val secondsPerPx = 1f / (lps * (waterfallH / (waterfallBitmap?.height?.toFloat() ?: waterfallH)))
+        val secondsPerPx = min(HISTORY_ROWS,waterfallH.toInt().coerceAtLeast(1)) / (lps * waterfallH)
 
         val rulerW = 36f
         canvas.drawRect(sw - rulerW, 0f, sw, waterfallH, timeRulerPaint)
@@ -750,6 +791,8 @@ class WaterfallView @JvmOverloads constructor(
         val ppmHz = centerFreqHz.toDouble() * ppmCorrection / 1_000_000.0
         return (x / sw - 0.5) * displayBwHz + ppmHz + freqOffsetHz + tuningOffsetHz
     }
+
+    fun frequencyAtPixel(x: Float): Long = pixelToHz(x)
 
     private fun pixelToHz(px: Float): Long {
         return centerFreqHz + Math.round(pixelToRelHz(px, width.toFloat()))

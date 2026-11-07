@@ -12,6 +12,23 @@ import java.util.zip.GZIPOutputStream
  * Supports .iq (raw uint8) and .iq.gz (gzip compressed) formats.
  */
 class IqRecorder {
+    @Synchronized
+    fun write(block: com.radiosport.ninegradio.source.IqBlock) {
+        when (block) {
+            is com.radiosport.ninegradio.source.IqBlock.Unsigned8 -> write(block.bytes)
+            is com.radiosport.ninegradio.source.IqBlock.Float32 -> {
+                if (!isRecording) return
+                try {
+                    check(format == Format.FLOAT32) { "Float IQ must be recorded as CF32" }
+                    val buffer = java.nio.ByteBuffer.allocate(block.values.size * 4)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    buffer.asFloatBuffer().put(block.values)
+                    outputStream?.write(buffer.array())
+                    bytesWritten += buffer.capacity()
+                } catch (e: IOException) { Log.e(TAG, "Float IQ write failed", e); stop() }
+            }
+        }
+    }
 
     companion object {
         private const val TAG = "IqRecorder"
@@ -49,6 +66,7 @@ class IqRecorder {
      * @param rate Sample rate (for metadata).
      * @param fmt Output format.
      */
+    @Synchronized
     fun start(path: String, rate: Int, fmt: Format = Format.RAW_UINT8) {
         if (isRecording) stop()
         filePath = path
@@ -75,6 +93,7 @@ class IqRecorder {
     /**
      * Write a block of raw IQ bytes.
      */
+    @Synchronized
     fun write(data: ByteArray) {
         if (!isRecording) return
         try {
@@ -104,6 +123,7 @@ class IqRecorder {
         }
     }
 
+    @Synchronized
     fun stop() {
         if (!isRecording) return
         isRecording = false
@@ -118,6 +138,8 @@ class IqRecorder {
         outputStream = null
         fileOutputStream = null
     }
+
+    @Synchronized fun capturedDurationMs(): Long = bytesWritten * 1000L / ((if(format==Format.FLOAT32) 8L else 2L)*sampleRate.coerceAtLeast(1))
 
     fun getDurationMs(): Long = if (isRecording) System.currentTimeMillis() - startTimeMs else 0L
 

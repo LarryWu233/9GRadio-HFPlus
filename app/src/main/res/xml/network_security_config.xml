@@ -15,4 +15,9 @@
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
+    <!-- EiBi publishes schedule metadata on HTTP; only this host is allowed. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain>www.eibispace.de</domain>
+        <domain>eibispace.de</domain>
+    </domain-config>
 </network-security-config>

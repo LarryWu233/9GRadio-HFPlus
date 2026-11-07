@@ -23,10 +23,7 @@ import com.radiosport.ninegradio.R
 class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
 
     // ── Mode tab ──────────────────────────────────────────────────────────────
-    val chipGroupDemod: ChipGroup? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_MODE)?.findViewById(R.id.chipGroupDemod)
-    val btnShutdown: android.widget.Button? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_MODE)?.findViewById(R.id.btnShutdown)
-    val spinnerShutdownTimer: android.widget.Spinner? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_MODE)?.findViewById(R.id.spinnerShutdownTimer)
-    val tvShutdownTimerStatus: android.widget.TextView? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_MODE)?.findViewById(R.id.tvShutdownTimerStatus)
+    val chipGroupDemod: android.widget.GridLayout? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_MODE)?.findViewById(R.id.chipGroupDemod)
 
     // ── Tune tab ──────────────────────────────────────────────────────────────
     val tuningDial:      TuningDialView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.tuningDial)
@@ -44,8 +41,8 @@ class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
     val tvSquelchValue:        TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.tvSquelchValue)
     val sliderVolume:          Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.sliderVolume)
     val tvVolumeValue:         TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.tvVolumeValue)
-    val sliderIfBandwidth:     Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.sliderIfBandwidth)
-    val tvIfBandwidthValue:    TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.tvIfBandwidthValue)
+    val sliderIfBandwidth:     Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.sliderIfBandwidth)
+    val tvIfBandwidthValue:    TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.tvIfBandwidthValue)
     val switchNoiseBlanker:    Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchNoiseBlanker)
     val switchNoiseReducer:    Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchNoiseReducer)
     val switchBiasTee:         Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchBiasTee)
@@ -189,6 +186,6 @@ class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
     val tvScanTabHits:         android.widget.TextView? get() = scanView()?.findViewById(R.id.tvScanTabHits)
     val tvScanTabNoiseFloor:   android.widget.TextView? get() = scanView()?.findViewById(R.id.tvScanTabNoiseFloor)
     val tvScanTabRate:         android.widget.TextView? get() = scanView()?.findViewById(R.id.tvScanTabRate)
-    val listScanTabHits:       android.widget.ListView? get() = scanView()?.findViewById(R.id.listScanTabHits)
-    val listScanTabChannelTable: android.widget.ListView? get() = scanView()?.findViewById(R.id.listScanTabChannelTable)
+    val listScanTabHits:       RadioDataTable? get() = scanView()?.findViewById(R.id.listScanTabHits)
+    val listScanTabChannelTable: RadioDataTable? get() = scanView()?.findViewById(R.id.listScanTabChannelTable)
 }

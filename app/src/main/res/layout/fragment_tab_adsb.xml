@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="8dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/tvAdsbPanelCount" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:text="飞机：0" android:textColor="?attr/radioAccent" android:textSize="15sp"/>
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="雷达" android:textColor="?attr/radioSecondary" android:textSize="12sp"/>
+        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/btnAdsbPanelMap"
+            android:layout_width="wrap_content" android:layout_height="48dp" android:text="地图" android:checked="true"
+            android:textSize="12sp" android:layout_marginHorizontal="6dp"/>
+        <Button android:id="@+id/btnAdsbPanelFull" style="@style/RadioCompactButton" android:layout_width="64dp"
+            android:layout_height="48dp" android:text="展开" android:contentDescription="展开接收面板"/>
+    </LinearLayout>
+    <TextView android:id="@+id/tvAdsbPanelStatus" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="等待 ADS-B 输入" android:textColor="?attr/radioSecondary" android:textSize="11sp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="36dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/tvAdsbRecordDistance" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="match_parent" android:gravity="center_vertical" android:text="记录距离：—"
+            android:textSize="12sp" android:textColor="?attr/radioLink" android:clickable="true" android:focusable="true"
+            android:contentDescription="历史最远接收距离，点击可清除记录"/>
+        <TextView android:id="@+id/tvAdsbMaxDistance" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="match_parent" android:gravity="center_vertical" android:text="最大距离：—"
+            android:textSize="12sp" android:textColor="?attr/radioSecondary"/>
+    </LinearLayout>
+    <FrameLayout android:id="@+id/adsbVisualization" android:layout_width="match_parent" android:layout_height="260dp">
+        <com.radiosport.ninegradio.ui.AdsbRadarView android:id="@+id/adsbPanelRadar"
+            android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone"/>
+        <FrameLayout android:id="@+id/adsbMapHost" android:layout_width="match_parent" android:layout_height="match_parent"/>
+    </FrameLayout>
+    <com.radiosport.ninegradio.ui.AdsbAircraftTable android:id="@+id/listAdsbPanelAircraft"
+        android:layout_width="match_parent" android:layout_height="180dp" android:background="?attr/radioMain"
+        />
+</LinearLayout>

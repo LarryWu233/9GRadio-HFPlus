@@ -16,6 +16,8 @@ import com.radiosport.ninegradio.dsp.DspEngine
 import com.radiosport.ninegradio.dsp.FftEngine
 import com.radiosport.ninegradio.scanner.FrequencyScanner
 import com.radiosport.ninegradio.source.IqSource
+import com.radiosport.ninegradio.source.RtlTcpSource
+import com.radiosport.ninegradio.source.DeviceCapabilities
 import com.radiosport.ninegradio.usb.RtlSdrDevice
 import com.radiosport.ninegradio.usb.RtlSdrService
 import kotlinx.coroutines.*
@@ -30,6 +32,108 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = (application as com.radiosport.ninegradio.RtlSdrApplication).database
     private val prefs = application.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private var profileId = prefs.getString("activeDevice", "rtl") ?: "rtl"
+    private val _capabilities = MutableStateFlow(if (profileId == "airspyhf") DeviceCapabilities.airspy(
+        prefs.getString("device_airspyhf_rates",null)?.split(',')?.mapNotNull { it.toIntOrNull()?.takeIf { r -> r>0 } }?.takeIf { it.isNotEmpty() }
+            ?: listOf(prefs.getInt("device_airspyhf_rate",768000).coerceAtLeast(1))) else DeviceCapabilities.RTL)
+    val capabilities: StateFlow<DeviceCapabilities> = _capabilities
+    val availableSampleRates: IntArray get() = _capabilities.value.sampleRates.toIntArray()
+    private val _receiverEnabled = MutableStateFlow(prefs.getBoolean("receiverEnabled", true))
+    val receiverEnabled = _receiverEnabled.asStateFlow()
+    fun setReceiverEnabled(enabled: Boolean) {
+        _receiverEnabled.value = enabled
+        sdrService?.setReceiverEnabled(enabled)
+        prefs.edit().putBoolean("receiverEnabled", enabled).apply()
+    }
+    fun setNoiseReductionStrength(strength: Float) {
+        sdrService?.setNoiseReductionStrength(strength)
+        prefs.edit().putFloat("nrStrength", strength).apply()
+    }
+    private val _autoDemod = MutableStateFlow(prefs.getBoolean("autoDemod", false))
+    private val _listeningAudio=MutableStateFlow(com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings(
+        leveling=prefs.getBoolean("audioLeveling",false),limitDb=prefs.getFloat("audioLevelLimit",12f),
+        notch=prefs.getBoolean("audioNotch",false),notchSpeed=prefs.getFloat("audioNotchSpeed",0.005f)))
+    val listeningAudio=_listeningAudio.asStateFlow()
+    fun setListeningAudio(settings: com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings) {
+        _listeningAudio.value=settings
+        sdrService?.setListeningAudio(settings)
+        prefs.edit().putBoolean("audioLeveling",settings.leveling).putFloat("audioLevelLimit",settings.limitDb)
+            .putBoolean("audioNotch",settings.notch).putFloat("audioNotchSpeed",settings.notchSpeed).apply()
+    }
+    val autoDemod = _autoDemod.asStateFlow()
+    fun setAutoDemod(enabled: Boolean) {
+        if (_autoDemod.value == enabled) return
+        _autoDemod.value = enabled
+        prefs.edit().putBoolean("autoDemod", enabled).apply()
+        if (enabled) applyAutomaticDemod(_centerFreqHz.value)
+    }
+    private fun applyAutomaticDemod(hz: Long,previousFrequencyHz: Long=_centerFreqHz.value) {
+        val mode = com.radiosport.ninegradio.dsp.ReceiverBandPlan.at(hz).mode ?: return
+        if (mode != _demodMode.value && _capabilities.value.supportsMode(mode))
+            setDemodMode(mode, automatic = true,previousFrequencyHz=previousFrequencyHz)
+    }
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val messages = _messages.asSharedFlow()
+    private var saveJob: Job? = null
+    private fun scheduleSave() {
+        saveJob?.cancel()
+        saveJob = viewModelScope.launch { delay(350); saveDeviceSettings() }
+    }
+    private fun saveDeviceSettings() {
+        val key = "device_${profileId}_"
+        val editor=prefs.edit()
+        if(_capabilities.value.supportsFrequency(_centerFreqHz.value))
+            editor.putLong(modeKey(_demodMode.value,"freq"),_centerFreqHz.value)
+        editor.putString("activeDevice", profileId)
+            .putLong(key + "freq", _centerFreqHz.value).putString(key + "mode", _demodMode.value.name)
+            .putInt(key + "rate", _sampleRate.value).putInt(key + "gain", _gainIndex.value)
+            .putInt(key + "width", _ifBandwidthHz.value)
+            .putBoolean(key + "agc", _tunerAgcEnabled.value).putInt(key + "ppm", _ppm.value)
+            .putBoolean(key + "hwAgc", _hardwareAgcEnabled.value)
+            .putBoolean(key + "bias", _biasTee.value).putInt(key + "direct", _directSampling.value)
+            .putLong("freq", _centerFreqHz.value).putString("demod", _demodMode.value.name).apply()
+    }
+    private var sourceProfileLoaded = false
+    private fun adoptSource(service: RtlSdrService) {
+        val caps = service.capabilities
+        prefs.edit().putString("device_${caps.id}_rates",caps.sampleRates.joinToString(",")).apply()
+        if (!sourceProfileLoaded || profileId != caps.id) {
+            saveJob?.cancel()
+            if (sourceProfileLoaded) saveDeviceSettings()
+            sourceProfileLoaded = true
+            profileId = caps.id
+            val key = "device_${profileId}_"
+            _centerFreqHz.value = caps.browseFrequency(prefs.getLong(key + "freq", if (caps.floatIq) 10_000_000 else 100_000_000))
+            _demodMode.value = runCatching { DemodMode.valueOf(prefs.getString(key + "mode", if (caps.floatIq) "AM" else "NFM")!!) }
+                .getOrDefault(if (caps.floatIq) DemodMode.AM else DemodMode.NFM)
+            if (!caps.supportsMode(_demodMode.value)) _demodMode.value = DemodMode.AM
+            _ifBandwidthHz.value = validWidth(_demodMode.value,
+                prefs.getInt(key + "width", prefs.getInt(modeKey(_demodMode.value, "ifBandwidth"), 0)))
+            _sampleRate.value = caps.nearestRate(prefs.getInt(key + "rate", service.source?.getSampleRate() ?: 1920000))
+            _gainIndex.value = prefs.getInt(key + "gain", if (caps.floatIq) 0 else 26)
+                .coerceIn(0, ((service.source?.getGainCount() ?: 29) - 1).coerceAtLeast(0))
+            _tunerAgcEnabled.value = prefs.getBoolean(key + "agc", caps.floatIq)
+            _ppm.value = prefs.getInt(key + "ppm", 0)
+            _hardwareAgcEnabled.value = caps.hardwareAgc && prefs.getBoolean(key + "hwAgc", false)
+            _biasTee.value = caps.biasTee && prefs.getBoolean(key + "bias", false)
+            _directSampling.value = if (caps.directSampling) prefs.getInt(key + "direct", 0) else 0
+        }
+        if (service.source is com.radiosport.ninegradio.source.FileIqSource) {
+            val file = service.source as com.radiosport.ninegradio.source.FileIqSource
+            _centerFreqHz.value = file.dialFrequencyHz
+            _demodMode.value = file.mode
+            _sampleRate.value = file.getSampleRate()
+        }
+        _capabilities.value = caps
+        syncFmStereoPreference(_demodMode.value)
+        _centerFreqHz.value = caps.browseFrequency(_centerFreqHz.value)
+        _sampleRate.value = caps.nearestRate(_sampleRate.value)
+        if(_demodMode.value==DemodMode.ADSB && caps.supportsMode(DemodMode.ADSB))
+            _sampleRate.value=com.radiosport.ninegradio.dsp.ReadsbReceiver.SAMPLE_RATE
+        if(_demodMode.value==DemodMode.ADSB) configureAdsbRf(fromDeviceRestore=true)
+        scheduleSave()
+    }
+
 
     // ─── Service binding ──────────────────────────────────────────────────────
 
@@ -52,7 +156,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sdrService?.setFftDecimation(_decimation.value)
             // Push saved noise processing state.
             sdrService?.setNoiseBlanker(_noiseBlankerEnabled.value)
+            sdrService?.setIqNoiseBlankerThreshold(_iqNbThreshold.value)
             sdrService?.setNoiseReducer(_noiseReducerEnabled.value)
+            sdrService?.setReceiverEnabled(_receiverEnabled.value)
+            sdrService?.setNoiseReductionStrength(prefs.getFloat("nrStrength", 1f))
+            sdrService?.setListeningAudio(_listeningAudio.value)
             // Push saved IF bandwidth (0 = auto, ignored by service).
             val savedIfBw = _ifBandwidthHz.value
             if (savedIfBw > 0) sdrService?.setIfBandwidth(savedIfBw)
@@ -66,7 +174,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Connect any device that arrived before the service bound.
             pendingDevice?.let { dev ->
                 pendingDevice = null
-                sdrService?.reconnect(dev)
+                sdrService?.reconnect(dev, _receiverEnabled.value)
             }
             Log.i(TAG, "Service connected")
         }
@@ -76,17 +184,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var serviceFlowJob: Job? = null
     private fun observeServiceFlows() {
         val svc = sdrService ?: return
 
+        serviceFlowJob?.cancel()
+        serviceFlowJob = viewModelScope.launch {
         // Mirror connection state, and push all saved settings to hardware
         // the moment the device reaches Connected.  The RTL-SDR resets to its
         // hardware defaults on every open() — notably sample rate = 2 048 000 Hz —
         // so without this block any user-chosen rate other than 2.048 MS/s is never
         // programmed, causing the DSP engine to process IQ at the wrong rate and
         // producing severely garbled audio on every mode.
-        viewModelScope.launch {
+        launch {
             svc.connectionState.collect { state ->
+                if (state is RtlSdrService.ConnectionState.Connected) adoptSource(svc)
                 _connectionState.value = state
 
                 if (state is RtlSdrService.ConnectionState.Connected) {
@@ -134,23 +246,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Use the service's own delegated flows which handle the connectionState
         // switching internally. This eliminates any race between dspEngine being
         // assigned and the connectionState emission being observed here.
-        viewModelScope.launch {
+        launch {
             svc.spectrumFlow.collect { spectrum ->
                 _spectrumData.value = spectrum
                 svc.dspEngine?.fftEngine?.getPeakHold()?.let { _peakData.value = it }
             }
         }
 
-        viewModelScope.launch {
+        launch {
             svc.statusFlow.collect { status ->
                 _deviceStatus.value = status
             }
         }
 
-        viewModelScope.launch {
+        launch {
             svc.statsFlow.collect { stats ->
                 _dspStats.value = stats
             }
+        }
         }
     }
 
@@ -174,18 +287,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val connectionState: StateFlow<RtlSdrService.ConnectionState> = _connectionState
 
     // Persistent settings
-    private val _centerFreqHz = MutableStateFlow(run {
-        val startupModeName = prefs.getString("demod", "NFM") ?: "NFM"
-        val modeFreqKey = "mode_${startupModeName}_freq"
-        if (prefs.contains(modeFreqKey))
-            prefs.getLong(modeFreqKey, 100_000_000L)
-        else
-            prefs.getLong("freq", 100_000_000L)
-    })
+    private val _centerFreqHz = MutableStateFlow(prefs.getLong("device_${profileId}_freq",
+        prefs.getLong("freq", if (profileId == "airspyhf") 10_000_000 else 100_000_000)))
     val centerFreqHz: StateFlow<Long> = _centerFreqHz
 
     private val _demodMode = MutableStateFlow(
-        DemodMode.valueOf(prefs.getString("demod", "NFM") ?: "NFM")
+        runCatching { DemodMode.valueOf(prefs.getString("device_${profileId}_mode",
+            prefs.getString("demod", "NFM")) ?: "NFM") }.getOrDefault(DemodMode.NFM)
     )
     val demodMode: StateFlow<DemodMode> = _demodMode
 
@@ -194,7 +302,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // nearestSampleRate() snaps within the correct band (low-rate ≤300 kS/s or
     // main ≥900 kS/s) so a dead-zone value never reaches the hardware.
     private val _sampleRate = MutableStateFlow(
-        RtlSdrDevice.nearestSampleRate(prefs.getInt("rate", 1_920_000)).also { snapped ->
+        (if(profileId=="airspyhf") prefs.getInt("device_airspyhf_rate",prefs.getInt("rate",768000)).coerceAtLeast(1)
+         else RtlSdrDevice.nearestSampleRate(prefs.getInt("rate", 1_920_000))).also { snapped ->
             val saved = prefs.getInt("rate", 1_920_000)
             if (snapped != saved) prefs.edit().putInt("rate", snapped).apply()
         }
@@ -216,7 +325,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _biasTee = MutableStateFlow(prefs.getBoolean("biastee", false))
     val biasTee: StateFlow<Boolean> = _biasTee
 
-    private val _noiseBlankerEnabled = MutableStateFlow(prefs.getBoolean("noiseBlanker", false))
+    private val _noiseBlankerEnabled = MutableStateFlow(prefs.getBoolean("noiseBlanker", true))
+    private val _iqNbThreshold=MutableStateFlow(prefs.getFloat("iqNbThreshold",8f).coerceIn(3f,20f))
+    val iqNbThreshold=_iqNbThreshold.asStateFlow()
+    fun setIqNoiseBlankerThreshold(value: Float) {
+        _iqNbThreshold.value=value.coerceIn(3f,20f)
+        sdrService?.setIqNoiseBlankerThreshold(_iqNbThreshold.value)
+        prefs.edit().putFloat("iqNbThreshold",_iqNbThreshold.value).apply()
+    }
     val noiseBlankerEnabled: StateFlow<Boolean> = _noiseBlankerEnabled
 
     private val _noiseReducerEnabled = MutableStateFlow(prefs.getBoolean("noiseReducer", false))
@@ -226,7 +342,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Stored as an absolute Hz value from [DspEngine.MIN_IF_BANDWIDTH_HZ] up to
     // narrowIfRate(deviceRate) — the ceiling is device-rate-dependent (e.g. 50 kHz
     // at 250 kS/s, 48 kHz at all 48k-multiple device rates).
-    private val _ifBandwidthHz = MutableStateFlow(prefs.getInt("ifBandwidth", 0))
+    private val _ifBandwidthHz = MutableStateFlow(validWidth(_demodMode.value, prefs.getInt("ifBandwidth", 0)))
     val ifBandwidthHz: StateFlow<Int> = _ifBandwidthHz
 
     // Audio-output (sink) sample rate — the sample rate presented to Android
@@ -281,7 +397,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _volume = MutableStateFlow(prefs.getFloat("volume", 1f))
     val volume: StateFlow<Float> = _volume
 
-    private val _fftSize = MutableStateFlow(prefs.getInt("fftSize", 256))
+    private val _fftSize = MutableStateFlow(prefs.getInt("fftSize", 2048))
     val fftSize: StateFlow<Int> = _fftSize
 
     /**
@@ -298,12 +414,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _waterfallPalette = MutableStateFlow(
         WaterfallView.Companion.Palette.valueOf(
-            prefs.getString("palette", "RAINBOW") ?: "RAINBOW"
+            displayPrefs().getString("pref_waterfall_palette", prefs.getString("palette", "RAINBOW")) ?: "RAINBOW"
         )
     )
     val waterfallPalette: StateFlow<WaterfallView.Companion.Palette> = _waterfallPalette
 
-    private val _spectrumTheme = MutableStateFlow(prefs.getString("theme", "Futuristic") ?: "Futuristic")
+    private val _spectrumTheme = MutableStateFlow(displayPrefs().getString("pref_spectrum_theme", prefs.getString("theme", "UI")) ?: "Futuristic")
     val spectrumTheme: StateFlow<String> = _spectrumTheme
 
     // ─── Database flows ───────────────────────────────────────────────────────
@@ -324,7 +440,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         pendingDevice = null
-        svc.reconnect(usbDevice)
+        svc.reconnect(usbDevice, _receiverEnabled.value)
     }
 
     /**
@@ -336,6 +452,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .putString("tcp_host", host)
             .putInt("tcp_port", port)
             .apply()
+        _receiverEnabled.value = true
+        prefs.edit().putBoolean("receiverEnabled", true).apply()
         sdrService?.connectTcp(host, port)
     }
 
@@ -344,12 +462,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Last-used TCP port (default 1234). */
     fun savedTcpPort(): Int = prefs.getInt("tcp_port", 1234)
 
-    fun setFrequency(hz: Long) {
-        val clamped = if (_allowOutOfBand.value) hz
-                      else hz.coerceIn(RtlSdrDevice.MIN_FREQ_HZ, RtlSdrDevice.MAX_FREQ_HZ)
-        _centerFreqHz.value = clamped
-        sdrService?.setFrequency(clamped)
-        prefs.edit().putLong("freq", clamped).apply()
+    fun setFrequency(hz: Long): Boolean {
+        if (!_capabilities.value.supportsBrowsing(hz)) {
+            _messages.tryEmit("频率超出当前接收机的范围")
+            return false
+        }
+        val previousFrequencyHz=_centerFreqHz.value
+        _centerFreqHz.value = hz
+        if (!_capabilities.value.supportsFrequency(hz) && (_dspStats.value.isRecordingIq || _dspStats.value.isRecordingAudio))
+            _messages.tryEmit("已停止录制：当前频率不可接收")
+        if (_autoDemod.value) applyAutomaticDemod(hz,previousFrequencyHz)
+        sdrService?.setFrequency(hz)
+        scheduleSave()
+        return true
+    }
+    fun stepFrequency(delta: Long) {
+        val current = _centerFreqHz.value
+        setFrequency(_capabilities.value.browseFrequency(current + delta))
+    }
+    fun finishTuning() {
+        sdrService?.setFrequency(_centerFreqHz.value, immediate = true)
+        saveJob?.cancel()
+        saveDeviceSettings()
     }
 
     // ─── Per-mode settings store ──────────────────────────────────────────────
@@ -387,16 +521,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * waterfallContrast, waterfallAutoStretch, waterfallShowTimestamp,
      * waterfallShowTunerMarker.
      */
-    private fun modeKey(mode: DemodMode, field: String) = "mode_${mode.name}_$field"
+    private fun modeKey(mode: DemodMode, field: String) = "device_${profileId}_mode_${mode.name}_$field"
+
+    fun rememberedModeFrequency(mode: DemodMode): Long? {
+        if(!prefs.contains(modeKey(mode,"freq"))) return null
+        return prefs.getLong(modeKey(mode,"freq"),0).takeIf { _capabilities.value.supportsFrequency(it) }
+    }
 
     private fun displayPrefs() =
         androidx.preference.PreferenceManager.getDefaultSharedPreferences(getApplication())
 
     /** Save the current live RF state under the given mode's namespace. */
-    private fun saveSettingsForMode(mode: DemodMode) {
+    private fun saveSettingsForMode(mode: DemodMode,frequencyHz: Long=_centerFreqHz.value) {
         val dp = displayPrefs()
-        prefs.edit()
-            .putLong   (modeKey(mode, "freq"),          _centerFreqHz.value)
+        val editor=prefs.edit()
+        if(_capabilities.value.supportsFrequency(frequencyHz)) editor.putLong(modeKey(mode,"freq"),frequencyHz)
+        editor
             .putInt    (modeKey(mode, "gain"),          _gainIndex.value)
             .putInt    (modeKey(mode, "gainMode"),      _gainMode.value)
             .putBoolean(modeKey(mode, "tunerAgc"),      _tunerAgcEnabled.value)
@@ -445,51 +585,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val key = modeKey(mode, "gain")
         if (!prefs.contains(key)) return false   // never saved — first use
 
-        val freq    = prefs.getLong   (modeKey(mode, "freq"),          _centerFreqHz.value)
-        val gain    = prefs.getInt    (modeKey(mode, "gain"),          _gainIndex.value)
-        val gMode   = prefs.getInt    (modeKey(mode, "gainMode"),      _gainMode.value)
-        val tAgc    = prefs.getBoolean(modeKey(mode, "tunerAgc"),      _tunerAgcEnabled.value)
-        val hAgc    = prefs.getBoolean(modeKey(mode, "hardwareAgc"),   _hardwareAgcEnabled.value)
-        val rate    = prefs.getInt    (modeKey(mode, "rate"),          _sampleRate.value)
+        val freq    = _centerFreqHz.value
+        val gain    = _gainIndex.value
+        val gMode   = _gainMode.value
+        val tAgc    = _tunerAgcEnabled.value
+        val hAgc    = _hardwareAgcEnabled.value
+        val rate    = _sampleRate.value
         val decim      = prefs.getInt    (modeKey(mode, "fftDecimation"), _decimation.value)
         val fftSz      = prefs.getInt    (modeKey(mode, "fftSize"),        _fftSize.value)
         val frameAvg   = prefs.getInt    (modeKey(mode, "frameAvg"),       1)
-        val specFloor  = prefs.getFloat  (modeKey(mode, "specFloor"),      -120f)
-        val specCeiling= prefs.getFloat  (modeKey(mode, "specCeiling"),    0f)
+        val specFloor  = -(displayPrefs().getInt("pref_db_min", 120).takeIf { it in 10..200 } ?: 120).toFloat()
+        val specCeiling= displayPrefs().getInt("pref_db_max", 0).toFloat()
         val squelch    = prefs.getFloat  (modeKey(mode, "squelch"),        _squelch.value)
         val ifBw       = prefs.getInt    (modeKey(mode, "ifBandwidth"),    0)
 
         // RF tab extras
-        val volume         = prefs.getFloat  (modeKey(mode, "volume"),         _volume.value)
-        val biasTee        = prefs.getBoolean(modeKey(mode, "biasTee"),        _biasTee.value)
-        val noiseBlanker   = prefs.getBoolean(modeKey(mode, "noiseBlanker"),   _noiseBlankerEnabled.value)
-        val noiseReducer   = prefs.getBoolean(modeKey(mode, "noiseReducer"),   _noiseReducerEnabled.value)
-        val directSampling = prefs.getInt    (modeKey(mode, "directSampling"), _directSampling.value)
-        val ppmVal         = prefs.getInt    (modeKey(mode, "ppm"),            _ppm.value)
-        val audioSinkRate  = prefs.getInt    (modeKey(mode, "audioSinkRate"),  _audioSinkRate.value)
+        val volume         = _volume.value
+        val biasTee        = _biasTee.value
+        val noiseBlanker   = _noiseBlankerEnabled.value
+        val noiseReducer   = _noiseReducerEnabled.value
+        val directSampling = _directSampling.value
+        val ppmVal         = _ppm.value
+        val audioSinkRate  = _audioSinkRate.value
 
         // Display tab extras
         val dp = displayPrefs()
-        val spectrumTheme        = prefs.getString (modeKey(mode, "spectrumTheme"),       dp.getString("pref_spectrum_theme", "Futuristic"))
-        val waterfallPalette     = prefs.getString (modeKey(mode, "waterfallPalette"),    dp.getString("pref_waterfall_palette", "RAINBOW"))
-        val waterfallSpeed       = prefs.getInt    (modeKey(mode, "waterfallSpeed"),      dp.getInt("pref_waterfall_speed", 25))
-        val peakHold             = prefs.getBoolean(modeKey(mode, "peakHold"),            dp.getBoolean("pref_peak_hold", true))
-        val fillOpacity          = prefs.getInt    (modeKey(mode, "fillOpacity"),         dp.getInt("pref_fill_opacity", 73))
-        val autoRange            = prefs.getBoolean(modeKey(mode, "autoRange"),           dp.getBoolean("pref_auto_range", false))
-        val showNoiseFloor       = prefs.getBoolean(modeKey(mode, "showNoiseFloor"),      dp.getBoolean("pref_show_noise_floor", true))
-        val peakDecay            = prefs.getInt    (modeKey(mode, "peakDecay"),           dp.getInt("pref_peak_decay", 2))
-        val showPeakAnnotations  = prefs.getBoolean(modeKey(mode, "showPeakAnnotations"), dp.getBoolean("pref_show_peak_annotations", true))
-        val crosshairEnabled     = prefs.getBoolean(modeKey(mode, "crosshairEnabled"),    dp.getBoolean("pref_crosshair_enabled", true))
-        val waterfallBrightness  = prefs.getInt    (modeKey(mode, "waterfallBrightness"), dp.getInt("pref_waterfall_brightness", 50))
-        val waterfallContrast    = prefs.getInt    (modeKey(mode, "waterfallContrast"),   dp.getInt("pref_waterfall_contrast", 50))
-        val waterfallAutoStretch = prefs.getBoolean(modeKey(mode, "waterfallAutoStretch"),dp.getBoolean("pref_waterfall_auto_stretch", false))
-        val waterfallShowTimestamp   = prefs.getBoolean(modeKey(mode, "waterfallShowTimestamp"),    dp.getBoolean("pref_waterfall_show_timestamp", true))
-        val waterfallShowTunerMarker = prefs.getBoolean(modeKey(mode, "waterfallShowTunerMarker"), dp.getBoolean("pref_waterfall_show_tuner_marker", true))
+        val spectrumTheme        = dp.getString("pref_spectrum_theme", "Futuristic")
+        val waterfallPalette     = dp.getString("pref_waterfall_palette", "RAINBOW")
+        val waterfallSpeed       = dp.getInt("pref_waterfall_speed", 25)
+        val peakHold             = dp.getBoolean("pref_peak_hold", true)
+        val fillOpacity          = dp.getInt("pref_fill_opacity", 73)
+        val autoRange            = dp.getBoolean("pref_auto_range", false)
+        val showNoiseFloor       = dp.getBoolean("pref_show_noise_floor", true)
+        val peakDecay            = dp.getInt("pref_peak_decay", 2)
+        val showPeakAnnotations  = dp.getBoolean("pref_show_peak_annotations", true)
+        val crosshairEnabled     = dp.getBoolean("pref_crosshair_enabled", true)
+        val waterfallBrightness  = dp.getInt("pref_waterfall_brightness", 50)
+        val waterfallContrast    = dp.getInt("pref_waterfall_contrast", 50)
+        val waterfallAutoStretch = dp.getBoolean("pref_waterfall_auto_stretch", false)
+        val waterfallShowTimestamp   = dp.getBoolean("pref_waterfall_show_timestamp", true)
+        val waterfallShowTunerMarker = dp.getBoolean("pref_waterfall_show_tuner_marker", true)
+
 
         // Apply to state flows + hardware — use internal setters to avoid
         // recursive setDemodMode calls; hardware calls go through the service.
-        val clamped = if (_allowOutOfBand.value) freq
-                      else freq.coerceIn(RtlSdrDevice.MIN_FREQ_HZ, RtlSdrDevice.MAX_FREQ_HZ)
+        val clamped = _capabilities.value.nearestFrequency(freq)
         _centerFreqHz.value = clamped
         sdrService?.setFrequency(clamped)
 
@@ -505,7 +645,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Deferring the hardware push until after setDirectSampling() ensures
         // the correct saved AGC state is the last thing written to the device.
 
-        val validRate = RtlSdrDevice.nearestSampleRate(rate)
+        val validRate = _capabilities.value.nearestRate(rate)
         _sampleRate.value = validRate
         sdrService?.setSampleRate(validRate)
 
@@ -621,49 +761,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun hasModeSnapshot(mode: DemodMode): Boolean = prefs.contains(modeKey(mode, "gain"))
 
-    fun setDemodMode(mode: DemodMode) {
-        // 1. Snapshot RF settings for the mode we are leaving
-        saveSettingsForMode(_demodMode.value)
-
-        // 2. Apply hardware/mode change and prefs (but don't emit _demodMode
-        //    yet — observers react to that emission and must see the
-        //    restored frequency, not the outgoing mode's frequency).
-        sdrService?.setDemodMode(mode)
-        prefs.edit().putString("demod", mode.name).apply()
-        if (mode.requiresDirectSampling) {
-            setDirectSampling(RtlSdrDevice.DIRECT_SAMPLING_Q)
+    fun setDemodMode(mode: DemodMode, automatic: Boolean = false,previousFrequencyHz: Long=_centerFreqHz.value) {
+        if (automatic && mode == DemodMode.WFM && displayPrefs().getBoolean("pref_stereo_wfm", true)) {
+            setDemodMode(DemodMode.WFM_STEREO, automatic = true,previousFrequencyHz=previousFrequencyHz)
+            return
         }
-
-        // 3. Restore the incoming mode's saved snapshot (if any) — this
-        //    updates _centerFreqHz to the frequency in effect for [mode].
-        //    If none exists the current RF state carries forward untouched.
-        val hadSnapshot = restoreSettingsForMode(mode)
-
-        // 3b. Intelligent Auto-Configuration: the FIRST time a protocol is
-        //     ever selected (no snapshot exists yet -- restoreSettingsForMode
-        //     returned false, so nothing above touched FFT size/decimation/
-        //     frame averaging), seed FFT size, frame averaging, and
-        //     protocol-aware decimation from DemodMode's intelligent
-        //     defaults rather than silently carrying forward whatever the
-        //     previous mode happened to be using. This never overrides a
-        //     value the user has actually chosen for this mode before --
-        //     once saveSettingsForMode() has snapshotted a mode once, its
-        //     restored values always win on subsequent visits.
-        if (!hadSnapshot) {
-            applyIntelligentAutoConfig(mode)
+        if (!automatic && _autoDemod.value) setAutoDemod(false)
+        if (!_capabilities.value.supportsMode(mode)) {
+            _messages.tryEmit("当前接收机不支持 ${mode.displayName}")
+            return
         }
-
-        // 4. Reset IF bandwidth to saved value (already handled inside
-        //    restoreSettingsForMode); if no snapshot existed, reset to mode default.
-        if (!prefs.contains(modeKey(mode, "ifBandwidth"))) {
-            _ifBandwidthHz.value = 0
-            prefs.edit().putInt("ifBandwidth", 0).apply()
-        }
-
-        // 5. Commit the new mode last, so collectors of demodMode (e.g. the
-        //    main frequency display) observe the already-restored frequency
-        //    in effect for the new protocol.
+        if (!automatic) syncFmStereoPreference(mode)
+        if (mode == _demodMode.value) return
+        val previousMode=_demodMode.value
+        saveSettingsForMode(previousMode,previousFrequencyHz)
         _demodMode.value = mode
+        if(mode==DemodMode.ADSB) configureAdsbRf()
+        else if(previousMode==DemodMode.ADSB) restoreRfAfterAdsb(mode)
+        // Manual type selection restores this device's last valid frequency.
+        // Automatic mode selection follows the dial and must never retune it.
+        if(!automatic && prefs.contains(modeKey(mode,"freq"))) {
+            val remembered=prefs.getLong(modeKey(mode,"freq"),_centerFreqHz.value)
+            if(_capabilities.value.supportsFrequency(remembered)) {
+                _centerFreqHz.value=remembered
+                sdrService?.setFrequency(remembered)
+            } else _messages.tryEmit("该模式的历史频率不适用于当前设备")
+        }
+        val width = validWidth(mode, prefs.getInt(modeKey(mode, "ifBandwidth"), 0))
+        _ifBandwidthHz.value = width
+        val requiredRate = if (mode == DemodMode.ADSB) com.radiosport.ninegradio.dsp.ReadsbReceiver.SAMPLE_RATE else kotlin.math.ceil(mode.defaultBwHz / 0.86).toInt()
+        if (_sampleRate.value < requiredRate) {
+            _capabilities.value.sampleRates.filter { it >= requiredRate }.minOrNull()?.let { setSampleRate(it) }
+        }
+        sdrService?.setDemodMode(mode)
+        sdrService?.setIfBandwidth(width)
+        prefs.edit().putString("demod", mode.name).putInt("ifBandwidth", width).apply()
+        scheduleSave()
+    }
+
+    private fun configureAdsbRf(fromDeviceRestore: Boolean=false) {
+        if(_capabilities.value.id!="rtl" || sdrService?.source is RtlTcpSource) return
+        val ready=prefs.getBoolean(modeKey(DemodMode.ADSB,"rfReadyV1"),false)
+        setDecimation(if(ready) prefs.getInt(modeKey(DemodMode.ADSB,"fftDecimation"),1) else 1)
+        if(ready && fromDeviceRestore) return
+        val gain=if(ready) prefs.getInt(modeKey(DemodMode.ADSB,"gain"),26) else 26
+        val tuner=ready && prefs.getBoolean(modeKey(DemodMode.ADSB,"tunerAgc"),false)
+        val hardware=ready && prefs.getBoolean(modeKey(DemodMode.ADSB,"hardwareAgc"),false)
+        if(!ready) prefs.edit().putInt("device_${profileId}_adsbReturnGain",_gainIndex.value)
+            .putBoolean("device_${profileId}_adsbReturnTunerAgc",_tunerAgcEnabled.value)
+            .putBoolean("device_${profileId}_adsbReturnHardwareAgc",_hardwareAgcEnabled.value)
+            .putBoolean(modeKey(DemodMode.ADSB,"rfReadyV1"),true).apply()
+        setTunerAgc(tuner); setHardwareAgc(hardware); setGain(gain.coerceIn(0,28))
+    }
+    private fun restoreRfAfterAdsb(mode: DemodMode) {
+        if(_capabilities.value.id!="rtl" || sdrService?.source is RtlTcpSource) return
+        setTunerAgc(prefs.getBoolean(modeKey(mode,"tunerAgc"),prefs.getBoolean("device_${profileId}_adsbReturnTunerAgc",false)))
+        setHardwareAgc(prefs.getBoolean(modeKey(mode,"hardwareAgc"),prefs.getBoolean("device_${profileId}_adsbReturnHardwareAgc",false)))
+        setGain(prefs.getInt(modeKey(mode,"gain"),prefs.getInt("device_${profileId}_adsbReturnGain",26)).coerceIn(0,28))
+        setSampleRate(_capabilities.value.nearestRate(prefs.getInt(modeKey(mode,"rate"),_sampleRate.value)))
+        setDecimation(prefs.getInt(modeKey(mode,"fftDecimation"),_decimation.value))
     }
 
     /**
@@ -689,7 +845,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSampleRate(rate: Int) {
-        val snapped = RtlSdrDevice.nearestSampleRate(rate)
+        if(_demodMode.value==DemodMode.ADSB && rate!=com.radiosport.ninegradio.dsp.ReadsbReceiver.SAMPLE_RATE) {
+            _messages.tryEmit("ADS-B 解码使用 2.400 MS/s")
+            return
+        }
+        scheduleSave()
+        val snapped = _capabilities.value.nearestRate(rate)
         _sampleRate.value = snapped
         sdrService?.setSampleRate(snapped)
         prefs.edit().putInt("rate", snapped).apply()
@@ -711,9 +872,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setGain(index: Int) {
+        scheduleSave()
         _gainIndex.value = index
         sdrService?.setGain(index)
         prefs.edit().putInt("gain", index).apply()
+        if(_demodMode.value==DemodMode.ADSB) prefs.edit().putInt(modeKey(DemodMode.ADSB,"gain"),index).apply()
     }
 
     fun setGainMode(mode: Int) {
@@ -728,9 +891,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setTunerAgc(enabled: Boolean) {
+        scheduleSave()
         _tunerAgcEnabled.value = enabled
         sdrService?.setTunerAgc(enabled)
         prefs.edit().putBoolean("tunerAgc", enabled).apply()
+        if(_demodMode.value==DemodMode.ADSB) prefs.edit().putBoolean(modeKey(DemodMode.ADSB,"tunerAgc"),enabled).apply()
         // Derive gainMode from combined AGC state
         val manual = !enabled && !_hardwareAgcEnabled.value
         val mode   = if (manual) RtlSdrDevice.GAIN_MODE_MANUAL else RtlSdrDevice.GAIN_MODE_AGC
@@ -739,9 +904,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setHardwareAgc(enabled: Boolean) {
+        if (!_capabilities.value.hardwareAgc) return
+        scheduleSave()
         _hardwareAgcEnabled.value = enabled
         sdrService?.setHardwareAgc(enabled)
         prefs.edit().putBoolean("hardwareAgc", enabled).apply()
+        if(_demodMode.value==DemodMode.ADSB) prefs.edit().putBoolean(modeKey(DemodMode.ADSB,"hardwareAgc"),enabled).apply()
         // Derive gainMode from combined AGC state
         val manual = !_tunerAgcEnabled.value && !enabled
         val mode   = if (manual) RtlSdrDevice.GAIN_MODE_MANUAL else RtlSdrDevice.GAIN_MODE_AGC
@@ -750,6 +918,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setBiasTee(on: Boolean) {
+        if (!_capabilities.value.biasTee) return
+        scheduleSave()
         _biasTee.value = on
         sdrService?.setBiasTee(on)
         prefs.edit().putBoolean("biastee", on).apply()
@@ -772,19 +942,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Pass 0 to revert to the mode-default bandwidth.
      * @param hz  Desired IF bandwidth in Hz; clamped by DspEngine.
      */
+    private fun validWidth(mode: DemodMode, hz: Int): Int =
+        if (mode in listOf(DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO)) {
+            if(hz<50_000) 0 else hz.coerceAtMost(_capabilities.value.maxChannelBandwidth(_sampleRate.value).coerceAtLeast(50_000))
+        } else hz.coerceAtLeast(0)
     fun setIfBandwidth(hz: Int) {
-        _ifBandwidthHz.value = hz
-        sdrService?.setIfBandwidth(hz)
-        prefs.edit().putInt("ifBandwidth", hz).apply()
+        val width = validWidth(_demodMode.value, hz)
+        _ifBandwidthHz.value = width
+        sdrService?.setIfBandwidth(width)
+        prefs.edit().putInt("ifBandwidth", width).apply()
+        scheduleSave()
     }
 
     fun setDirectSampling(mode: Int) {
+        if (!_capabilities.value.directSampling) return
+        scheduleSave()
         _directSampling.value = mode
         sdrService?.setDirectSampling(mode)
         prefs.edit().putInt("directSampling", mode).apply()
     }
 
     fun setPpm(ppm: Int) {
+        scheduleSave()
         _ppm.value = ppm
         sdrService?.setPpm(ppm)
         prefs.edit().putInt("ppm", ppm).apply()
@@ -840,6 +1019,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _decimation.value = clamped
         sdrService?.setFftDecimation(clamped)
         prefs.edit().putInt("fftDecimation", clamped).apply()
+        displayPrefs().edit().putString("pref_decimation",clamped.toString()).apply()
     }
 
     /**
@@ -852,55 +1032,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setWaterfallPalette(p: WaterfallView.Companion.Palette) {
         _waterfallPalette.value = p
         prefs.edit().putString("palette", p.name).apply()
+        displayPrefs().edit().putString("pref_waterfall_palette", p.name).apply()
     }
 
     fun setSpectrumTheme(name: String) {
         _spectrumTheme.value = name
         prefs.edit().putString("theme", name).apply()
+        displayPrefs().edit().putString("pref_spectrum_theme", name).apply()
     }
 
     // ─── Recording ────────────────────────────────────────────────────────────
 
-    fun startIqRecording(path: String) {
-        sdrService?.startRecording(path)
+    fun playIqRecording(meta: RecordingMeta) {
         viewModelScope.launch {
-            db.recordingMetaDao().insert(RecordingMeta(
-                filePath = path,
-                type = "IQ",
-                frequencyHz = _centerFreqHz.value,
-                sampleRate = _sampleRate.value,
-                demodMode = _demodMode.value.name,
-                durationMs = 0L,
-                fileSizeBytes = 0L
-            ))
+            serviceConnected.first { it }
+            _receiverEnabled.value = true
+            prefs.edit().putBoolean("receiverEnabled", true).apply()
+            sdrService?.connectFile(meta.filePath, meta.sampleRate, meta.frequencyHz,
+                runCatching { DemodMode.valueOf(meta.demodMode) }.getOrDefault(DemodMode.AM))
         }
     }
 
+    fun startIqRecording(path: String) { sdrService?.startRecording(path) }
     fun stopIqRecording() { sdrService?.stopRecording() }
-
-    fun startAudioRecording(path: String) {
-        sdrService?.startAudioRecording(path)
-        viewModelScope.launch {
-            db.recordingMetaDao().insert(RecordingMeta(
-                filePath = path,
-                type = "AUDIO",
-                frequencyHz = _centerFreqHz.value,
-                // The audio pipeline always resamples to DEFAULT_AUDIO_RATE (48 000 Hz)
-                // before the AudioTrack write and PcmRecorder WAV write.  Using
-                // _demodMode.value.audioRateHz here was incorrect — audioRateHz is
-                // 48 000 for every mode (it describes the pipeline output, not a
-                // per-mode rate), but historically some modes were wrongly declared
-                // at 11 025 Hz, producing broken WAV metadata.  Hard-code to
-                // DspEngine.DEFAULT_AUDIO_RATE so the stored metadata always matches
-                // what PcmRecorder actually writes into the WAV header.
-                sampleRate = DspEngine.DEFAULT_AUDIO_RATE,
-                demodMode = _demodMode.value.name,
-                durationMs = 0L,
-                fileSizeBytes = 0L
-            ))
-        }
-    }
-
+    fun startAudioRecording(path: String) { sdrService?.startAudioRecording(path) }
     fun stopAudioRecording() { sdrService?.stopAudioRecording() }
 
     // ─── Memory channels ──────────────────────────────────────────────────────
@@ -1039,10 +1194,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun detectUsbDevices(): List<UsbDevice> {
         val usbManager = getApplication<Application>().getSystemService(UsbManager::class.java)
-        return usbManager.deviceList.values.filter { RtlSdrDevice.isSupported(it) }
+        return usbManager.deviceList.values.filter { com.radiosport.ninegradio.source.UsbSources.isSupported(it) }
     }
 
     override fun onCleared() {
+        displayPrefs().unregisterOnSharedPreferenceChangeListener(fmPreferenceListener)
+        saveDeviceSettings()
         super.onCleared()
+    }
+
+    private var syncingFmPreference=false
+    private fun syncFmStereoPreference(mode: DemodMode) {
+        if (mode !in listOf(DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO)) return
+        val stereo=mode==DemodMode.WFM_STEREO
+        if (displayPrefs().getBoolean("pref_stereo_wfm",true)==stereo) return
+        syncingFmPreference=true
+        try { displayPrefs().edit().putBoolean("pref_stereo_wfm",stereo).apply() }
+        finally { syncingFmPreference=false }
+    }
+    private val fmPreferenceListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { settings, key ->
+        if (syncingFmPreference) return@OnSharedPreferenceChangeListener
+        when (key) {
+            "pref_stereo_wfm" -> if (_demodMode.value in listOf(DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO)) {
+                setDemodMode(if (settings.getBoolean(key, true)) DemodMode.WFM_STEREO else DemodMode.WFM, automatic = true)
+            }
+            "pref_deemph_us" -> sdrService?.setFmDeemphasis(settings.getString(key, "75")?.toIntOrNull() ?: 75)
+        }
+    }
+    init {
+        syncFmStereoPreference(_demodMode.value)
+        displayPrefs().registerOnSharedPreferenceChangeListener(fmPreferenceListener)
     }
 }

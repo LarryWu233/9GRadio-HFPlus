@@ -15,7 +15,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="text"
-            android:textColor="#FFFFFF"/>
+            android:textColor="?attr/radioText"/>
     </com.google.android.material.textfield.TextInputLayout>
 
     <com.google.android.material.textfield.TextInputLayout
@@ -29,7 +29,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="textMultiLine"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/radioText"
             android:minLines="2"/>
     </com.google.android.material.textfield.TextInputLayout>
 
@@ -45,7 +45,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="List Color"
-            android:textColor="#AAFFFFFF"
+            android:textColor="?attr/radioSecondary"
             android:textSize="13sp"/>
 
         <View

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="fm_deemphasis_entries"><item>50 μs</item><item>75 μs</item></string-array>
+    <string-array name="fm_deemphasis_values"><item>50</item><item>75</item></string-array>
+</resources>

@@ -11,6 +11,8 @@ import android.widget.*
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.radiosport.ninegradio.data.RadioTarget
+import com.radiosport.ninegradio.data.RadioTargets
 import com.radiosport.ninegradio.R
 import com.radiosport.ninegradio.dsp.AdsbDecoder
 import com.radiosport.ninegradio.dsp.DemodMode
@@ -20,21 +22,18 @@ import kotlinx.coroutines.flow.collectLatest
 
 /**
  * Full-screen ADS-B radar display.
- * Auto-tunes RTL-SDR to 1090 MHz and collects raw IQ magnitude from the
- * DspEngine's iqMagnitudeFlow — the correct input for the Mode-S preamble
- * detector (2 samples/µs at 2.048 MS/s).
+ * Observes the service-owned readsb receiver. Navigation never reconfigures
+ * the tuner or creates a second decoder; raw IQ remains at 2.4 MS/s.
  */
-class AdsbActivity : AppCompatActivity() {
+class AdsbActivity : RadioThemedActivity() {
 
-    private val viewModel: MainViewModel by viewModels()
     private lateinit var radarView: AdsbRadarView
     private lateinit var tvAircraftCount: TextView
     private lateinit var tvStatus: TextView
 
-    private val decoder = AdsbDecoder()
     private val aircraft = HashMap<String, AdsbDecoder.AdsbFrame>()
-    private val aircraftList = mutableListOf<String>()
-    private lateinit var listAdapter: android.widget.ArrayAdapter<String>
+    private lateinit var aircraftTable: AdsbAircraftTable
+    private val distances by lazy { AdsbDistanceTracker(this) }
 
     // ─── Service binding for IQ magnitude flow ────────────────────────────────
 
@@ -46,6 +45,12 @@ class AdsbActivity : AppCompatActivity() {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             sdrService = (binder as RtlSdrService.LocalBinder).getService()
             serviceBound = true
+            val svc = sdrService!!
+            if (!svc.capabilities.supportsMode(DemodMode.ADSB)) {
+                Toast.makeText(this@AdsbActivity, "当前接收机不支持 1090 MHz ADS-B", Toast.LENGTH_LONG).show()
+                finish()
+                return
+            }
             startIqFeed()
         }
         override fun onServiceDisconnected(name: ComponentName) {
@@ -55,26 +60,31 @@ class AdsbActivity : AppCompatActivity() {
         }
     }
 
-    /** Feed raw IQ magnitude (not FFT) to the ADS-B preamble detector,
-     *  and subscribe to the service's own connectionState so the status bar
-     *  always reflects reality (avoids the Activity-scoped ViewModel issue). */
+    /** Observe live decoder state across source close/open and UI navigation. */
     private fun startIqFeed() {
         iqFeedJob?.cancel()
-        val svc = sdrService ?: return
-        iqFeedJob = lifecycleScope.launch {
+        val svc=sdrService ?: return
+        iqFeedJob=lifecycleScope.launch {
             launch {
-                svc.connectionState.collectLatest { state ->
-                    tvStatus.text = when (state) {
-                        is RtlSdrService.ConnectionState.Connected  -> "LIVE — 1090 MHz"
-                        is RtlSdrService.ConnectionState.Connecting -> "Connecting…"
-                        else -> "No Device"
+                kotlinx.coroutines.flow.combine(svc.connectionState,svc.adsbReceiver.status) { connection,status ->
+                    when(connection) {
+                        is RtlSdrService.ConnectionState.Connected -> status.error ?: if(status.running)
+                            "1090 MHz · 2.400 MS/s · ${status.messages} 帧" else "等待 ADS-B 输入"
+                        is RtlSdrService.ConnectionState.Connecting -> "正在连接接收机…"
+                        is RtlSdrService.ConnectionState.Error -> connection.message
+                        else -> "接收机已关闭"
                     }
-                }
+                }.collect { tvStatus.text=it }
             }
-            svc.dspEngine?.iqMagnitudeFlow?.collect { mag ->
-                decoder.feed(mag)
-            }
+            svc.adsbReceiver.aircraft.collect { frames -> renderAircraft(frames) }
         }
+    }
+
+    private fun renderAircraft(frames: List<AdsbDecoder.AdsbFrame>) {
+        aircraft.clear(); frames.forEach { aircraft[it.icao24]=it }
+        radarView.updateAircraft(frames)
+        tvAircraftCount.text="飞机：${frames.size}"
+        aircraftTable.submit(frames.sortedBy { it.callsign ?: it.icao24 },distances.update(frames).distances)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,69 +93,26 @@ class AdsbActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_adsb)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        title = "ADS-B Radar (1090 MHz)"
+        title = "ADS-B 雷达 · 1090 MHz"
 
         bindService(Intent(this, RtlSdrService::class.java), serviceConnection, BIND_AUTO_CREATE)
 
         radarView       = findViewById(R.id.radarView)
+        val location=getSharedPreferences("radio_map",MODE_PRIVATE)
+        if(location.contains("receiverLat") && location.contains("receiverLon"))
+            radarView.setOwnPosition(location.getFloat("receiverLat",0f).toDouble(),location.getFloat("receiverLon",0f).toDouble())
+        findViewById<Button>(R.id.btnAdsbMap).setOnClickListener {
+            startActivity(Intent(this, RadioMapActivity::class.java).putExtra("protocol","ADSB"))
+        }
         tvAircraftCount = findViewById(R.id.tvAircraftCount)
         tvStatus        = findViewById(R.id.tvAdsbStatus)
 
-        val listAircraft = findViewById<android.widget.ListView>(R.id.listAircraft)
-        listAdapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_1, aircraftList)
-        listAircraft.adapter = listAdapter
-        listAircraft.setOnItemClickListener { _, _, pos, _ ->
-            val entry = aircraftList.getOrNull(pos) ?: return@setOnItemClickListener
-            android.app.AlertDialog.Builder(this)
-                .setTitle("Aircraft Detail")
-                .setMessage(entry.replace(" | ", "\n"))
-                .setPositiveButton("OK", null).show()
-        }
-
-        // Auto-tune to 1090 MHz and switch to ADS-B mode.
-        // setDemodMode() saves the previous mode's settings and restores any
-        // previously saved ADS-B settings.  On first use (no snapshot yet) we
-        // apply the protocol-required defaults so they become the ADS-B baseline.
-        viewModel.setFrequency(AdsbDecoder.ADSB_FREQ_HZ)
-        viewModel.setDemodMode(DemodMode.ADSB)
-        if (!viewModel.hasModeSnapshot(DemodMode.ADSB)) {
-            // First-ever ADS-B launch: seed protocol-required defaults.
-            // 1.920 MS/s = 48 000 × 40 — perfect integer decimation to the 48 kHz
-            // audio output rate; provides ample bandwidth for the 1.090 GHz Mode-S
-            // channel and is within the RTL-SDR's main band.
-            val adsbPrefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
-            viewModel.setSampleRate(1_920_000)
-            viewModel.setTunerAgc(adsbPrefs.getBoolean("pref_tuner_agc_default", false))
-            viewModel.setHardwareAgc(adsbPrefs.getBoolean("pref_hardware_agc_default", false))
-            if (!adsbPrefs.getBoolean("pref_tuner_agc_default", false))
-                viewModel.setGain(adsbPrefs.getInt("pref_default_gain", 26))
-        }
-
-        // Collect decoded frames
-        lifecycleScope.launch {
-            decoder.frames.collectLatest { frame ->
-                aircraft[frame.icao24] = frame
-                // Remove stale tracks (>2 min old)
-                val cutoff = System.currentTimeMillis() - 120_000L
-                aircraft.entries.removeAll { it.value.timestamp < cutoff }
-                radarView.updateAircraft(aircraft.values.toList())
-                tvAircraftCount.text = "Aircraft: ${aircraft.size}"
-
-                // Update text list
-                aircraftList.clear()
-                aircraft.values
-                    .sortedByDescending { it.altitude ?: -1 }
-                    .forEach { ac ->
-                        val callsign = ac.callsign?.trim()?.ifBlank { ac.icao24 } ?: ac.icao24
-                        val alt = ac.altitude?.let { "FL${it / 100}" } ?: "??"
-                        val pos = if (ac.latitude != null && ac.longitude != null)
-                            "${"%.2f".format(ac.latitude)},${"%.2f".format(ac.longitude)}"
-                        else "no pos"
-                        val spd = ac.velocity?.let { "${it}kt" } ?: ""
-                        aircraftList.add("$callsign | $alt | $pos $spd")
-                    }
-                listAdapter.notifyDataSetChanged()
-            }
+        aircraftTable = findViewById(R.id.listAircraft)
+        aircraftTable.onAircraftClick = { ac ->
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(ac.callsign ?: ac.icao24)
+                .setMessage("ICAO：${ac.icao24}\n高度：${ac.altitude?.let { "$it ft" } ?: "—"}\n速度：${ac.velocity?.let { "$it kt" } ?: "—"}\n航向：${ac.heading?.let { "%.1f°".format(it) } ?: "—"}\n位置：${ac.latitude ?: "—"}, ${ac.longitude ?: "—"}")
+                .setPositiveButton("关闭", null).show()
         }
 
         // Status indicator — read connectionState directly from the bound service.
@@ -178,6 +145,12 @@ class AdsbRadarView @JvmOverloads constructor(
     private var aircraftList = listOf<AdsbDecoder.AdsbFrame>()
     private var ownLat = 0.0
     private var ownLon = 0.0
+    private var positionKnown=false
+    private var wantsAnimation=true
+    private val receiverPrefs=context.getSharedPreferences("radio_map",android.content.Context.MODE_PRIVATE)
+    private val locationListener=android.content.SharedPreferences.OnSharedPreferenceChangeListener { _,key ->
+        if(key=="receiverLat" || key=="receiverLon") refreshReceiverPosition()
+    }
     private var rangeNm = 250.0  // display range in nautical miles
 
     private val bgPaint    = Paint().apply { color = 0xFF050D12.toInt(); style = Paint.Style.FILL }
@@ -189,7 +162,7 @@ class AdsbRadarView @JvmOverloads constructor(
     private val sweepGradPaint = Paint().apply { style = Paint.Style.FILL }
 
     private var sweepAngle = 0f
-    private val sweepAnimator = android.animation.ValueAnimator.ofFloat(0f, 360f).apply {
+    private val sweepAnimator by lazy { android.animation.ValueAnimator.ofFloat(0f, 360f).apply {
         duration = 4000
         repeatCount = android.animation.ValueAnimator.INFINITE
         interpolator = android.view.animation.LinearInterpolator()
@@ -197,15 +170,30 @@ class AdsbRadarView @JvmOverloads constructor(
             sweepAngle = anim.animatedValue as Float
             invalidate()
         }
-        start()
+    } }
+    fun setAnimating(active: Boolean) { wantsAnimation=active; updateAnimation() }
+    private fun updateAnimation() {
+        if(wantsAnimation && isAttachedToWindow && windowVisibility==VISIBLE) {
+            if(!sweepAnimator.isStarted) sweepAnimator.start()
+        } else sweepAnimator.cancel()
     }
+    private fun refreshReceiverPosition() {
+        if(receiverPrefs.contains("receiverLat") && receiverPrefs.contains("receiverLon"))
+            setOwnPosition(receiverPrefs.getFloat("receiverLat",0f).toDouble(),receiverPrefs.getFloat("receiverLon",0f).toDouble())
+        else { positionKnown=false; postInvalidate() }
+    }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow(); refreshReceiverPosition()
+        receiverPrefs.registerOnSharedPreferenceChangeListener(locationListener); updateAnimation()
+    }
+    override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); post { updateAnimation() } }
 
     fun updateAircraft(list: List<AdsbDecoder.AdsbFrame>) {
         aircraftList = list.filter { it.latitude != null && it.longitude != null }
         postInvalidate()
     }
 
-    fun setOwnPosition(lat: Double, lon: Double) { ownLat = lat; ownLon = lon }
+    fun setOwnPosition(lat: Double, lon: Double) { ownLat = lat; ownLon = lon; positionKnown=lat in -90.0..90.0 && lon in -180.0..180.0; postInvalidate() }
     fun setRange(nm: Double) { rangeNm = nm }
 
     override fun onDraw(canvas: Canvas) {
@@ -244,6 +232,7 @@ class AdsbRadarView @JvmOverloads constructor(
 
         // Aircraft blips
         for (ac in aircraftList) {
+            if(!positionKnown) break
             val lat = ac.latitude ?: continue
             val lon = ac.longitude ?: continue
 
@@ -287,6 +276,7 @@ class AdsbRadarView @JvmOverloads constructor(
         canvas.drawText("E", cx + r + 4f, cy + 8f, textPaint)
         textPaint.color = 0xFF00FF88.toInt()
         textPaint.textAlign = Paint.Align.LEFT
+        if(!positionKnown) canvas.drawText("接收位置未知",12f,height-12f,textPaint)
     }
 
     private fun latLonToPixel(lat: Double, lon: Double, cx: Float, cy: Float, r: Float): Pair<Float, Float> {
@@ -302,6 +292,7 @@ class AdsbRadarView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        receiverPrefs.unregisterOnSharedPreferenceChangeListener(locationListener)
         sweepAnimator.cancel()
     }
 }

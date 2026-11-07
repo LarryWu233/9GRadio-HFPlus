@@ -7,17 +7,18 @@ plugins {
 android {
     compileSdk 35
     namespace "com.radiosport.ninegradio"
+    ndkVersion "28.2.13676358"
 
     defaultConfig {
-        applicationId "com.radiosport.ninegradio"
+        applicationId "com.radiosport.ninegradio.hfplus"
         minSdk 26
         targetSdk 35
-        versionCode 39
-        versionName "1.39"
+        versionCode 19
+        versionName "0.18.0-hfplus-alpha18"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+            abiFilters.addAll((project.findProperty("targetAbi") ?: "arm64-v8a,armeabi-v7a,x86_64").split(",").toList())
         }
 
         externalNativeBuild {
@@ -32,16 +33,15 @@ android {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            applicationVariants.all { variant ->
-                variant.outputs.all {
-                    outputFileName = "9GRadio_v${variant.versionName}_release.apk"
-                }
-            }
         }
         debug {
             debuggable true
             jniDebuggable true
         }
+    }
+
+    if (rootProject.file("build/toolchains/ndk/android-ndk-r28c").exists()) {
+        ndkPath rootProject.file("build/toolchains/ndk/android-ndk-r28c").absolutePath
     }
 
     compileOptions {
@@ -58,6 +58,11 @@ android {
         dataBinding true
         buildConfig true   // exposes BuildConfig.VERSION_NAME / VERSION_CODE at runtime
     }
+    sourceSets {
+        test.java.srcDir 'src/sharedTest/java'
+        androidTest.java.srcDir 'src/sharedTest/java'
+    }
+    packagingOptions { jniLibs { useLegacyPackaging = true } }
 
     externalNativeBuild {
         cmake {
@@ -67,7 +72,19 @@ android {
     }
 }
 
+android.applicationVariants.all { variant ->
+    android.sourceSets.getByName(variant.buildType.name).jniLibs.srcDir("$buildDir/generated/readsb/${variant.buildType.name}")
+    tasks.matching { it.name == "merge${variant.name.capitalize()}JniLibFolders" }.configureEach {
+        dependsOn("externalNativeBuild${variant.name.capitalize()}")
+    }
+    variant.outputs.all {
+        outputFileName = "9GRadioHFPlus_${variant.versionName}_${variant.buildType.name}.apk"
+    }
+}
+
 dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.maplibre.gl:android-sdk-opengl:13.7.1'
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     implementation 'androidx.core:core-ktx:1.16.0'
     implementation 'androidx.appcompat:appcompat:1.7.0'

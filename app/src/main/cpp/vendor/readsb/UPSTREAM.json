@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/wiedehopf/readsb",
+  "commit": "5d13a0c2b2a6d22949b8b13c5424f28b7f3e1ead",
+  "archiveSha256": "f5c11800b81f687d3f03e9b73d9f2531fd02b4105d54c2ef8161cfad2ccada7b",
+  "license": "GPL-3.0-or-later",
+  "input": "Unmodified 2.4 MS/s unsigned 8-bit IQ via stdin; no native USB driver.",
+  "dependency": {
+    "project": "https://github.com/facebook/zstd",
+    "tag": "v1.5.7",
+    "license": "BSD-3-Clause",
+    "archiveSha256": "7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4"
+  },
+  "androidChanges": [
+    "readsb.h: use posix_memalign for API 26 compatibility",
+    "util.c: use existing POSIX pthread_join branch on Android",
+    "No changes to demod_2400.c, mode_s.c, crc.c, cpr.c or track.c"
+  ]
+}

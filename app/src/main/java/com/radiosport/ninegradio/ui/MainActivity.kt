@@ -39,6 +39,10 @@ import com.radiosport.ninegradio.source.IqSource
 import com.radiosport.ninegradio.source.RtlSdrDriverApp
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.sample
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -51,13 +55,16 @@ import com.radiosport.ninegradio.dsp.AprsDecoder
 /** Vocoder status label — mbelib-neo is statically linked and always active. */
 private const val VOCODER_STATUS_TEXT = "Vocoder: mbelib-neo built-in active"
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : RadioThemedActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
         private const val REQUEST_PERMISSIONS = 1001
     }
 
+    private lateinit var etm: EtmController
+    private lateinit var regionalReception: RegionalReceptionController
+    private lateinit var graphLayout: SpectrumWaterfallLayout
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
 
@@ -88,6 +95,10 @@ class MainActivity : AppCompatActivity() {
 
     // Tabbed controls drawer
     private lateinit var pagerAdapter: ControlsPagerAdapter
+    private var contentController: ContentModuleController?=null
+    private val contentMicPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted -> contentController?.microphoneResult(granted) }
+    private val contentWavPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> contentController?.wavResult(uri) }
+    private val contentCsvPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> contentController?.csvResult(uri) }
     private lateinit var ctrlViews: ControlsTabManager
 
     // Snap-to-channel preference (synced with the Tune tab switch)
@@ -150,11 +161,11 @@ class MainActivity : AppCompatActivity() {
     // is shown/hidden on demand via showScanTab()/hideScanTab(), invoked from
     // the Settings tab's Scanner button and the main FAB.
     private var scanTabScanner: com.radiosport.ninegradio.scanner.FrequencyScanner? = null
-    private val scanTabHitLog = mutableListOf<String>()
+    private val scanTabHitLog = mutableListOf<RadioDataTable.Row>()
     private val scanTabHitFreqs = mutableListOf<Long>()
-    private var scanTabHitAdapter: ArrayAdapter<String>? = null
+    private var scanTabHitAdapter: RadioDataTable? = null
     private val scanTabChannelRows = mutableListOf<com.radiosport.ninegradio.scanner.FrequencyScanner.ChannelEntry>()
-    private var scanTabChannelAdapter: ScanChannelTableAdapter? = null
+    private var scanTabChannelAdapter: RadioDataTable? = null
     private var scanTabChannelTableJob: Job? = null
     private var scanTabStatusJob: Job? = null
     private var scanTabHitsJob: Job? = null
@@ -224,7 +235,7 @@ class MainActivity : AppCompatActivity() {
 
         if (snap.sampleRate != viewModel.sampleRate.value) {
             viewModel.setSampleRate(snap.sampleRate)
-            val idx = RtlSdrDevice.SAMPLE_RATES.indexOfFirst { it == viewModel.sampleRate.value }
+            val idx = viewModel.availableSampleRates.indexOfFirst { it == viewModel.sampleRate.value }
             if (idx >= 0) {
                 sampleRateLabelsCache.getOrNull(idx)?.let { ctrlViews.tvSampleRateLabel?.text = it }
                 updateSampleRateChips(idx)
@@ -288,15 +299,10 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         if (result.resultCode == RESULT_OK) {
             val hz = result.data?.getLongExtra(BookmarkActivity.EXTRA_FREQ_HZ, -1L) ?: -1L
-            if (hz > 0L) {
-                viewModel.setFrequency(hz)
-                binding.frequencyView.setFrequency(hz)
-                binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                binding.spectrumView.setDemodDialFrequency(hz)
-                binding.waterfallView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                binding.waterfallView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                showSnackbar("Tuned to ${"%.3f".format(hz / 1e6)} MHz")
+            if (hz > 0L && viewModel.setFrequency(hz)) {
+                viewModel.finishTuning()
+                syncFrequencyDisplay()
+                showSnackbar("已调谐至 ${"%.3f".format(hz/1e6)} MHz")
             }
         }
     }
@@ -305,6 +311,7 @@ class MainActivity : AppCompatActivity() {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             sdrService = (binder as RtlSdrService.LocalBinder).getService()
             bound = true
+            contentController?.bindService()
             // If device is already connected (ViewModel connected it before us), apply settings now.
             if (viewModel.connectionState.value is RtlSdrService.ConnectionState.Connected) {
                 if (viewModel.isV4 && !viewModel.allowOutOfBand.value) {
@@ -320,7 +327,7 @@ class MainActivity : AppCompatActivity() {
             if (viewModel.connectionState.value is RtlSdrService.ConnectionState.Disconnected) {
                 val usbManager = getSystemService(UsbManager::class.java)
                 usbManager.deviceList.values
-                    .firstOrNull { RtlSdrDevice.isSupported(it) }
+                    .firstOrNull { com.radiosport.ninegradio.source.UsbSources.isSupported(it) }
                     ?.let { handleUsbDeviceAttached(it) }
             }
         }
@@ -337,12 +344,12 @@ class MainActivity : AppCompatActivity() {
             when (intent.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     val dev = intent.usbDevice()
-                    if (dev != null && RtlSdrDevice.isSupported(dev)) {
+                    if (dev != null && com.radiosport.ninegradio.source.UsbSources.isSupported(dev)) {
                         handleUsbDeviceAttached(dev)
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    showSnackbar("RTL-SDR disconnected")
+                    showSnackbar("Receiver disconnected")
                     updateConnectionUi(false)
                 }
                 UsbManager.ACTION_USB_ACCESSORY_ATTACHED -> {}
@@ -358,6 +365,10 @@ class MainActivity : AppCompatActivity() {
         // We then apply insets manually to the chip bar so it's never hidden
         // by the navigation bar on Android 15+ (target SDK 35 enforces edge-to-edge).
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= 29) window.isStatusBarContrastEnforced = false
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !UiThemes.current(this).dark
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -374,7 +385,7 @@ class MainActivity : AppCompatActivity() {
             // peekHeight: handle(4) + marginTop(6) + marginBottom(2) + tab bar(44) = ~56dp
             // Add nav bar inset as breathing room below the tab bar.
             val density = resources.displayMetrics.density
-            val peekPx = (56 * density).toInt() + navBar.bottom
+            val peekPx = (44 * density).toInt() + navBar.bottom
             val behavior = BottomSheetBehavior.from(binding.controlsBottomSheet)
             behavior.peekHeight = peekPx
             // Save for use in applyExpandedOffset -- do NOT set sheet paddingBottom here;
@@ -389,6 +400,22 @@ class MainActivity : AppCompatActivity() {
         setupFrequencyView()
         setupControlsPanel()
         setupBottomSheet()
+        graphLayout = SpectrumWaterfallLayout(binding.spectrumView, binding.waterfallView,
+            androidx.preference.PreferenceManager.getDefaultSharedPreferences(this))
+
+        regionalReception = RegionalReceptionController(this, { viewModel.capabilities.value }, { viewModel.demodMode.value to viewModel.centerFreqHz.value }) { mode, hz ->
+            viewModel.setDemodMode(mode)
+            viewModel.setFrequency(hz)
+            viewModel.finishTuning()
+            if (mode == DemodMode.ADSB) updateAdsbTabVisibility(mode)
+        }
+        etm = EtmController(this, { viewModel.getService() }, { viewModel.demodMode.value }, { viewModel.centerFreqHz.value },
+            { mode, hz -> viewModel.setDemodMode(mode); viewModel.setFrequency(hz); viewModel.finishTuning() },
+            { hz ->
+                binding.frequencyView.setFrequency(hz)
+                binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
+                binding.waterfallView.setCenterFrequency(hardwareCenterFreqHz(hz))
+            }, { viewModel.autoDemod.value }, { viewModel.setAutoDemod(it) }, { !scanTabScanning })
         setupFabMenu()
         observeViewModel()
 
@@ -416,7 +443,7 @@ class MainActivity : AppCompatActivity() {
 
         // Handle launch-from-USB intent (app started cold by USB attach)
         intent?.usbDevice()?.let {
-            if (RtlSdrDevice.isSupported(it)) handleUsbDeviceAttached(it)
+            if (com.radiosport.ninegradio.source.UsbSources.isSupported(it)) handleUsbDeviceAttached(it)
         }
     }
 
@@ -427,10 +454,6 @@ class MainActivity : AppCompatActivity() {
     private fun requestInitialPermissions() {
         val needed = mutableListOf<String>()
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
-            needed.add(Manifest.permission.RECORD_AUDIO)
-        }
 
         // POST_NOTIFICATIONS is a runtime permission starting from Android 13 (API 33).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -473,15 +496,13 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.usbDevice()?.let {
-            if (RtlSdrDevice.isSupported(it) && !suppressUsbAttach) handleUsbDeviceAttached(it)
+            if (com.radiosport.ninegradio.source.UsbSources.isSupported(it) && !suppressUsbAttach) handleUsbDeviceAttached(it)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         // Cancel any pending timed-shutdown countdown.
-        shutdownRunnable?.let { shutdownHandler.removeCallbacks(it) }
-        shutdownRunnable = null
         stopAprsCollect()
         stopDmrCollect()
         stopYsfCollect()
@@ -502,8 +523,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var modulesSnapshot: String? = null
     override fun onResume() {
         super.onResume()
+        val modulesNow=ModulePreferences(this).let { it.order.joinToString(",")+":"+it.managedVisibility() }
+        if(modulesSnapshot!=null && modulesSnapshot!=modulesNow) { modulesSnapshot=modulesNow; recreate(); return }
+        modulesSnapshot=modulesNow
+        binding.frequencyView.reverseTuning=androidx.preference.PreferenceManager.getDefaultSharedPreferences(this).getBoolean("pref_reverse_tuning",false)
+        updateDigitalVisualization()
         applyDisplayPreferences()
         ContextCompat.registerReceiver(
             this, displayPrefsReceiver,
@@ -530,8 +557,16 @@ class MainActivity : AppCompatActivity() {
         binding.waterfallView.setSampleRate(effectiveRate)
     }
 
+    override fun onStop() {
+        contentController?.onBackground()
+        super.onStop()
+    }
+
     override fun onPause() {
         super.onPause()
+        if(::pagerAdapter.isInitialized) pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB)?.findViewById<AdsbRadarView>(R.id.adsbPanelRadar)?.setAnimating(false)
+        if(::pagerAdapter.isInitialized) pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RDF)?.findViewById<android.widget.FrameLayout>(R.id.rdfControls)
+            ?.let { (it.getChildAt(0) as? RdfControls)?.setActive(false) }
         unregisterReceiver(displayPrefsReceiver)
         // Safety net: capture whatever is currently in the scan tab's fields
         // even if the user edited them but never pressed Start/Search before
@@ -605,13 +640,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Spectrum theme
-        val theme = prefs.getString("pref_spectrum_theme", "Futuristic") ?: "Futuristic"
+        val theme = prefs.getString("pref_spectrum_theme", "UI") ?: "Futuristic"
         binding.spectrumView.setTheme(theme)
         viewModel.setSpectrumTheme(theme)
 
         // dB range: preferences store pref_db_min as positive ×−1, pref_db_max as 0..n
         // These are now also saved/restored per-protocol by MainViewModel.
-        val dbMinRaw  = prefs.getInt("pref_db_min", 120)
+        val storedMin = prefs.getInt("pref_db_min", 120)
+        val dbMinRaw = storedMin.takeIf { it in 10..200 } ?: 120
+        if (dbMinRaw != storedMin) prefs.edit().putInt("pref_db_min", dbMinRaw).apply()
         val dbMaxRaw  = prefs.getInt("pref_db_max", 0)
         val dbMin     = -(dbMinRaw.toFloat()).coerceIn(10f, 200f)
         val dbMax     = dbMaxRaw.toFloat().coerceIn(-100f, 50f)
@@ -689,6 +726,9 @@ class MainActivity : AppCompatActivity() {
         // Waterfall auto-stretch
         val wfAutoStretch = prefs.getBoolean("pref_waterfall_auto_stretch", false)
         binding.waterfallView.setAutoStretch(wfAutoStretch)
+        binding.waterfallView.setManualLevels(
+            if (!wfAutoStretch) prefs.getInt("waterfall_min_db",-prefs.getInt("pref_db_min",120)).toFloat() else null,
+            prefs.getInt("waterfall_max_db",prefs.getInt("pref_db_max",0)).toFloat())
 
         // Waterfall time ruler
         val wfTimestamp = prefs.getBoolean("pref_waterfall_show_timestamp", true)
@@ -728,46 +768,160 @@ class MainActivity : AppCompatActivity() {
         // behind the status bar when running edge-to-edge.
         val appBar = binding.toolbar.parent as? android.view.ViewGroup ?: binding.toolbar
         ViewCompat.setOnApplyWindowInsetsListener(appBar) { view, insets ->
-            val statusBar = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val statusBar = insets.getInsets(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout())
             view.setPadding(view.paddingLeft, statusBar.top, view.paddingRight, view.paddingBottom)
             insets
         }
     }
 
-    private fun setupSpectrumView() {
-        binding.spectrumView.apply {
-            setTheme("Futuristic")
-            onFrequencyClick = { hz ->
-                viewModel.setFrequency(hz)
-                binding.frequencyView.setFrequency(hz)
-                binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                binding.spectrumView.setDemodDialFrequency(hz)
-                binding.waterfallView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                binding.waterfallView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                if (::ctrlViews.isInitialized) ctrlViews.tuningDial?.currentFreqHz = hz
+    private var graphDragMode = true
+    private var plotZoom = 1f
+    private var plotContext: String?=null
+    private fun restorePlotContext(mode: DemodMode) {
+        if(!viewModel.capabilities.value.supportsMode(mode)) return
+        val key="plot_context_${viewModel.capabilities.value.id}_${mode.name}"
+        if(plotContext==key) return
+        val prefs=androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+        plotContext?.let { prefs.edit().putFloat(it,plotZoom).apply() }
+        plotContext=key
+        setPlotZoom(prefs.getFloat(key,if(mode==DemodMode.ADSB) 1f else plotZoom),false)
+    }
+    private fun setPlotZoom(value: Float, save: Boolean = true) {
+        val window=SpectrumZoom.window(value)
+        plotZoom=window.total
+        if(viewModel.decimation.value!=window.decimation) viewModel.setDecimation(window.decimation)
+        val rate=viewModel.effectiveSampleRate()
+        binding.spectrumView.setSampleRate(rate); binding.waterfallView.setSampleRate(rate)
+        binding.spectrumView.setZoomPan(window.magnification,0)
+        binding.waterfallView.setZoomPan(window.magnification,0)
+        updatePlotSpan()
+        if (::pagerAdapter.isInitialized) pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_DISPLAY)
+            ?.findViewById<com.google.android.material.slider.Slider>(R.id.sliderPlotZoom)?.let { slider ->
+                val v = (kotlin.math.ln(plotZoom.toDouble()) / kotlin.math.ln(2.0)).toFloat()
+                if (kotlin.math.abs(slider.value - v) > 0.01) slider.value = v
+            }
+        if (save) savePlotZoom()
+    }
+    private fun updatePlotSpan() {
+        val span=binding.spectrumView.visibleBandwidthHz()
+        binding.tvPlotZoom.text="SPAN\n" + if(span>=1_000_000) "${"%.2f".format(span/1e6)} MHz" else if(span>=1000) "${"%.1f".format(span/1e3)} kHz" else "$span Hz"
+        binding.tvPlotZoom.contentDescription="显示宽度 ${binding.tvPlotZoom.text} · 全宽"
+    }
+    private fun updatePlotBandwidth() {
+        val mode=viewModel.demodMode.value
+        val raw=viewModel.ifBandwidthHz.value
+        val width=raw.takeIf { it>0 } ?: mode.defaultBwHz
+        val allowed=mode!=DemodMode.ADSB
+        binding.tvTuningStep.text="BW\n${formatIfBw(width,false)}"
+        binding.tvTuningStep.contentDescription="BW ${formatIfBw(width,raw==0)}"
+        binding.tvTuningStep.isEnabled=allowed
+        binding.btnStepUp.isEnabled=allowed; binding.btnStepDown.isEnabled=allowed
+    }
+    private fun changePlotBandwidth(direction:Int) {
+        val range=bwRangeFor(viewModel.demodMode.value)
+        val current=viewModel.ifBandwidthHz.value.takeIf { it>0 } ?: viewModel.demodMode.value.defaultBwHz
+        val next=(nearestBwIdx(current,range)+direction).coerceIn(range.first,range.second)
+        viewModel.setIfBandwidth(BW_STEPS[next]); updatePlotBandwidth()
+    }
+    private fun showPlotValueEditor(span:Boolean) {
+        val title=if(span) "SPAN" else "BW"
+        val rate=viewModel.sampleRate.value.coerceAtLeast(1)
+        val current=if(span) binding.spectrumView.visibleBandwidthHz() else
+            (viewModel.ifBandwidthHz.value.takeIf { it>0 } ?: viewModel.demodMode.value.defaultBwHz).toLong()
+        val multipliers=longArrayOf(1,1000,1000000)
+        val index=if(current>=1000000) 2 else if(current>=1000) 1 else 0
+        val row=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; setPadding(24,12,24,4) }
+        val input=EditText(this).apply {
+            id=R.id.plotValueInput; setSingleLine(true)
+            inputType=android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(java.math.BigDecimal.valueOf(current).divide(java.math.BigDecimal.valueOf(multipliers[index])).stripTrailingZeros().toPlainString())
+            selectAll()
+        }
+        val units=Spinner(this).apply {
+            id=R.id.plotValueUnit
+            adapter=ArrayAdapter(this@MainActivity,R.layout.compact_spinner_item,listOf("Hz","kHz","MHz"))
+            setSelection(index)
+        }
+        row.addView(input,LinearLayout.LayoutParams(0,-2,1f)); row.addView(units,LinearLayout.LayoutParams(-2,-2))
+        val dialog=AlertDialog.Builder(this).setTitle(title).setView(row)
+            .setPositiveButton("应用",null).setNegativeButton("取消",null)
+            .setNeutralButton(if(span) "全宽" else "Auto") { _,_ -> if(span) setPlotZoom(1f) else viewModel.setIfBandwidth(0) }.create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val hz=runCatching { java.math.BigDecimal(input.text.toString()).multiply(java.math.BigDecimal.valueOf(multipliers[units.selectedItemPosition])).longValueExact() }.getOrNull()
+                val range=if(span) (rate/2048L).coerceAtLeast(1)..rate.toLong() else bwRangeFor(viewModel.demodMode.value).let { BW_STEPS[it.first].toLong()..BW_STEPS[it.second].toLong() }
+                if(hz==null || hz !in range) { input.error="${range.first}–${range.last} Hz"; return@setOnClickListener }
+                if(span) setPlotZoom(rate.toFloat()/hz) else viewModel.setIfBandwidth(hz.toInt())
+                updatePlotBandwidth(); dialog.dismiss()
             }
         }
+        dialog.show()
+        input.requestFocus()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
     }
 
+    private fun savePlotZoom() {
+        val editor=androidx.preference.PreferenceManager.getDefaultSharedPreferences(this).edit()
+            .putFloat("plot_total_zoom",plotZoom).putFloat("plot_zoom",plotZoom/viewModel.decimation.value)
+        plotContext?.let { editor.putFloat(it,plotZoom) }; editor.apply()
+    }
+
+    private fun graphTune(hz: Long): Boolean {
+        val old = viewModel.centerFreqHz.value
+        val valid = viewModel.capabilities.value.browseFrequency(hz)
+        if (old == valid || !viewModel.setFrequency(valid)) return false
+        syncFrequencyDisplay()
+        return true
+    }
+    private fun setupSpectrumView() {
+        binding.spectrumView.setTheme("UI")
+        binding.spectrumView.setOnTouchListener(GraphTuningTouch(binding.spectrumView,
+            { graphDragMode }, { viewModel.centerFreqHz.value }, { binding.spectrumView.visibleBandwidthHz() },
+            { binding.frequencyView.tuningStepHz }, { binding.spectrumView.frequencyAtPixel(it) },
+            { graphTune(it) }, { viewModel.finishTuning(); savePlotZoom() }, { plotZoom }, { setPlotZoom(it, false) },
+            { binding.spectrumView.bandwidthEdgeHit(it) }, { x ->
+                val range=bwRangeFor(viewModel.demodMode.value)
+                val hz=BW_STEPS[nearestBwIdx(binding.spectrumView.bandwidthAtPixel(x),range)]
+                if(hz==viewModel.ifBandwidthHz.value) false else { viewModel.setIfBandwidth(hz); true }
+            }, { binding.spectrumView.isCrosshairEnabled() },
+            { x,y -> binding.spectrumView.showInspection(x,y) }, { binding.spectrumView.hideInspection() }))
+    }
     private fun setupWaterfallView() {
-        binding.waterfallView.apply {
-            onFrequencyClick = { hz ->
-                viewModel.setFrequency(hz)
-                binding.frequencyView.setFrequency(hz)
-                binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                binding.spectrumView.setDemodDialFrequency(hz)
-                binding.waterfallView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                binding.waterfallView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                if (::ctrlViews.isInitialized) ctrlViews.tuningDial?.currentFreqHz = hz
-            }
+        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+        graphDragMode = prefs.getBoolean("graph_drag_tune", true)
+        setPlotZoom(prefs.getFloat("plot_total_zoom", prefs.getFloat("plot_zoom",1f)*viewModel.decimation.value),false)
+        val zoomHaptics = TuningHaptics(binding.tvPlotZoom)
+        binding.btnPlotZoomOut.setOnClickListener { setPlotZoom(plotZoom / 2); zoomHaptics.tick() }
+        binding.btnPlotZoomIn.setOnClickListener { setPlotZoom(plotZoom * 2); zoomHaptics.tick() }
+        binding.tvPlotZoom.setOnClickListener { setPlotZoom(1f); zoomHaptics.tick() }
+        fun label() { binding.btnGraphGesture.text = if (graphDragMode) "拖动调谐 ▾" else "点选居中 ▾" }
+        label()
+        binding.btnGraphGesture.setOnClickListener {
+            graphDragMode = !graphDragMode
+            prefs.edit().putBoolean("graph_drag_tune", graphDragMode).apply()
+            label()
         }
+        binding.waterfallView.setOnTouchListener(GraphTuningTouch(binding.waterfallView,
+            { graphDragMode }, { viewModel.centerFreqHz.value }, { binding.spectrumView.visibleBandwidthHz() },
+            { binding.frequencyView.tuningStepHz }, { binding.waterfallView.frequencyAtPixel(it) },
+            { graphTune(it) }, { viewModel.finishTuning(); savePlotZoom() }, { plotZoom }, { setPlotZoom(it, false) }))
     }
 
     private fun setupFrequencyView() {
+        binding.frequencyView.onTuningStepChanged = { step ->
+            getSharedPreferences("rtlsdr_prefs", MODE_PRIVATE).edit()
+                .putLong("tuningStep_v4_${viewModel.demodMode.value.name}", step).apply()
+            updatePlotBandwidth()
+            stepPicker()?.selectChoice(step)
+            if (::ctrlViews.isInitialized) ctrlViews.tuningDial?.overrideStepHz = maxOf(1, step / 10)
+            ctrlViews.chipGroupStep?.let { group -> for (index in 0 until group.childCount) {
+                (group.getChildAt(index) as? Chip)?.apply { if (isCheckable) isChecked = tag == step }
+            } }
+        }
+        binding.frequencyView.frequencyLimiter = { current, target -> viewModel.capabilities.value.browseFrequency(target) }
+        binding.frequencyView.onTuningFinished = { viewModel.finishTuning() }
         binding.frequencyView.onFrequencyChanged = { hz ->
-            viewModel.setFrequency(hz)
+            if (!viewModel.setFrequency(hz)) binding.frequencyView.setFrequency(viewModel.centerFreqHz.value)
             binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
             binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
             binding.spectrumView.setDemodDialFrequency(hz)
@@ -781,8 +935,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Step up/down buttons -- single tap steps once; hold accelerates.
-        setupFreqButton(binding.btnFreqUp,   isUp = true)
-        setupFreqButton(binding.btnFreqDown, isUp = false)
+        val bwHaptics=TuningHaptics(binding.tvTuningStep)
+        binding.btnStepUp.setOnClickListener { changePlotBandwidth(1); bwHaptics.tick() }
+        binding.btnStepDown.setOnClickListener { changePlotBandwidth(-1); bwHaptics.tick() }
+        binding.tvTuningStep.apply {
+            typeface=android.graphics.Typeface.create("sans-serif-condensed",android.graphics.Typeface.BOLD); textSize=10f
+            setOnClickListener { viewModel.setIfBandwidth(0); updatePlotBandwidth() }
+            HeldValueEditor.install(this) { showPlotValueEditor(false) }
+        }
+        binding.tvPlotZoom.apply {
+            typeface=android.graphics.Typeface.create("sans-serif-condensed",android.graphics.Typeface.BOLD); textSize=10f
+            HeldValueEditor.install(this) { showPlotValueEditor(true) }
+        }
+        binding.btnStepUp.contentDescription="增大 BW"
+        binding.btnStepDown.contentDescription="减小 BW"
+        updatePlotBandwidth()
     }
 
     /**
@@ -808,8 +975,8 @@ class MainActivity : AppCompatActivity() {
                 val mhz = editText.text.toString().toDoubleOrNull()
                 if (mhz != null && mhz > 0) {
                     val hz = (mhz * 1_000_000).toLong()
-                    viewModel.setFrequency(hz)
-                    binding.frequencyView.setFrequency(hz)
+                    if (!viewModel.setFrequency(hz)) return@setPositiveButton
+                    binding.frequencyView.setFrequency(viewModel.centerFreqHz.value)
                     binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
                     binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
                     binding.spectrumView.setDemodDialFrequency(hz)
@@ -874,146 +1041,64 @@ class MainActivity : AppCompatActivity() {
         button.setOnClickListener { if (!freqRepeatFired) step() }
     }
 
+    private fun modeChipGroups(): List<android.widget.GridLayout> {
+        if(!::pagerAdapter.isInitialized) return emptyList()
+        val root=pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_MODE) ?: return emptyList()
+        return listOfNotNull(root.findViewById(R.id.chipGroupDemod),root.findViewById(R.id.chipGroupDigital))
+    }
     private fun setupDemodModeChips() {
-        val modes = listOf(
-            DemodMode.AM, DemodMode.NFM, DemodMode.WFM, DemodMode.WFM_STEREO,
-            DemodMode.USB, DemodMode.LSB, DemodMode.CW, DemodMode.CWR,
-            DemodMode.DSB, DemodMode.APRS, DemodMode.RAW,
-            DemodMode.DMR, DemodMode.YSF, DemodMode.DSTAR, DemodMode.DIG
-        )
-        val chipGroup = ctrlViews.chipGroupDemod ?: return
-        chipGroup.removeAllViews()
-        modes.forEach { mode ->
-            val chip = Chip(this).apply {
-                text = mode.displayName
-                isCheckable = true
-                tag = mode
-                setOnClickListener {
-                    viewModel.setDemodMode(mode)
-                    syncFrequencyDisplay()
+        val modes = listOf(DemodMode.AM, DemodMode.NFM, DemodMode.WFM, DemodMode.WFM_STEREO,
+            DemodMode.USB, DemodMode.LSB, DemodMode.CW, DemodMode.CWR, DemodMode.DSB,
+            DemodMode.APRS, DemodMode.ACARS, DemodMode.ADSB, DemodMode.RAW,
+            DemodMode.DMR, DemodMode.YSF, DemodMode.DSTAR, DemodMode.DIG)
+        val groups=modeChipGroups()
+        if(groups.size!=2) return
+        groups.forEach { it.removeAllViews() }
+        val analog=setOf(DemodMode.AM,DemodMode.NFM,DemodMode.WFM,DemodMode.WFM_STEREO,
+            DemodMode.USB,DemodMode.LSB,DemodMode.CW,DemodMode.CWR,DemodMode.DSB)
+        val states=arrayOf(intArrayOf(-android.R.attr.state_enabled),intArrayOf(android.R.attr.state_selected),intArrayOf())
+        val density=resources.displayMetrics.density
+        for (mode in modes) {
+            val group=groups[if(mode in analog) 0 else 1]
+            val cell=group.childCount
+            group.addView(com.google.android.material.button.MaterialButton(this).apply {
+            id=View.generateViewId()
+            text = if(mode==DemodMode.WFM_STEREO) "WFM 立体声" else mode.displayName
+            tag=mode; isCheckable=false; isSelected=mode==viewModel.demodMode.value
+            isEnabled=viewModel.capabilities.value.supportsMode(mode)
+            isAllCaps=false; textSize=12f; setSingleLine(true); setHorizontallyScrolling(false)
+            setPadding((4*density).toInt(),0,(4*density).toInt(),0)
+            minWidth=0; minimumWidth=0; minHeight=0; minimumHeight=0
+            insetTop=0; insetBottom=0; cornerRadius=0; elevation=0f; stateListAnimator=null
+            backgroundTintList=android.content.res.ColorStateList(states,intArrayOf(UiThemes.color(this@MainActivity,R.attr.radioSurface),UiThemes.color(this@MainActivity,R.attr.radioSelected),UiThemes.color(this@MainActivity,R.attr.radioSurface)))
+            setTextColor(android.content.res.ColorStateList(states,intArrayOf(UiThemes.color(this@MainActivity,R.attr.radioMuted),UiThemes.color(this@MainActivity,R.attr.radioAccent),UiThemes.color(this@MainActivity,R.attr.radioText))))
+            strokeColor=android.content.res.ColorStateList.valueOf(UiThemes.color(this@MainActivity,R.attr.radioOutline)); strokeWidth=(density*0.5f).toInt().coerceAtLeast(1)
+            layoutParams=GridLayout.LayoutParams(GridLayout.spec(cell/3),GridLayout.spec(cell%3,1f)).apply { width=0; height=(44*density).toInt() }
+            setOnClickListener {
+                contentController?.explicitRfMode(mode)
+                val hasHistory=viewModel.rememberedModeFrequency(mode)!=null
+                viewModel.setDemodMode(mode)
+                selectDemodChip(viewModel.demodMode.value)
+                if (mode == DemodMode.ADSB) {
+                    viewModel.setFrequency(1_090_000_000)
+                    updateAdsbTabVisibility(mode)
                 }
+                if(hasHistory) regionalReception.cancelPendingAutoTune()
+                else regionalReception.onModeSelected(mode,viewModel.centerFreqHz.value)
+                syncFrequencyDisplay()
             }
-            chipGroup.addView(chip)
+        })
         }
-        // Reflect the currently active mode immediately (e.g. after rotation
-        // or returning from another tab where the chips were just inflated).
-        selectDemodChip(viewModel.demodMode.value)
-
-        // Shutdown button + timer dial setup.
-        setupShutdownControls()
-    }
-
-    // ── Shutdown timer ────────────────────────────────────────────────────────
-
-    /** Options shown in the timer spinner: label → delay in ms (null = immediate). */
-    private val shutdownOptions: List<Pair<String, Long?>> = listOf(
-        "Now"    to null,
-        "0.5 hr" to (30  * 60 * 1000L),
-        "1 hr"   to (60  * 60 * 1000L),
-        "1.5 hr" to (90  * 60 * 1000L),
-        "2 hr"   to (120 * 60 * 1000L),
-        "2.5 hr" to (150 * 60 * 1000L),
-        "3 hr"   to (180 * 60 * 1000L),
-    )
-
-    private val shutdownHandler = Handler(Looper.getMainLooper())
-    private var shutdownRunnable: Runnable? = null
-    private var shutdownTargetMs: Long = 0L
-
-    /** Called once after the ViewPager has inflated the mode tab. */
-    private fun setupShutdownControls() {
-        val spinner  = ctrlViews.spinnerShutdownTimer ?: return
-        val btn      = ctrlViews.btnShutdown          ?: return
-        val statusTv = ctrlViews.tvShutdownTimerStatus
-
-        // Populate the spinner.
-        val labels = shutdownOptions.map { it.first }
-        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels).also {
-            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        }
-        spinner.setSelection(0, false)   // default = "Now"
-
-        btn.setOnClickListener {
-            val delay = shutdownOptions[spinner.selectedItemPosition].second
-            if (delay == null) {
-                // Immediate – cancel any pending timer and confirm.
-                cancelShutdownTimer(statusTv)
-                confirmShutdown()
-            } else {
-                // Timed – either schedule or, if already running for same slot, cancel.
-                if (shutdownRunnable != null) {
-                    cancelShutdownTimer(statusTv)
-                } else {
-                    scheduleShutdown(delay, shutdownOptions[spinner.selectedItemPosition].first, statusTv)
-                }
+        groups.forEach { group ->
+            while(group.childCount%3!=0) {
+                val cell=group.childCount
+                group.addView(View(this).apply {
+                    importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    background=android.graphics.drawable.GradientDrawable().apply { setColor(UiThemes.color(this@MainActivity,R.attr.radioSurface)); setStroke((density*0.5f).toInt().coerceAtLeast(1),UiThemes.color(this@MainActivity,R.attr.radioOutline)) }
+                    layoutParams=GridLayout.LayoutParams(GridLayout.spec(cell/3),GridLayout.spec(cell%3,1f)).apply { width=0; height=(44*density).toInt() }
+                })
             }
         }
-    }
-
-    private fun scheduleShutdown(delayMs: Long, label: String, statusTv: android.widget.TextView?) {
-        shutdownTargetMs = System.currentTimeMillis() + delayMs
-        val ticker = object : Runnable {
-            override fun run() {
-                val remaining = shutdownTargetMs - System.currentTimeMillis()
-                if (remaining <= 0) {
-                    shutdownRunnable = null
-                    statusTv?.text = "Disconnects the SDR device and closes the app."
-                    ctrlViews.btnShutdown?.text = "Shutdown"
-                    performShutdown()
-                    return
-                }
-                val mins = (remaining / 60000).toInt()
-                val secs = ((remaining % 60000) / 1000).toInt()
-                statusTv?.text = "Shutting down in %d:%02d — tap Shutdown to cancel.".format(mins, secs)
-                ctrlViews.btnShutdown?.text = "Cancel"
-                shutdownHandler.postDelayed(this, 1000)
-            }
-        }
-        shutdownRunnable = ticker
-        shutdownHandler.post(ticker)
-        statusTv?.text = "Shutdown scheduled in $label. Tap Shutdown to cancel."
-        ctrlViews.btnShutdown?.text = "Cancel"
-    }
-
-    private fun cancelShutdownTimer(statusTv: android.widget.TextView?) {
-        shutdownRunnable?.let { shutdownHandler.removeCallbacks(it) }
-        shutdownRunnable = null
-        statusTv?.text = "Disconnects the SDR device and closes the app."
-        ctrlViews.btnShutdown?.text = "Shutdown"
-    }
-
-    /**
-     * Prompts the user to confirm immediate shutdown, then gracefully stops
-     * the SDR service and exits the activity.
-     */
-    private fun confirmShutdown() {
-        AlertDialog.Builder(this)
-            .setTitle("Shut down 9GRadio?")
-            .setMessage("This will disconnect the SDR device and close the app.")
-            .setPositiveButton("Shutdown") { _, _ -> performShutdown() }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun performShutdown() {
-        // Stop the foreground service: disconnects the USB device, cancels the
-        // notification, and stops itself (RtlSdrService.ACTION_STOP).
-        val stopIntent = Intent(this, RtlSdrService::class.java).setAction(RtlSdrService.ACTION_STOP)
-        startService(stopIntent)
-
-        // Unbind now so onDestroy doesn't race the service teardown.
-        if (bound) {
-            unbindService(serviceConnection)
-            bound = false
-        }
-        if (vmBound) {
-            unbindService(viewModel.serviceConnection)
-            vmBound = false
-        }
-
-        // Close the activity and remove the task from recents -- a graceful,
-        // full app shutdown rather than just backgrounding it.
-        finishAndRemoveTask()
     }
 
     private fun setupControlsPanel() {
@@ -1025,6 +1110,12 @@ class MainActivity : AppCompatActivity() {
 
     @Suppress("LongMethod")
     private fun setupControlsPanelDeferred() {
+        if(isFinishing || isDestroyed) return
+        if((0..4).any { pagerAdapter.getViewAt(it)==null }) {
+            binding.controlViewPager.postDelayed({ setupControlsPanelDeferred() },50)
+            return
+        }
+        setupGraphControls()
         // Gain slider -- range and label depend on the active IQ source.
         // For USB, the table is RtlSdrDevice.GAIN_TABLE_DB_TENTHS (29 steps).
         // For TCP (rtl_tcp_andro), the server reports its own gain count in the
@@ -1034,7 +1125,7 @@ class MainActivity : AppCompatActivity() {
         val gainCount = (sdrService?.source?.getGainCount()
             ?: viewModel.getService()?.source?.getGainCount()
             ?: RtlSdrDevice.GAIN_TABLE_DB_TENTHS.size)
-            .coerceAtLeast(1)
+            .coerceAtLeast(2)
 
         ctrlViews.sliderGain!!.apply {
             valueFrom = 0f
@@ -1077,7 +1168,7 @@ class MainActivity : AppCompatActivity() {
             addOnChangeListener { _, value, fromUser ->
                 if (fromUser) {
                     viewModel.setSquelch(value)
-                    ctrlViews.tvSquelchValue!!.text = "${value.toInt()} dB"
+                    ctrlViews.tvSquelchValue!!.text = if(value<=-120f) "关闭" else "${value.toInt()} dB"
                     binding.spectrumView.setSquelch(value)
                 }
             }
@@ -1100,15 +1191,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Noise Blanker switch
-        ctrlViews.switchNoiseBlanker!!.isChecked = viewModel.noiseBlankerEnabled.value
-        ctrlViews.switchNoiseBlanker!!.setOnCheckedChangeListener { _, checked ->
-            viewModel.setNoiseBlanker(checked)
-        }
+        syncNoiseProcessingControls()
 
         // Noise Reducer switch
-        ctrlViews.switchNoiseReducer!!.isChecked = viewModel.noiseReducerEnabled.value
-        ctrlViews.switchNoiseReducer!!.setOnCheckedChangeListener { _, checked ->
-            viewModel.setNoiseReducer(checked)
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById<android.widget.FrameLayout>(R.id.listeningAudioControls)?.let { host ->
+            if(host.childCount==0) {
+                val controls=ListeningAudioControls(this,viewModel.listeningAudio.value) { viewModel.setListeningAudio(it) }
+                host.addView(controls)
+                lifecycleScope.launch { viewModel.listeningAudio.collect { controls.render(it) } }
+                lifecycleScope.launch { viewModel.demodMode.collect { controls.setMode(it) } }
+                lifecycleScope.launch {
+                    combine(viewModel.demodMode,viewModel.noiseBlankerEnabled,viewModel.noiseReducerEnabled,
+                        viewModel.iqNbThreshold) { _,_,_,_ -> Unit }.collect { syncNoiseProcessingControls() }
+                }
+            }
         }
 
         // ── IF Bandwidth / Protocol Filter slider ─────────────────────────────
@@ -1135,6 +1231,21 @@ class MainActivity : AppCompatActivity() {
                            else initialMode.defaultBwHz.coerceAtLeast(DspEngine.MIN_IF_BANDWIDTH_HZ)
         // Set stepSize once; valueFrom/valueTo are set inside applyBwRange.
         ctrlViews.sliderIfBandwidth!!.stepSize = 1f
+        ctrlViews.sliderIfBandwidth!!.setLabelFormatter { index ->
+            formatIfBw(BW_STEPS[index.toInt().coerceIn(BW_STEPS.indices)], false)
+        }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<Button>(R.id.btnAutoBandwidth)?.setOnClickListener {
+            viewModel.setIfBandwidth(0)
+        }
+        for ((button, direction) in listOf(R.id.btnBandwidthNarrow to -1, R.id.btnBandwidthWide to 1)) {
+            pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<Button>(button)?.setOnClickListener {
+                val mode = viewModel.demodMode.value
+                val current = viewModel.ifBandwidthHz.value.takeIf { it > 0 } ?: mode.defaultBwHz
+                val range = bwRangeFor(mode)
+                val index = (nearestBwIdx(current, range) + direction).coerceIn(range.first, range.second)
+                viewModel.setIfBandwidth(BW_STEPS[index])
+            }
+        }
         applyBwRange(initialMode, initialBw)
         ctrlViews.tvIfBandwidthValue!!.text = formatIfBw(initialBw, savedIfBw == 0)
 
@@ -1142,9 +1253,9 @@ class MainActivity : AppCompatActivity() {
             if (fromUser) {
                 val hz   = BW_STEPS[value.toInt().coerceIn(0, BW_STEPS.size - 1)]
                 val mode = viewModel.demodMode.value
-                val isDefault = (hz == mode.defaultBwHz.coerceAtLeast(DspEngine.MIN_IF_BANDWIDTH_HZ))
-                viewModel.setIfBandwidth(if (isDefault) 0 else hz)
-                ctrlViews.tvIfBandwidthValue!!.text = formatIfBw(hz, isDefault)
+                val isDefault = false
+                viewModel.setIfBandwidth(hz)
+                ctrlViews.tvIfBandwidthValue!!.text = formatIfBw(hz, false)
                 // Update spectrum highlight immediately for real-time visual feedback.
                 val highlightHz = channelHighlightHz(mode, if (isDefault) 0 else hz)
                 binding.spectrumView.setDemodChannelBandwidth(highlightHz, channelHighlightSideband(mode))
@@ -1180,56 +1291,9 @@ class MainActivity : AppCompatActivity() {
         // NumberPicker was invisible (black-on-black) because it ignores android:textColor
         // in XML and inherits the window background for its internal dividers.
         // Chip buttons give full colour control without any theme overrides.
-        val sampleRateLabels = RtlSdrDevice.SAMPLE_RATES.map { rate ->
-            val divLabel = if (rate % DspEngine.DEFAULT_AUDIO_RATE == 0)
-                " ÷${rate / DspEngine.DEFAULT_AUDIO_RATE}" else ""
-            if (rate >= 1_000_000) "${"%.3f".format(rate / 1e6)}M$divLabel"
-            else "${"%.0f".format(rate / 1e3)}k$divLabel"
-        }
-        val savedIdx = RtlSdrDevice.SAMPLE_RATES.indexOfFirst { it == viewModel.sampleRate.value }
-            .let { if (it >= 0) it else RtlSdrDevice.SAMPLE_RATES.indexOfFirst { r -> r == 1_920_000 }.coerceAtLeast(0) }
-
-        sampleRateLabelsCache = sampleRateLabels
-
-        ctrlViews.layoutSampleRateChips!!.removeAllViews()
         val dp = resources.displayMetrics.density
-        sampleRateLabels.forEachIndexed { idx, label ->
-            val btn = android.widget.TextView(this).apply {
-                text = label
-                textSize = 11f
-                typeface = android.graphics.Typeface.MONOSPACE
-                setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
-                layoutParams = android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-                ).also { it.setMargins((3 * dp).toInt(), 0, (3 * dp).toInt(), 0) }
-                setOnClickListener {
-                    val rate = RtlSdrDevice.SAMPLE_RATES[idx]
-                    ctrlViews.tvSampleRateLabel!!.text = sampleRateLabels[idx]
-                    viewModel.setSampleRate(rate)
-                    val effectiveRate = rate / viewModel.decimation.value.coerceAtLeast(1)
-                    binding.spectrumView.setSampleRate(effectiveRate)
-                    binding.waterfallView.setSampleRate(effectiveRate)
-                    // Refresh WFM channel highlight -- wfmIfRate depends on device rate
-                    binding.spectrumView.setDemodChannelBandwidth(
-                        channelHighlightHz(viewModel.demodMode.value, viewModel.ifBandwidthHz.value),
-                        channelHighlightSideband(viewModel.demodMode.value))
-                    updateSampleRateChips(idx)
-                    // Scroll selected chip into view
-                    (ctrlViews.layoutSampleRateChips!!.parent as? android.widget.HorizontalScrollView)
-                        ?.smoothScrollTo(this.left - (40 * dp).toInt(), 0)
-                }
-            }
-            ctrlViews.layoutSampleRateChips!!.addView(btn)
-        }
-        ctrlViews.tvSampleRateLabel!!.text = sampleRateLabels[savedIdx]
-        updateSampleRateChips(savedIdx)
-        // Scroll to show the selected chip on first render
-        ctrlViews.layoutSampleRateChips!!.post {
-            val selected = ctrlViews.layoutSampleRateChips!!.getChildAt(savedIdx)
-            (ctrlViews.layoutSampleRateChips!!.parent as? android.widget.HorizontalScrollView)
-                ?.scrollTo((selected?.left ?: 0) - (40 * dp).toInt(), 0)
-        }
+        setupSampleRateChips()
+
 
         // ── Audio sink rate chip row ──────────────────────────────────────────
         val audioSinkRates  = DspEngine.AUDIO_SINK_RATES
@@ -1273,7 +1337,7 @@ class MainActivity : AppCompatActivity() {
         // Direct sampling spinner
         ctrlViews.spinnerDirectSampling!!.apply {
             adapter = ArrayAdapter(context,
-                android.R.layout.simple_spinner_item,
+                R.layout.compact_spinner_item,
                 listOf("Off (Tuner)", "I-Branch (HF)", "Q-Branch (HF - V4)"))
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
@@ -1298,18 +1362,33 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        val recordingPrefs=androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+        val stopSeconds=listOf("0","10","30","60","300","600","1800","3600")
+        ctrlViews.spinnerRecordStop?.apply {
+            adapter=ArrayAdapter(context,R.layout.compact_spinner_item,listOf("不限时","10 秒","30 秒","1 分钟","5 分钟","10 分钟","30 分钟","1 小时"))
+            setSelection(stopSeconds.indexOf(recordingPrefs.getString("pref_record_stop_seconds","0")).coerceAtLeast(0),false)
+            onItemSelectedListener=object:AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p:AdapterView<*>?,v:View?,pos:Int,id:Long) { recordingPrefs.edit().putString("pref_record_stop_seconds",stopSeconds[pos]).apply() }
+                override fun onNothingSelected(p:AdapterView<*>?) {}
+            }
+        }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById<Switch>(R.id.switchSquelchRecord)?.apply {
+            isChecked=recordingPrefs.getBoolean("pref_record_squelch",false)
+            setOnCheckedChangeListener { _,enabled -> sdrService?.setRecordingSquelch(enabled) ?: recordingPrefs.edit().putBoolean("pref_record_squelch",enabled).apply().let { } }
+        }
+
         // IQ Record button
         ctrlViews.btnRecordIq!!.setOnClickListener {
             if (viewModel.dspStats.value.isRecordingIq) {
                 viewModel.stopIqRecording()
-                ctrlViews.btnRecordIq!!.text = "Record IQ"
-                ctrlViews.btnRecordIq!!.setBackgroundColor(0xFF444444.toInt())
+                ctrlViews.btnRecordIq!!.text = "录制 IQ"
+                styleRecordingAction(ctrlViews.btnRecordIq,false)
             } else {
                 val path = getIqFilePath()
                 viewModel.startIqRecording(path)
-                ctrlViews.btnRecordIq!!.text = "Stop IQ"
-                ctrlViews.btnRecordIq!!.setBackgroundColor(0xFFCC0000.toInt())
-                showSnackbar("Recording IQ to: $path")
+                ctrlViews.btnRecordIq!!.text = "停止 IQ"
+                styleRecordingAction(ctrlViews.btnRecordIq,true)
+                showSnackbar("正在录制 IQ")
             }
         }
 
@@ -1317,14 +1396,14 @@ class MainActivity : AppCompatActivity() {
         ctrlViews.btnRecordAudio!!.setOnClickListener {
             if (viewModel.dspStats.value.isRecordingAudio) {
                 viewModel.stopAudioRecording()
-                ctrlViews.btnRecordAudio!!.text = "Record Audio"
-                ctrlViews.btnRecordAudio!!.setBackgroundColor(0xFF444444.toInt())
+                ctrlViews.btnRecordAudio!!.text = "录制声音"
+                styleRecordingAction(ctrlViews.btnRecordAudio,false)
             } else {
                 val path = getAudioFilePath()
                 viewModel.startAudioRecording(path)
-                ctrlViews.btnRecordAudio!!.text = "Stop Audio"
-                ctrlViews.btnRecordAudio!!.setBackgroundColor(0xFFCC0000.toInt())
-                showSnackbar("Recording audio to: $path")
+                ctrlViews.btnRecordAudio!!.text = "停止录音"
+                styleRecordingAction(ctrlViews.btnRecordAudio,true)
+                showSnackbar("正在录制声音")
             }
         }
 
@@ -1372,7 +1451,7 @@ class MainActivity : AppCompatActivity() {
             viewModel.setFftSize(settingsPrefSize)
         }
         ctrlViews.spinnerFftSize!!.apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item,
+            adapter = ArrayAdapter(context, R.layout.compact_spinner_item,
                 fftSizes.map { it.toString() })
             // Use the ViewModel's persisted FFT size (defaults to 256 on first run)
             val savedFftIdx = fftSizes.indexOf(viewModel.fftSize.value).takeIf { it >= 0 } ?: 0
@@ -1399,9 +1478,9 @@ class MainActivity : AppCompatActivity() {
         // The stale "pref_decimation" String in defaultSharedPreferences is NOT consulted here
         // to avoid overwriting the ViewModel's correctly-restored value on every tab open.
         val decimationFactors = listOf(1, 2, 4, 8, 16, 32, 64)
-        val decimationLabels  = listOf("Off", "÷2 (½ BW)", "÷4 (¼ BW)", "÷8 (⅛ BW)", "÷16", "÷32", "÷64")
+        val decimationLabels  = listOf("关闭", "÷2 (½ BW)", "÷4 (¼ BW)", "÷8 (⅛ BW)", "÷16", "÷32", "÷64")
         ctrlViews.spinnerDecimation!!.apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item, decimationLabels)
+            adapter = ArrayAdapter(context, R.layout.compact_spinner_item, decimationLabels)
             // Set the saved selection BEFORE attaching the listener so the programmatic
             // setSelection() call does not trigger onItemSelected and reset the ViewModel.
             val savedDecimIdx = decimationFactors.indexOf(viewModel.decimation.value).takeIf { it >= 0 } ?: 0
@@ -1423,11 +1502,12 @@ class MainActivity : AppCompatActivity() {
 
         // Waterfall palette spinner — human-readable labels aligned to enum ordinals
         val paletteLabels = listOf(
-            "Rainbow", "Heat", "Grayscale", "Blue-White", "Purple-Yellow",
-            "Viridis", "Inferno", "Magma", "Turbo", "Solar", "Night Vision"
+            "彩虹", "热度", "灰度", "蓝白", "紫黄",
+            "翠绿", "烈焰", "熔岩", "高对比", "日光", "夜视"
         )
         ctrlViews.spinnerPalette!!.apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item, paletteLabels)
+            adapter = ArrayAdapter(context, R.layout.compact_spinner_item, paletteLabels)
+            setSelection(viewModel.waterfallPalette.value.ordinal, false)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
                     viewModel.setWaterfallPalette(WaterfallView.Companion.Palette.values()[pos])
@@ -1439,11 +1519,13 @@ class MainActivity : AppCompatActivity() {
 
         // Spectrum theme spinner — all 10 themes
         val themes = listOf(
-            "Classic", "Futuristic", "Amber", "Grayscale", "Purple",
+            "UI", "Classic", "Futuristic", "Amber", "Grayscale", "Purple",
             "Solar", "Neon", "Ice", "Midnight", "Sakura"
         )
         ctrlViews.spinnerTheme!!.apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item, themes)
+            adapter = ArrayAdapter(context, R.layout.compact_spinner_item,
+                listOf("跟随界面","经典","科技蓝","琥珀","灰度","紫色","日光","霓虹","冰蓝","午夜","樱花"))
+            setSelection(themes.indexOf(viewModel.spectrumTheme.value).coerceAtLeast(0), false)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
                     viewModel.setSpectrumTheme(themes[pos])
@@ -1643,10 +1725,10 @@ class MainActivity : AppCompatActivity() {
         // ── FFT advanced controls ──────────────────────────────────────────────
 
         // Frame Averaging spinner
-        val frameAvgLabels = listOf("Off", "×2 (−3dB)", "×4 (−6dB)", "×8 (−9dB)", "×16 (−12dB)", "×32 (−15dB)")
+        val frameAvgLabels = listOf("关闭", "×2 (−3dB)", "×4 (−6dB)", "×8 (−9dB)", "×16 (−12dB)", "×32 (−15dB)")
         val frameAvgValues = listOf(1, 2, 4, 8, 16, 32)
         ctrlViews.spinnerFrameAvg?.apply {
-            adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item, frameAvgLabels)
+            adapter = ArrayAdapter(context, R.layout.compact_spinner_item, frameAvgLabels)
             val savedAvg = displayPrefs.getString("pref_frame_averaging", "1")?.toIntOrNull() ?: 1
             setSelection(frameAvgValues.indexOf(savedAvg).takeIf { it >= 0 } ?: 0, false)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -1659,7 +1741,25 @@ class MainActivity : AppCompatActivity() {
                 override fun onNothingSelected(p: AdapterView<*>?) {}
             }
         }
+        applyControlColors()
     }   // end setupDisplayTab
+
+    private fun applyControlColors() {
+        for(tab in 0 until ControlsPagerAdapter.TAB_COUNT) {
+            val group=when(tab) {
+                ControlsPagerAdapter.TAB_DISPLAY -> ControlColors.Group.DISPLAY
+                ControlsPagerAdapter.TAB_SCAN -> ControlColors.Group.SCAN
+                ControlsPagerAdapter.TAB_RECORDING -> ControlColors.Group.RECORD
+                else -> ControlColors.Group.RADIO
+            }
+            pagerAdapter.getViewAt(tab)?.let { ControlColors.apply(it,group) }
+        }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.let { page ->
+            for(id in listOf(R.id.sliderVolume,R.id.sliderSquelch,R.id.sliderNrStrength,
+                R.id.switchNoiseReducer,R.id.listeningAudioControls))
+                page.findViewById<View>(id)?.let { ControlColors.apply(it,ControlColors.Group.AUDIO) }
+        }
+    }
 
     /** Highlights the selected sample-rate chip; reusable from setup and from syncTabControls(). */
     private fun updateSampleRateChips(selectedIdx: Int) {
@@ -1768,7 +1868,7 @@ class MainActivity : AppCompatActivity() {
                 ctrlViews.switchHardwareAgc?.setOnCheckedChangeListener { _, checked -> v.setHardwareAgc(checked) }
 
                 ctrlViews.sliderSquelch?.value = v.squelch.value.coerceIn(-120f, 0f)
-                ctrlViews.tvSquelchValue?.text = "${v.squelch.value.toInt()} dB"
+                ctrlViews.tvSquelchValue?.text = if(v.squelch.value<=-120f) "关闭" else "${v.squelch.value.toInt()} dB"
 
                 ctrlViews.sliderVolume?.value = v.volume.value.coerceIn(0f, 2f)
                 ctrlViews.tvVolumeValue?.text = "${(v.volume.value * 100).toInt()}%"
@@ -1778,11 +1878,11 @@ class MainActivity : AppCompatActivity() {
                 ctrlViews.switchBiasTee?.setOnCheckedChangeListener { _, checked -> v.setBiasTee(checked) }
 
                 ctrlViews.switchNoiseBlanker?.setOnCheckedChangeListener(null)
-                ctrlViews.switchNoiseBlanker?.isChecked = v.noiseBlankerEnabled.value
+                ctrlViews.switchNoiseBlanker?.isChecked = v.noiseBlankerEnabled.value && com.radiosport.ninegradio.dsp.NoiseProcessingPolicy.allows(v.demodMode.value)
                 ctrlViews.switchNoiseBlanker?.setOnCheckedChangeListener { _, checked -> v.setNoiseBlanker(checked) }
 
                 ctrlViews.switchNoiseReducer?.setOnCheckedChangeListener(null)
-                ctrlViews.switchNoiseReducer?.isChecked = v.noiseReducerEnabled.value
+                ctrlViews.switchNoiseReducer?.isChecked = v.noiseReducerEnabled.value && com.radiosport.ninegradio.dsp.NoiseProcessingPolicy.allows(v.demodMode.value)
                 ctrlViews.switchNoiseReducer?.setOnCheckedChangeListener { _, checked -> v.setNoiseReducer(checked) }
 
                 // IF bandwidth slider -- range/position depend on the active mode.
@@ -1794,6 +1894,7 @@ class MainActivity : AppCompatActivity() {
                 ctrlViews.tvIfBandwidthValue?.text = formatIfBw(effective, savedBw == 0)
 
                 ctrlViews.spinnerDirectSampling?.setSelection(v.directSampling.value, false)
+                binding.controlViewPager.post { applyReceiverCapabilities() }
 
                 ctrlViews.sliderPpm?.value = v.ppm.value.toFloat().coerceIn(-50f, 50f)
                 ctrlViews.tvPpmValue?.text = "${v.ppm.value} ppm"
@@ -1801,7 +1902,7 @@ class MainActivity : AppCompatActivity() {
                 binding.waterfallView.setPpmCorrection(v.ppm.value)
 
                 if (sampleRateLabelsCache.isNotEmpty()) {
-                    val idx = RtlSdrDevice.SAMPLE_RATES.indexOfFirst { it == v.sampleRate.value }.coerceAtLeast(0)
+                    val idx = viewModel.availableSampleRates.indexOfFirst { it == v.sampleRate.value }.coerceAtLeast(0)
                     ctrlViews.tvSampleRateLabel?.text = sampleRateLabelsCache.getOrNull(idx)
                     updateSampleRateChips(idx)
                 }
@@ -1813,6 +1914,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             ControlsPagerAdapter.TAB_DISPLAY -> {
+                setupGraphControls()
                 val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
 
                 // FFT / Decimation spinners
@@ -1830,7 +1932,7 @@ class MainActivity : AppCompatActivity() {
 
                 // Spectrum theme — full 10-theme list
                 val themes = listOf(
-                    "Classic", "Futuristic", "Amber", "Grayscale", "Purple",
+                    "UI", "Classic", "Futuristic", "Amber", "Grayscale", "Purple",
                     "Solar", "Neon", "Ice", "Midnight", "Sakura"
                 )
                 themes.indexOf(v.spectrumTheme.value).takeIf { it >= 0 }?.let {
@@ -1939,26 +2041,21 @@ class MainActivity : AppCompatActivity() {
             ControlsPagerAdapter.TAB_RECORDING -> {
                 val stats = v.dspStats.value
                 if (stats.isRecordingIq) {
-                    ctrlViews.btnRecordIq?.text = "Stop IQ"
-                    ctrlViews.btnRecordIq?.setBackgroundColor(0xFFCC0000.toInt())
+                    ctrlViews.btnRecordIq?.text = "停止 IQ"
+                    styleRecordingAction(ctrlViews.btnRecordIq,true)
                 } else {
-                    ctrlViews.btnRecordIq?.text = "Record IQ"
-                    ctrlViews.btnRecordIq?.setBackgroundColor(0xFF444444.toInt())
+                    ctrlViews.btnRecordIq?.text = "录制 IQ"
+                    styleRecordingAction(ctrlViews.btnRecordIq,false)
                 }
                 if (stats.isRecordingAudio) {
-                    ctrlViews.btnRecordAudio?.text = "Stop Audio"
-                    ctrlViews.btnRecordAudio?.setBackgroundColor(0xFFCC0000.toInt())
+                    ctrlViews.btnRecordAudio?.text = "停止录音"
+                    styleRecordingAction(ctrlViews.btnRecordAudio,true)
                 } else {
-                    ctrlViews.btnRecordAudio?.text = "Record Audio"
-                    ctrlViews.btnRecordAudio?.setBackgroundColor(0xFF444444.toInt())
+                    ctrlViews.btnRecordAudio?.text = "录制声音"
+                    styleRecordingAction(ctrlViews.btnRecordAudio,false)
                 }
             }
 
-            ControlsPagerAdapter.TAB_SETTINGS -> {
-                ctrlViews.switchOutOfBound?.setOnCheckedChangeListener(null)
-                ctrlViews.switchOutOfBound?.isChecked = v.allowOutOfBand.value
-                ctrlViews.switchOutOfBound?.setOnCheckedChangeListener { _, checked -> v.setAllowOutOfBand(checked) }
-            }
 
             ControlsPagerAdapter.TAB_APRS -> {
                 // The frequency/rate label is also kept live by the centerFreqHz/
@@ -2030,8 +2127,12 @@ class MainActivity : AppCompatActivity() {
      * six tab views are created synchronously, which lets [ControlsTabManager]
      * return non-null views for every tab from the first call.
      */
+    private fun defaultModule(): Int = ModulePreferences(this).let { config -> config.coreOrder.firstOrNull { it!=ControlsPagerAdapter.TAB_SETTINGS && config.visible(it) } ?: ControlsPagerAdapter.TAB_TUNE }
+
+    private fun moduleTab(module: Int) = binding.controlTabLayout.getTabAt(pagerAdapter.positionOf(module))
+
     private fun setupTabsDrawer() {
-        pagerAdapter = ControlsPagerAdapter()
+        pagerAdapter = ControlsPagerAdapter(ModulePreferences(this).order)
         val pager = binding.controlViewPager
         pager.adapter = pagerAdapter
         // Keep all pages in memory so ctrlViews can access any tab immediately.
@@ -2053,35 +2154,72 @@ class MainActivity : AppCompatActivity() {
         // change so the scroll range always matches the visible tab.
         pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
-                pager.post { resizePagerToPage(position) }
+                binding.btnToolbarSettings.imageTintList=android.content.res.ColorStateList.valueOf(
+                    if(pagerAdapter.moduleAt(position)==ControlsPagerAdapter.TAB_SETTINGS) UiThemes.color(this@MainActivity,R.attr.radioAccent) else UiThemes.color(this@MainActivity,R.attr.radioSecondary))
+                pager.post { resizePagerToPage(pagerAdapter.moduleAt(position)); updateDigitalVisualization() }
             }
         })
 
-        TabLayoutMediator(binding.controlTabLayout, pager) { tab, pos ->
-            tab.text = ControlsPagerAdapter.TAB_TITLES[pos]
+        TabLayoutMediator(binding.controlTabLayout, pager) { tab, position ->
+            val pos = pagerAdapter.moduleAt(position)
+            val icons = mapOf(ControlsPagerAdapter.TAB_TUNE to R.drawable.ic_tune_dial,
+                ControlsPagerAdapter.TAB_MODE to R.drawable.ic_mode_wave,
+                ControlsPagerAdapter.TAB_RF to R.drawable.ic_rf_antenna,
+                ControlsPagerAdapter.TAB_DISPLAY to R.drawable.ic_waterfall_display,
+                ControlsPagerAdapter.TAB_RECORDING to R.drawable.ic_record_radio,
+                ControlsPagerAdapter.TAB_SETTINGS to R.drawable.ic_module_settings, ControlsPagerAdapter.TAB_SCAN to R.drawable.ic_scan_sweep,
+                ControlsPagerAdapter.TAB_RDF to android.R.drawable.ic_menu_compass)
+            val labels = mapOf(ControlsPagerAdapter.TAB_TUNE to R.string.tab_tune,
+                ControlsPagerAdapter.TAB_MODE to R.string.tab_mode,
+                ControlsPagerAdapter.TAB_RF to R.string.tab_rf,
+                ControlsPagerAdapter.TAB_DISPLAY to R.string.tab_display,
+                ControlsPagerAdapter.TAB_RECORDING to R.string.tab_record,
+                ControlsPagerAdapter.TAB_SETTINGS to R.string.tab_settings, ControlsPagerAdapter.TAB_SCAN to R.string.tab_scan,
+                ControlsPagerAdapter.TAB_RDF to R.string.tab_rdf)
+            if (pos in icons) {
+                tab.setIcon(icons.getValue(pos))
+                tab.contentDescription = getString(labels.getValue(pos))
+                androidx.appcompat.widget.TooltipCompat.setTooltipText(tab.view, tab.contentDescription)
+            } else tab.text = ControlsPagerAdapter.TAB_TITLES[pos]
+            if (pos in ModulePreferences.managed && !ModulePreferences(this).visible(pos)) tab.view.visibility = View.GONE
+            if(pos==ControlsPagerAdapter.TAB_SETTINGS) tab.view.visibility=View.GONE
         }.attach()
 
         // Scroll to top of the drawer content whenever a tab label is tapped --
         // both when switching to a new tab and when re-tapping the current tab.
         binding.controlTabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
+                BottomSheetBehavior.from(binding.controlsBottomSheet).state = BottomSheetBehavior.STATE_EXPANDED
                 binding.controlsScrollView.scrollTo(0, 0)
-                syncTabControls(tab.position)
-                pager.post { resizePagerToPage(tab.position) }
+                syncTabControls(pagerAdapter.moduleAt(tab.position))
+                pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB)?.findViewById<AdsbRadarView>(R.id.adsbPanelRadar)
+                    ?.setAnimating(pagerAdapter.moduleAt(tab.position)==ControlsPagerAdapter.TAB_ADSB)
+                pager.post { resizePagerToPage(pagerAdapter.moduleAt(tab.position)) }
             }
             override fun onTabReselected(tab: TabLayout.Tab) {
                 binding.controlsScrollView.scrollTo(0, 0)
-                syncTabControls(tab.position)
+                syncTabControls(pagerAdapter.moduleAt(tab.position))
                 // Re-tapping the current tab doesn't fire ViewPager2's
                 // OnPageChangeCallback (the page never changed), so refresh
                 // the height here too in case this tab's content grew or
                 // shrank while it was already selected.
-                pager.post { resizePagerToPage(tab.position) }
+                pager.post { resizePagerToPage(pagerAdapter.moduleAt(tab.position)) }
             }
-            override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+            override fun onTabUnselected(tab: TabLayout.Tab) {
+                if(pagerAdapter.moduleAt(tab.position)==ControlsPagerAdapter.TAB_ADSB)
+                    pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB)?.findViewById<AdsbRadarView>(R.id.adsbPanelRadar)?.setAnimating(false)
+            }
         })
 
         ctrlViews = ControlsTabManager(pagerAdapter)
+        contentController = ContentModuleController(this,pagerAdapter,viewModel,{ sdrService },
+            { module -> moduleTab(module)?.select(); binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(module),false) },
+            { module,shown -> moduleTab(module)?.view?.visibility=if(shown) View.VISIBLE else View.GONE },
+            { resizePagerToCurrentPage() },{ setPanelFullscreen(!panelFullscreen) },
+            { contentMicPermission.launch(android.Manifest.permission.RECORD_AUDIO) },
+            { contentWavPicker.launch(arrayOf("audio/*","application/octet-stream")) },
+            { contentCsvPicker.launch(arrayOf("text/*","application/octet-stream")) })
+        pager.post { contentController?.setup() }
 
         // Mode tab: build the demodulation-mode chip group once it's inflated.
         pager.post { setupDemodModeChips() }
@@ -2090,14 +2228,15 @@ class MainActivity : AppCompatActivity() {
         pager.post { setupTuneTab() }
 
         // Settings tab: open full settings + device info buttons
-        pager.post { setupSettingsTab() }
+
 
         // APRS tab: wire up the embedded APRS monitor.
         pager.post { setupAprsTab() }
+        pager.post { setupAdsbTab() }
 
         // APRS tab is hidden by default; shown only when DemodMode.APRS is active.
         pager.post {
-            binding.controlTabLayout.getTabAt(ControlsPagerAdapter.TAB_APRS)?.view
+            moduleTab(ControlsPagerAdapter.TAB_APRS)?.view
                 ?.visibility = android.view.View.GONE
         }
 
@@ -2106,7 +2245,7 @@ class MainActivity : AppCompatActivity() {
 
         // ACARS tab is hidden by default; shown only when DemodMode.ACARS is active.
         pager.post {
-            binding.controlTabLayout.getTabAt(ControlsPagerAdapter.TAB_ACARS)?.view
+            moduleTab(ControlsPagerAdapter.TAB_ACARS)?.view
                 ?.visibility = android.view.View.GONE
         }
 
@@ -2115,7 +2254,7 @@ class MainActivity : AppCompatActivity() {
 
         // DMR tab is hidden by default; shown only when DemodMode.DMR is active.
         pager.post {
-            binding.controlTabLayout.getTabAt(ControlsPagerAdapter.TAB_DMR)?.view
+            moduleTab(ControlsPagerAdapter.TAB_DMR)?.view
                 ?.visibility = android.view.View.GONE
         }
 
@@ -2124,7 +2263,7 @@ class MainActivity : AppCompatActivity() {
 
         // YSF tab is hidden by default; shown only when DemodMode.YSF is active.
         pager.post {
-            binding.controlTabLayout.getTabAt(ControlsPagerAdapter.TAB_YSF)?.view
+            moduleTab(ControlsPagerAdapter.TAB_YSF)?.view
                 ?.visibility = android.view.View.GONE
         }
 
@@ -2133,7 +2272,7 @@ class MainActivity : AppCompatActivity() {
 
         // D-STAR tab is hidden by default; shown only when DemodMode.DSTAR is active.
         pager.post {
-            binding.controlTabLayout.getTabAt(ControlsPagerAdapter.TAB_DSTAR)?.view
+            moduleTab(ControlsPagerAdapter.TAB_DSTAR)?.view
                 ?.visibility = android.view.View.GONE
         }
 
@@ -2142,7 +2281,7 @@ class MainActivity : AppCompatActivity() {
 
         // Dig tab is hidden by default; shown only when DemodMode.DIG is active.
         pager.post {
-            binding.controlTabLayout.getTabAt(ControlsPagerAdapter.TAB_DIG)?.view
+            moduleTab(ControlsPagerAdapter.TAB_DIG)?.view
                 ?.visibility = android.view.View.GONE
         }
 
@@ -2154,8 +2293,8 @@ class MainActivity : AppCompatActivity() {
         // like the protocol tabs above, so it starts hidden and stays hidden
         // until the user asks for it.
         pager.post {
-            binding.controlTabLayout.getTabAt(ControlsPagerAdapter.TAB_SCAN)?.view
-                ?.visibility = android.view.View.GONE
+            moduleTab(ControlsPagerAdapter.TAB_SCAN)?.view?.visibility =
+                if (ModulePreferences(this).visible(ControlsPagerAdapter.TAB_SCAN)) View.VISIBLE else View.GONE
         }
 
         // Catch-all: every setup*Tab() call above is itself deferred via
@@ -2165,6 +2304,17 @@ class MainActivity : AppCompatActivity() {
         // the true, fully-built height of whichever tab ends up selected --
         // not a stale pre-build measurement.
         pager.post { resizePagerToCurrentPage() }
+        pager.post {
+            pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RDF)?.findViewById<android.widget.FrameLayout>(R.id.rdfControls)?.let { host ->
+                val controls=RdfControls(this)
+                host.addView(controls)
+                controls.setActive(pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_RDF)
+                lifecycleScope.launch {
+                    kotlinx.coroutines.flow.combine(viewModel.deviceStatus,viewModel.centerFreqHz) { status,hz -> status to hz }
+                        .collect { (status,hz) -> controls.render(status.signalStrengthDb,status.connected,hz) }
+                }
+            }
+        }
     }
 
     /**
@@ -2203,7 +2353,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Resizes the pager to whichever tab is currently selected. */
     private fun resizePagerToCurrentPage() {
-        resizePagerToPage(binding.controlViewPager.currentItem)
+        resizePagerToPage(pagerAdapter.moduleAt(binding.controlViewPager.currentItem))
     }
 
     /**
@@ -2216,25 +2366,40 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setupTuneTab() {
         val dial = ctrlViews.tuningDial ?: return
+        val root=pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)
+        val preference=getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE)
+        root?.findViewById<View>(R.id.stepParameter)?.isVisible=true
+        root?.findViewById<View>(R.id.bandwidthParameter)?.isVisible=false
+        root?.findViewById<View>(R.id.tuningParameterSelector)?.isVisible=false
+        updateTuneFrequency(viewModel.centerFreqHz.value)
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<SpringTunerView>(R.id.springTuner)?.apply {
+            onSteps = { ticks ->
+                val step = binding.frequencyView.tuningStepHz
+                graphTune(TuningMath.snap(viewModel.centerFreqHz.value + ticks * step, step))
+            }
+            onFinished = { viewModel.finishTuning() }
+        }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<Button>(R.id.btnEtmScan)?.setOnClickListener { showScanTab() }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<Button>(R.id.btnRegionalRecommendations)
+            ?.setOnClickListener { regionalReception.show() }
 
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchAutoDemod)?.apply {
+            isChecked = viewModel.autoDemod.value
+            setOnCheckedChangeListener { _, checked -> viewModel.setAutoDemod(checked) }
+        }
+        lifecycleScope.launch { viewModel.autoDemod.collect { enabled ->
+            pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchAutoDemod)?.isChecked = enabled
+        } }
         // Sync dial with current frequency and mode
+        dial.compact = true
+        dial.showLabels = false
+        dial.showCurrentFrequency=true
         dial.currentFreqHz = viewModel.centerFreqHz.value
         dial.demodMode     = viewModel.demodMode.value.name
 
+        dial.onTuningFinished = { viewModel.finishTuning() }
         dial.onStep = { deltaHz ->
-            val current = viewModel.centerFreqHz.value
-            var next = (current + deltaHz)
-            if (snapToChannel) {
-                next = FrequencyStepManager.snapToChannel(next, dial.activeStepHzPublic())
-            }
-            viewModel.setFrequency(next)
-            binding.frequencyView.setFrequency(next)
-            binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(next))
-            binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(next))
-            binding.spectrumView.setDemodDialFrequency(next)
-            binding.waterfallView.setCenterFrequency(hardwareCenterFreqHz(next))
-            binding.waterfallView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(next))
-            dial.currentFreqHz = next
+            graphTune(TuningMath.snap(viewModel.centerFreqHz.value + (if(binding.frequencyView.reverseTuning) -deltaHz else deltaHz), dial.activeStepHzPublic()))
         }
 
         // Fine-tune switch mirrors dial's fineMode
@@ -2258,116 +2423,40 @@ class MainActivity : AppCompatActivity() {
         setupBandPresetChips()
     }
 
+    private fun stepPicker() = pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<TuningDialView>(R.id.stepPicker)
     private fun setupStepChips() {
-        val chipGroup = ctrlViews.chipGroupStep ?: return
-        chipGroup.removeAllViews()
-        val dial = ctrlViews.tuningDial
-        val currentMode = viewModel.demodMode.value.name
-        val freqHz      = viewModel.centerFreqHz.value
-
-        // Build a contextual step list: recommended step first, plus all standard options
-        val recommended = FrequencyStepManager.recommendedStep(freqHz, currentMode)
-        val steps = listOf(
-            FrequencyStepManager.StepSize.HZ_100,
-            FrequencyStepManager.StepSize.KHZ_1,
-            FrequencyStepManager.StepSize.KHZ_5,
-            FrequencyStepManager.StepSize.KHZ_6_25,
-            FrequencyStepManager.StepSize.KHZ_8_33,
-            FrequencyStepManager.StepSize.KHZ_9,
-            FrequencyStepManager.StepSize.KHZ_12_5,
-            FrequencyStepManager.StepSize.KHZ_25,
-            FrequencyStepManager.StepSize.KHZ_100,
-            FrequencyStepManager.StepSize.KHZ_200,
-            FrequencyStepManager.StepSize.MHZ_1,
-        )
-
-        steps.forEach { step ->
-            val chip = com.google.android.material.chip.Chip(this).apply {
-                text = step.label
-                isCheckable = true
-                isChecked = (step == recommended)
-                setTextColor(if (step == recommended) 0xFF0D1117.toInt() else 0xFF00CCFF.toInt())
-                setChipBackgroundColorResource(android.R.color.transparent)
-                setOnCheckedChangeListener { _, checked ->
-                    if (checked) {
-                        dial?.let { d ->
-                            // Override the automatic step: set fineMode off and pick this step
-                            d.fineMode = false
-                            d.overrideStepHz = step.hz
-                            ctrlViews.switchFineTune?.isChecked = false
-                        }
-                    }
-                }
-            }
-            chipGroup.addView(chip)
+        val mode = viewModel.demodMode.value.name
+        val prefs = getSharedPreferences("rtlsdr_prefs", MODE_PRIVATE)
+        val recommended = FrequencyStepManager.recommendedStep(viewModel.centerFreqHz.value, mode)
+        val current = prefs.getLong("tuningStep_v4_$mode", recommended.hz.coerceAtLeast(1000))
+        binding.frequencyView.setTuningStep(current)
+        val choices = FrequencyStepManager.StepSize.values().map { TuningDialView.Choice(it.hz, it.label) }.toMutableList()
+        if (choices.none { it.value == current }) choices += TuningDialView.Choice(current, formatStep(current))
+        stepPicker()?.apply {
+            setChoices(choices,current)
+            onChoiceSelected = { step -> binding.frequencyView.setTuningStep(step) }
         }
+        ctrlViews.tuningDial?.overrideStepHz = maxOf(1, current / 10)
+        updatePlotBandwidth()
+    }
+
+    private fun formatStep(hz: Long): String = when {
+        hz >= 1_000_000 -> "${hz / 1_000_000.0} MHz"
+        hz >= 1_000 -> "${hz / 1_000.0} kHz"
+        else -> "$hz Hz"
     }
 
     private fun setupBandPresetChips() {
-        val chipGroup = ctrlViews.chipGroupBands ?: return
-        chipGroup.removeAllViews()
-        FrequencyStepManager.BAND_PRESETS.forEach { preset ->
-            val chip = com.google.android.material.chip.Chip(this).apply {
-                text = preset.name
-                isCheckable = false
-                setTextColor(0xFF00CCFF.toInt())
-                setChipBackgroundColorResource(android.R.color.transparent)
-                setOnClickListener {
-                    val hz = preset.startHz
-                    viewModel.setFrequency(hz)
-                    binding.frequencyView.setFrequency(hz)
-                    binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                    binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                    binding.spectrumView.setDemodDialFrequency(hz)
-                    binding.waterfallView.setCenterFrequency(hardwareCenterFreqHz(hz))
-                    binding.waterfallView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
-                    ctrlViews.tuningDial?.currentFreqHz = hz
-                    // Auto-select recommended mode if it matches a known DemodMode
-                    try {
-                        val mode = DemodMode.valueOf(preset.defaultMode)
-                        viewModel.setDemodMode(mode)
-                        selectDemodChip(mode)
-                        // setDemodMode() may restore a per-mode frequency snapshot
-                        // that differs from the preset's hz -- reflect whichever
-                        // frequency is actually now in effect.
-                        syncFrequencyDisplay()
-                    } catch (_: Exception) {}
-                    showSnackbar("→ ${preset.name}: ${"%.3f".format(hz / 1e6)} MHz")
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<View>(R.id.btnBandPresets)?.setOnClickListener {
+            BandPresetPicker.show(this, viewModel.capabilities.value, viewModel.centerFreqHz.value) { preset, hz ->
+                if (!viewModel.autoDemod.value) runCatching { viewModel.setDemodMode(DemodMode.valueOf(preset.defaultMode)) }
+                if (viewModel.setFrequency(hz)) {
+                    binding.frequencyView.setTuningStep(preset.defaultStep.hz)
+                    viewModel.finishTuning(); syncFrequencyDisplay()
                 }
             }
-            chipGroup.addView(chip)
         }
     }
-
-    private fun setupSettingsTab() {
-        // Out-of-bound frequency switch — restore persisted state
-        ctrlViews.switchOutOfBound?.isChecked = viewModel.allowOutOfBand.value
-        ctrlViews.switchOutOfBound?.setOnCheckedChangeListener { _, isChecked ->
-            viewModel.setAllowOutOfBand(isChecked)
-        }
-
-        ctrlViews.btnScanner?.setOnClickListener {
-            showScanTab()
-        }
-        ctrlViews.btnDebugPanel?.setOnClickListener {
-            startActivity(android.content.Intent(this,
-                com.radiosport.ninegradio.ui.DebugPanelActivity::class.java))
-        }
-        ctrlViews.btnDeviceInfo?.setOnClickListener {
-            showDeviceInfo()
-        }
-        ctrlViews.btnOpenSettings?.setOnClickListener {
-            startActivity(android.content.Intent(this,
-                com.radiosport.ninegradio.ui.SettingsActivity::class.java))
-        }
-        ctrlViews.btnBookmarks?.setOnClickListener {
-            bookmarkLauncher.launch(Intent(this, BookmarkActivity::class.java))
-        }
-
-        // Version footer — set from BuildConfig so the XML placeholder never goes stale.
-        ctrlViews.tvAppVersion?.text = "9GRadio v${com.radiosport.ninegradio.BuildConfig.VERSION_NAME}"
-
-    } // end setupSettingsTab
 
     /**
      * Push the ViewModel's current center frequency to every display that
@@ -2378,6 +2467,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun syncFrequencyDisplay() {
         val hz = viewModel.centerFreqHz.value
+        updateTuneFrequency(hz)
         binding.frequencyView.setFrequency(hz)
         binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
         binding.spectrumView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
@@ -2386,9 +2476,16 @@ class MainActivity : AppCompatActivity() {
         binding.waterfallView.setHardwareTunedFrequency(trueHardwareCenterFreqHz(hz))
         ctrlViews.tuningDial?.currentFreqHz = hz
     }
+    private fun updateTuneFrequency(hz: Long) {
+        if(!::pagerAdapter.isInitialized) return
+        val text=String.format(java.util.Locale.ROOT,"%,d",hz).replace(',','.')+" Hz"
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<TextView>(R.id.tvTuneFrequency)?.text=text
+    }
 
     /** Helper called from ViewModel observation to keep dial in sync with mode changes. */
     private fun onDemodModeChanged(mode: DemodMode) {
+        contentController?.modeChanged(mode)
+        updatePlotBandwidth()
         // setDemodMode() may have restored a per-mode frequency snapshot, so
         // refresh the main frequency display (and spectrum/waterfall) to
         // reflect the frequency now actually in effect for the new protocol.
@@ -2396,7 +2493,7 @@ class MainActivity : AppCompatActivity() {
 
         ctrlViews.tuningDial?.let { dial ->
             dial.demodMode = mode.name
-            dial.overrideStepHz = null  // reset any manual step override
+            dial.overrideStepHz = maxOf(1, binding.frequencyView.tuningStepHz / 10)
             setupStepChips()            // refresh step chips for new mode
         }
     }
@@ -2413,68 +2510,94 @@ class MainActivity : AppCompatActivity() {
         // it still applies even when the Demod tab isn't the one currently
         // visible.
         binding.spectrumView.setDemodMode(mode)
-        val chipGroup = ctrlViews.chipGroupDemod ?: return
-        for (i in 0 until chipGroup.childCount) {
-            val chip = chipGroup.getChildAt(i) as? com.google.android.material.chip.Chip ?: continue
-            if (chip.tag == mode) { chip.isChecked = true; break }
+        for(chipGroup in modeChipGroups()) for (i in 0 until chipGroup.childCount) {
+            val chip = chipGroup.getChildAt(i) as? com.google.android.material.button.MaterialButton ?: continue
+            chip.isSelected=chip.tag==mode
         }
     }
 
+    private var panelFullscreen=false
+    private var positionControlsPanel: (() -> Unit)?=null
+    private var adsbMapPanel: RadioMapPanel?=null
+    private var aprsMapPanel: RadioMapPanel?=null
+    private var adsbMapSelected=true
+
+    private fun setPanelFullscreen(full: Boolean) {
+        panelFullscreen=full
+        positionControlsPanel?.invoke()
+        BottomSheetBehavior.from(binding.controlsBottomSheet).state=BottomSheetBehavior.STATE_EXPANDED
+        binding.controlsScrollView.scrollTo(0,0)
+        for(id in listOf(R.id.btnAdsbPanelFull,R.id.btnAprsPanelFull)) findViewById<Button>(id)?.text=if(full) "还原" else "展开"
+    }
     private fun setupBottomSheet() {
+        binding.btnToolbarSettings.setOnClickListener {
+            bookmarkLauncher.launch(Intent(this,SettingsActivity::class.java))
+        }
         val behavior = BottomSheetBehavior.from(binding.controlsBottomSheet)
-
-        // isFitToContents=false is REQUIRED for expandedOffset to be honoured.
-        // The default (true) ignores expandedOffset and expands to full screen height.
         behavior.isFitToContents = false
-
-        behavior.peekHeight = (56 * resources.displayMetrics.density).toInt()
+        behavior.isDraggable = false
+        behavior.isHideable = false
+        behavior.peekHeight = (44 * resources.displayMetrics.density).toInt() + navBarHeightPx
         behavior.state = BottomSheetBehavior.STATE_EXPANDED
-
-        // Default to Tune tab on launch
-        binding.controlViewPager.setCurrentItem(ControlsPagerAdapter.TAB_TUNE, false)
-
-        fun applyExpandedOffset() {
-            val wf = binding.waterfallView
-            if (wf.height == 0) return
-
-            // Find wf's top Y relative to the CoordinatorLayout (binding.root).
-            var y = 0
-            var v: android.view.View = wf
-            while (v !== binding.root) {
-                y += v.top
-                v = v.parent as? android.view.View ?: break
+        binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(defaultModule()), false)
+        fun positionPanel() {
+            val h = binding.root.height
+            if (h == 0) return
+            var plotTop = 0
+            var node: View = binding.waterfallView
+            while (node !== binding.root) {
+                plotTop += node.top
+                node = node.parent as? View ?: break
             }
-
-            // The sheet's top when fully expanded = waterfallTop + waterfallHeight/5.
-            // This leaves the spectrum + top 4/5 of the waterfall always visible.
-            val expandedOff = y + wf.height / 5
-            if (expandedOff <= 0) return
-            if (behavior.expandedOffset != expandedOff) {
-                behavior.expandedOffset = expandedOff
-            }
-
-            // SCROLL FIX:
-            // BottomSheetBehavior translates the sheet view down by expandedOffset,
-            // but the inner NestedScrollView's measured height stays equal to the
-            // full CoordLayout height minus the sticky header (handle + TabLayout).
-            // Its scroll range = contentHeight − measuredHeight, which is short by
-            // exactly expandedOffset px -- content at the bottom is unreachable.
-            // Setting paddingBottom = expandedOffset + navBarHeightPx on the inner
-            // NestedScrollView (clipToPadding=false) extends the effective scrollable
-            // height so every control can be scrolled into view.
-            // The outer LinearLayout is not a scroll view so it must NOT get this
-            // padding (it would just push its children down and break the layout).
-            val targetPad = expandedOff + navBarHeightPx
-            val scrollView = binding.controlsScrollView
-            if (scrollView.paddingBottom != targetPad) {
-                scrollView.setPadding(0, 0, 0, targetPad)
+            val normal = (plotTop + minOf(binding.waterfallView.height / 3, (60 * resources.displayMetrics.density).toInt()))
+                .coerceIn((h * 0.48f).toInt(), (h - 200 * resources.displayMetrics.density).toInt())
+            val rootY=IntArray(2); val frequencyY=IntArray(2)
+            binding.root.getLocationInWindow(rootY); binding.frequencyView.getLocationInWindow(frequencyY)
+            val offset=if(panelFullscreen) frequencyY[1]-rootY[1]+binding.frequencyView.height else normal
+            if (behavior.expandedOffset != offset) behavior.expandedOffset = offset
+            binding.controlsScrollView.setPadding(0, 0, 0, offset + navBarHeightPx)
+            val visualHeight=if(panelFullscreen) (h-offset-binding.controlTabLayout.height-(150*resources.displayMetrics.density).toInt()-navBarHeightPx).coerceAtLeast((220*resources.displayMetrics.density).toInt()) else (260*resources.displayMetrics.density).toInt()
+            for(id in listOf(R.id.adsbVisualization,R.id.aprsMapHost)) findViewById<View>(id)?.let { visual ->
+                if(visual.layoutParams.height!=visualHeight) { visual.layoutParams=visual.layoutParams.apply { height=visualHeight }; binding.controlViewPager.post { resizePagerToCurrentPage() } }
             }
         }
-
-        binding.waterfallView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            applyExpandedOffset()
+        positionControlsPanel=::positionPanel
+        onBackPressedDispatcher.addCallback(this,object: androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if(panelFullscreen) setPanelFullscreen(false) else { isEnabled=false; onBackPressedDispatcher.onBackPressed(); isEnabled=true }
+            }
+        })
+        binding.root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> positionPanel() }
+        binding.waterfallView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> positionPanel() }
+        binding.root.post { positionPanel() }
+        behavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
+            override fun onStateChanged(sheet: View, state: Int) {
+                if(state==BottomSheetBehavior.STATE_COLLAPSED || state==BottomSheetBehavior.STATE_EXPANDED)
+                    binding.sheetToggle.isCollapsed = state == BottomSheetBehavior.STATE_COLLAPSED
+            }
+            override fun onSlide(sheet: View, offset: Float) {}
+        })
+        binding.sheetToggle.isCollapsed = false
+        binding.sheetToggle.setOnClickListener {
+            if(panelFullscreen) setPanelFullscreen(false) else behavior.state = if (behavior.state == BottomSheetBehavior.STATE_COLLAPSED)
+                BottomSheetBehavior.STATE_EXPANDED else BottomSheetBehavior.STATE_COLLAPSED
         }
-        binding.waterfallView.post { applyExpandedOffset() }
+        var downY = 0f
+        binding.sheetToggle.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downY = event.rawY; true }
+                MotionEvent.ACTION_MOVE -> true
+                MotionEvent.ACTION_UP -> {
+                    val delta = event.rawY - downY
+                    if (kotlin.math.abs(delta) < 20 * resources.displayMetrics.density) view.performClick()
+                    else if(delta>0 && panelFullscreen) setPanelFullscreen(false)
+                    else if(delta<0 && behavior.state==BottomSheetBehavior.STATE_EXPANDED) setPanelFullscreen(true)
+                    else behavior.state = if (delta > 0) BottomSheetBehavior.STATE_COLLAPSED else BottomSheetBehavior.STATE_EXPANDED
+                    true
+                }
+                else -> true
+            }
+        }
     }
 
     private fun setupFabMenu() {
@@ -2509,15 +2632,10 @@ class MainActivity : AppCompatActivity() {
     // ─── IF Bandwidth helpers (class-level so both setupControlsPanelDeferred ──
     // ─── and observeViewModel can reach them) ─────────────────────────────────
 
-    private val BW_STEPS = intArrayOf(
-        100, 150, 200, 250, 300, 400, 500,          // idx  0- 6: CW narrow  (Hz)
-        600, 800,                                    // idx  7- 8: CW wide / RTTY
-        1_000, 1_200, 1_500, 1_800, 2_000,          // idx  9-13: SSB voice
-        2_400, 2_700, 3_000, 3_300, 3_600,          // idx 14-18: SSB wide / data
-        4_000, 5_000, 6_000, 8_000, 10_000,         // idx 19-23: AM / utility
-        12_500, 15_000, 25_000,                     // idx 24-26: NFM / ACARS
-        50_000, 100_000, 200_000                     // idx 27-29: WFM / broadcast
-    )
+    private val BW_STEPS = intArrayOf(100,150,200,250,300,400,500,600,800,
+        1000,1200,1500,1800,2000,2400,2700,3000,3300,3600,4000,5000,6000,8000,10000,
+        12500,15000,25000,50000,75000,100000,125000,150000,175000,200000,225000,250000,
+        300000,350000,400000,500000,600000,660000,750000,900000,1000000,1500000,2000000)
 
     /**
      * Per-mode allowed index range within BW_STEPS.
@@ -2538,7 +2656,6 @@ class MainActivity : AppCompatActivity() {
         // bucket). 25 kHz - 200 kHz lets the slider reach "Auto" (48 kHz+) again.
         DemodMode.APRS -> Pair(24, 29)  // 12.5 kHz - 200 kHz (Auto sits near top)
         DemodMode.ACARS -> Pair(24, 26) // 12.5 kHz - 25 kHz
-        DemodMode.FM   -> Pair(24, 27)  // 12.5 kHz - 50 kHz
         // Digital voice — all use 12.5 kHz channels (NXDN also supports 6.25 kHz
         // but 12.5 kHz is the safe minimum for the IF pre-filter on most hardware)
         DemodMode.DMR,
@@ -2549,15 +2666,15 @@ class MainActivity : AppCompatActivity() {
         DemodMode.M17,
         DemodMode.DPMR,
         DemodMode.DIG  -> Pair(24, 25)  // 12.5 kHz - 15 kHz
-        DemodMode.WFM,
-        DemodMode.WFM_STEREO -> Pair(24, 29) // 12.5 kHz - 200 kHz
+        DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO -> Pair(27,
+            BW_STEPS.indexOfLast { it <= viewModel.capabilities.value.maxChannelBandwidth(viewModel.sampleRate.value) }.coerceAtLeast(27))
         DemodMode.DRM  -> Pair(14, 21)  // 2.4 kHz - 5 kHz
         DemodMode.ADSB -> Pair(27, 29)  // 50 kHz - 200 kHz
         DemodMode.RAW  -> Pair(0,  29)  // full range -- pass-through
     }
 
     private fun formatIfBw(hz: Int, isAuto: Boolean): String =
-        if (isAuto) "Auto"
+        if (isAuto) "Auto · ${formatIfBw(hz, false)}"
         else if (hz < 1_000) "${hz} Hz"
         else if (hz % 1_000 == 0) "${hz / 1_000} kHz"
         else "${"%.1f".format(hz / 1_000.0)} kHz"
@@ -2607,7 +2724,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun channelHighlightHz(mode: DemodMode, ifBwHz: Int): Long {
         val isNarrow = when (mode) {
-            DemodMode.AM, DemodMode.NFM, DemodMode.FM,
+            DemodMode.AM, DemodMode.NFM,
             DemodMode.USB, DemodMode.LSB,
             DemodMode.CW, DemodMode.CWR,
             DemodMode.DSB, DemodMode.APRS,
@@ -2616,11 +2733,11 @@ class MainActivity : AppCompatActivity() {
         }
         if (!isNarrow) {
             return when (mode) {
-                DemodMode.WFM, DemodMode.WFM_STEREO ->
+                DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO ->
                     // Use the actual WFM IF rate for the current device rate so the
                     // spectrum highlight correctly spans the full WFM passband at every
                     // sample rate (e.g. 240 kHz at 1.92 MS/s, capped at 250 kHz max).
-                    DspEngine.wfmIfRate(viewModel.sampleRate.value).toLong()
+                    minOf((ifBwHz.takeIf { it > 0 } ?: 200_000).toLong(),viewModel.capabilities.value.maxChannelBandwidth(viewModel.sampleRate.value).toLong())
                 else -> 0L
             }
         }
@@ -2717,12 +2834,50 @@ class MainActivity : AppCompatActivity() {
      * instead of the overlays.
      */
     private fun trueHardwareCenterFreqHz(dialHz: Long, mode: DemodMode = viewModel.demodMode.value): Long =
-        when (mode) {
+        (sdrService?.source as? com.radiosport.ninegradio.source.FileIqSource)?.getCenterFrequency() ?: when (mode) {
             DemodMode.USB, DemodMode.LSB -> dialHz + DspEngine.SSB_BFO_OFFSET_HZ
+            DemodMode.CW, DemodMode.CWR -> dialHz+DspEngine.cwTunerOffset(dialHz,viewModel.capabilities.value,viewModel.sampleRate.value)
             else -> dialHz
         }
 
     private fun observeViewModel() {
+        lifecycleScope.launch {
+            combine(viewModel.centerFreqHz, viewModel.capabilities) { hz, caps -> caps.supportsFrequency(hz) }
+                .distinctUntilChanged().collect { receiving ->
+                    if (!receiving) {
+                        binding.spectrumView.clearSpectrum(); binding.waterfallView.clearHistory()
+                        binding.tvSignalDb.text = "--- dBFS"; updateSignalMeter(-120f)
+                    }
+                    binding.spectrumView.alpha = if (receiving) 1f else 0.4f
+                }
+        }
+
+        lifecycleScope.launch {
+            combine(viewModel.centerFreqHz, viewModel.autoDemod, viewModel.capabilities) { hz, auto, caps ->
+                if (!caps.supportsFrequency(hz)) return@combine "HF+ \u76f2\u533a \u00b7 31\u201364 MHz"
+                val band = com.radiosport.ninegradio.dsp.ReceiverBandPlan.at(hz)
+                "${band.name}${if (band.end > band.start) " · ${"%.3f".format(band.start / 1e6)}–${"%.3f".format(band.end / 1e6)} MHz" else ""}${if (auto) " · AUTO" else ""}"
+            }.distinctUntilChanged().collect { binding.tvBandContext.text = it }
+        }
+        binding.tvSquelchStatus.contentDescription = getString(R.string.receiver_power_hint)
+        binding.tvSquelchStatus.setOnClickListener {
+            val state = viewModel.connectionState.value
+            val start = !(viewModel.receiverEnabled.value && (state is RtlSdrService.ConnectionState.Connected || state is RtlSdrService.ConnectionState.Connecting))
+            if (!start) etm.stop()
+            viewModel.setReceiverEnabled(start)
+        }
+        lifecycleScope.launch {
+            combine(viewModel.receiverEnabled, viewModel.connectionState) { requested, state ->
+                requested && state is RtlSdrService.ConnectionState.Connected
+            }.distinctUntilChanged().collect { enabled ->
+                binding.tvSquelchStatus.isSelected = enabled
+                binding.tvSquelchStatus.text = if (enabled) "OPEN" else "CLOSED"
+                binding.tvSquelchStatus.setTextColor(if (enabled) 0xFF00FF88.toInt() else 0xFFFF4444.toInt())
+            }
+        }
+
+        lifecycleScope.launch { viewModel.messages.collect { showSnackbar(it) } }
+
         // Use plain collect (not collectLatest) for spectrum and waterfall.
         // collectLatest cancels the running lambda the moment a newer value arrives.
         // Spectrum updates come at ~15 fps; postInvalidateOnAnimation schedules the
@@ -2775,48 +2930,64 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             viewModel.spectrumData.collect { data ->
-                binding.spectrumView.updateSpectrum(data, viewModel.peakData.value)
-                binding.waterfallView.addLine(data)
+                if (viewModel.capabilities.value.supportsFrequency(viewModel.centerFreqHz.value)) {
+                    binding.spectrumView.updateSpectrum(data, viewModel.peakData.value)
+                    binding.waterfallView.addLine(data)
+                }
             }
         }
-        // deviceStatus drives the hardware-measured signal level and S-meter only.
-        // Squelch open/closed is driven by dspStats below so it always reflects the
-        // live value computed by DspEngine rather than a stale .value snapshot.
         lifecycleScope.launch {
-            viewModel.deviceStatus.collectLatest { status ->
-                updateSignalMeter(status.signalStrengthDb)
-                binding.tvSignalDb.text = "${"%.1f".format(status.signalStrengthDb)} dBFS"
+            viewModel.dspStats.sample(200L).collect { stats ->
+                ctrlViews.spinnerRecordStop?.isEnabled=!(stats.isRecordingIq || stats.isRecordingAudio)
+                pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById<TextView>(R.id.tvRecordingState)?.apply {
+                    val parts=listOf(false to stats.isRecordingIq,true to stats.isRecordingAudio).filter { it.second }.map { (audio,_) ->
+                        val remaining=sdrService?.recordingRemainingMs(audio)
+                        (if(audio) "声音" else "IQ")+(if(remaining==null) "录制中" else " · ${remaining/60000}:${"%02d".format((remaining/1000)%60)}")
+                    }
+                    text=parts.joinToString("  /  ")+(if(parts.isNotEmpty() && sdrService?.dspEngine?.recordingGateOpen==false) " · 等待信号" else "")
+                    isVisible=parts.isNotEmpty()
+                }
+                ctrlViews.btnRecordIq?.text=if(stats.isRecordingIq) "停止 IQ" else "录制 IQ"
+                ctrlViews.btnRecordAudio?.text=if(stats.isRecordingAudio) "停止录音" else "录制声音"
+                styleRecordingAction(ctrlViews.btnRecordIq,stats.isRecordingIq)
+                styleRecordingAction(ctrlViews.btnRecordAudio,stats.isRecordingAudio)
             }
         }
-        // dspStats carries squelchOpen, signalDb, demodMode and sampleRate -- all
-        // computed live inside DspEngine.processIqBlock on the DSP coroutine.
-        // Reading squelchOpen here (from the emitted stats object) is always current;
-        // the old code read viewModel.dspStats.value inside deviceStatus.collectLatest
-        // which was a snapshot of the *previous* block's stats → always showed "CLOSED".
+        // Receiver statistics never change the manual listening switch.
         lifecycleScope.launch {
-            viewModel.dspStats.collect { stats ->
-                binding.tvDemodMode.text = stats.demodMode
-                // Display the ViewModel's authoritative sample rate (what was intentionally set)
-                // rather than stats.sampleRate, which can transiently report 562 500 Hz when
-                // the RTL2832U rsamp_ratio registers reset during a stream restart.
-                val displayRate = viewModel.sampleRate.value
+                viewModel.dspStats.map { it.signalDb }.sample(200L).distinctUntilChanged().collect { signalDb ->
+                if (viewModel.connectionState.value is RtlSdrService.ConnectionState.Connected && viewModel.capabilities.value.supportsFrequency(viewModel.centerFreqHz.value)) {
+                    updateSignalMeter(signalDb)
+                    val signalText = "${"%.1f".format(signalDb)} dBFS"
+                    if (binding.tvSignalDb.text.toString() != signalText) binding.tvSignalDb.text = signalText
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            combine(
+                viewModel.demodMode.map { it.displayName }.distinctUntilChanged(),
+                viewModel.sampleRate
+            ) { mode, rate -> mode to rate }.collect { (mode, displayRate) ->
+                binding.tvDemodMode.text = mode
                 binding.tvSampleRate.text = if (displayRate >= 1_000_000)
                     "${"%.3f".format(displayRate / 1e6)} MS/s"
-                else
-                    "${displayRate / 1000} kS/s"
-                binding.tvSquelchStatus.text = if (stats.squelchOpen) "OPEN" else "CLOSED"
-                binding.tvSquelchStatus.setTextColor(
-                    if (stats.squelchOpen) 0xFF00FF00.toInt() else 0xFFFF4444.toInt()
-                )
+                else "${displayRate / 1000} kS/s"
             }
         }
+
         lifecycleScope.launch {
             viewModel.connectionState.collectLatest { state ->
                 when (state) {
                     is RtlSdrService.ConnectionState.Connected -> {
+                        lastReceiverModel=state.deviceName
+                        applyReceiverCapabilities()
                         updateConnectionUi(true)
                         binding.tvDeviceName.text = state.deviceName
-                        showSnackbar("Connected: ${state.deviceName}")
+                        val rate = viewModel.sampleRate.value
+                        binding.tvSampleRate.text = if (rate >= 1_000_000)
+                            "${"%.3f".format(rate / 1e6)} MS/s" else "${rate / 1000} kS/s"
+                        showSnackbar("已连接 ${state.deviceName}")
                         // Auto-enable out-of-band for RTL-SDR Blog V4 if not already on
                         if (viewModel.isV4 && !viewModel.allowOutOfBand.value) {
                             viewModel.setAllowOutOfBand(true)
@@ -2824,10 +2995,12 @@ class MainActivity : AppCompatActivity() {
                         }
                         // Apply all saved settings now that the device is open
                         applyAllSettings()
+                        applyReceiverCapabilities()
                     }
-                    is RtlSdrService.ConnectionState.Disconnected -> updateConnectionUi(false)
+                    is RtlSdrService.ConnectionState.Disconnected -> { if (::etm.isInitialized) etm.stop(); updateConnectionUi(false) }
                     is RtlSdrService.ConnectionState.Connecting -> {
-                        binding.tvDeviceName.text = "Connecting…"
+                        binding.statusIndicator.setImageResource(R.drawable.ic_disconnected)
+                        binding.tvDeviceName.text = lastReceiverModel ?: "正在连接…"
                         binding.progressConnect.isVisible = true
                     }
                     is RtlSdrService.ConnectionState.Error -> {
@@ -2841,11 +3014,14 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             viewModel.demodMode.collectLatest { mode ->
-                // Update chip selection
-                ctrlViews.chipGroupDemod?.let { chipGroup ->
+                restorePlotContext(mode)
+                syncNoiseProcessingControls()
+                if(::ctrlViews.isInitialized && ctrlViews.layoutSampleRateChips!=null) setupSampleRateChips()
+                        // Update chip selection
+                modeChipGroups().forEach { chipGroup ->
                     for (i in 0 until chipGroup.childCount) {
-                        val chip = chipGroup.getChildAt(i) as? Chip ?: continue
-                        chip.isChecked = (chip.tag as? DemodMode) == mode
+                        val chip = chipGroup.getChildAt(i) as? com.google.android.material.button.MaterialButton ?: continue
+                        chip.isSelected = (chip.tag as? DemodMode) == mode
                     }
                 }
                 // Switching into/out of USB or LSB re-tunes the hardware (see
@@ -2876,11 +3052,12 @@ class MainActivity : AppCompatActivity() {
                 // unrelated trigger happens to call applyDisplayPreferences().
                 applyDisplayPreferences()
                 if (::ctrlViews.isInitialized) {
-                    binding.controlTabLayout.selectedTabPosition.takeIf { it >= 0 }
+                    binding.controlTabLayout.selectedTabPosition.takeIf { it >= 0 }?.let { pagerAdapter.moduleAt(it) }
                         ?.let { syncTabControls(it) }
                 }
                 // Show/hide APRS drawer tab
                 observeAprsMode(mode)
+                updateAdsbTabVisibility(mode)
                 // Show/hide ACARS drawer tab
                 observeAcarsMode(mode)
                 // Show/hide digital voice protocol drawer tabs
@@ -2900,6 +3077,9 @@ class MainActivity : AppCompatActivity() {
         // to hunt down and patch each call site individually.
         lifecycleScope.launch {
             viewModel.centerFreqHz.collect { hz ->
+                contentController?.frequencyChanged(hz)
+                if(binding.frequencyView.getFrequency()!=hz) syncFrequencyDisplay()
+                else updateTuneFrequency(hz)
                 val mode = viewModel.demodMode.value
                 val mhz  = "%.3f".format(hz / 1e6)
                 val rate = viewModel.sampleRate.value / 1000
@@ -2934,6 +3114,7 @@ class MainActivity : AppCompatActivity() {
         // Keep the spectrum highlight in sync whenever the IF bandwidth slider moves.
         lifecycleScope.launch {
             viewModel.ifBandwidthHz.collect { ifBw ->
+                updatePlotBandwidth()
                 val mode = viewModel.demodMode.value
                 binding.spectrumView.setDemodChannelBandwidth(channelHighlightHz(mode, ifBw), channelHighlightSideband(mode))
             }
@@ -2960,16 +3141,25 @@ class MainActivity : AppCompatActivity() {
                 val effectiveRate = viewModel.sampleRate.value / viewModel.decimation.value.coerceAtLeast(1)
                 binding.spectrumView.setSampleRate(effectiveRate)
                 binding.waterfallView.setSampleRate(effectiveRate)
+                updatePlotSpan()
             }
         }
 
         // Propagate decimation changes to the DSP engine and views immediately.
         lifecycleScope.launch {
-            viewModel.decimation.collectLatest { factor ->
+            combine(viewModel.decimation,viewModel.sampleRate) { factor,rate -> factor to rate }.collectLatest { (factor,rate) ->
                 sdrService?.setFftDecimation(factor)
-                val effectiveRate = viewModel.sampleRate.value / factor.coerceAtLeast(1)
+                val effectiveRate = rate / factor.coerceAtLeast(1)
                 binding.spectrumView.setSampleRate(effectiveRate)
                 binding.waterfallView.setSampleRate(effectiveRate)
+                val magnification=SpectrumZoom.window(plotZoom).magnification
+                plotZoom=factor*magnification
+                updatePlotSpan()
+                val mode=viewModel.demodMode.value
+                val hz=viewModel.ifBandwidthHz.value.takeIf { it>0 } ?: mode.defaultBwHz
+                applyBwRange(mode,hz)
+                binding.spectrumView.setDemodChannelBandwidth(channelHighlightHz(mode,viewModel.ifBandwidthHz.value),channelHighlightSideband(mode))
+                savePlotZoom()
             }
         }
     }
@@ -3049,6 +3239,7 @@ class MainActivity : AppCompatActivity() {
      * Falls back to the USB device table (the common R820T table) when no source is connected.
      */
     private fun gainDbAtIndex(index: Int): Float {
+        if (viewModel.capabilities.value.id == "airspyhf") return index.coerceIn(0, 8) * 6f
         val src = sdrService?.source ?: viewModel.getService()?.source
         return if (src != null) {
             // IqSource.getGainDb() returns the dB for the *current* index, not for an
@@ -3089,7 +3280,7 @@ class MainActivity : AppCompatActivity() {
         val hwAgc    = v.hardwareAgcEnabled.value
         if (sliderGain != null) {
             val gainCount = svc.source?.getGainCount()
-                ?.coerceAtLeast(1)
+                ?.coerceAtLeast(2)
                 ?: RtlSdrDevice.GAIN_TABLE_DB_TENTHS.size
             sliderGain.valueFrom = 0f
             sliderGain.valueTo = (gainCount - 1).toFloat()
@@ -3149,20 +3340,25 @@ class MainActivity : AppCompatActivity() {
         ctrlViews.tuningDial?.currentFreqHz = hz
     }
 
+    private fun styleRecordingAction(button: android.widget.Button?,recording: Boolean) {
+        button ?: return
+        if(button.compoundDrawablesRelative[0]==null) button.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_record_radio,0,0,0)
+        button.backgroundTintList=android.content.res.ColorStateList.valueOf(if(recording) 0xff502a33.toInt() else 0xff2d202a.toInt())
+        button.setTextColor(if(recording) 0xffffa0a5.toInt() else 0xffff757b.toInt())
+    }
+    private var lastReceiverModel: String?=null
     private fun updateConnectionUi(connected: Boolean) {
         binding.progressConnect.isVisible = false
         binding.statusIndicator.setImageResource(
             if (connected) R.drawable.ic_connected else R.drawable.ic_disconnected
         )
-        binding.tvDeviceName.text = if (connected) "9GRadio" else "Not Connected"
+        binding.tvDeviceName.text = lastReceiverModel ?: if(connected) "接收机" else "未连接"
 
         // When disconnected, clear the live-data widgets so stale readings
         // (−120.0 dBFS, 0 kS/s) don't persist after the device is unplugged.
         if (!connected) {
             binding.tvSignalDb.text      = "--- dBFS"
             binding.tvSampleRate.text    = "0 kS/s"
-            binding.tvSquelchStatus.text = "CLOSED"
-            binding.tvSquelchStatus.setTextColor(0xFFFF4444.toInt())
             updateSignalMeter(-120f)
         }
     }
@@ -3174,6 +3370,198 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Public entry point used by Settings drawer preference and overflow menu item. */
+    private fun setupSampleRateChips() {
+        if (ctrlViews.layoutSampleRateChips == null) return
+        val rates = viewModel.availableSampleRates
+        val sampleRateLabels = rates.map { rate ->
+            val divLabel = if (rate % DspEngine.DEFAULT_AUDIO_RATE == 0)
+                " ÷${rate / DspEngine.DEFAULT_AUDIO_RATE}" else ""
+            if (rate >= 1_000_000) "${"%.3f".format(rate / 1e6)}M$divLabel"
+            else "${"%.0f".format(rate / 1e3)}k$divLabel"
+        }
+        val savedIdx = rates.indexOfFirst { it == viewModel.sampleRate.value }
+            .let { if (it >= 0) it else rates.indexOfFirst { r -> r == 1_920_000 }.coerceAtLeast(0) }
+
+        sampleRateLabelsCache = sampleRateLabels
+
+        ctrlViews.layoutSampleRateChips!!.removeAllViews()
+        val dp = resources.displayMetrics.density
+        sampleRateLabels.forEachIndexed { idx, label ->
+            val btn = android.widget.TextView(this).apply {
+                text = label
+                isEnabled=viewModel.demodMode.value!=DemodMode.ADSB || rates[idx]==2_400_000
+                alpha=if(isEnabled) 1f else 0.35f
+                textSize = 11f
+                typeface = android.graphics.Typeface.MONOSPACE
+                setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).also { it.setMargins((3 * dp).toInt(), 0, (3 * dp).toInt(), 0) }
+                setOnClickListener {
+                    val rate = rates[idx]
+                    ctrlViews.tvSampleRateLabel!!.text = sampleRateLabels[idx]
+                    viewModel.setSampleRate(rate)
+                    val effectiveRate = rate / viewModel.decimation.value.coerceAtLeast(1)
+                    binding.spectrumView.setSampleRate(effectiveRate)
+                    binding.waterfallView.setSampleRate(effectiveRate)
+                    // Refresh WFM channel highlight -- wfmIfRate depends on device rate
+                    binding.spectrumView.setDemodChannelBandwidth(
+                        channelHighlightHz(viewModel.demodMode.value, viewModel.ifBandwidthHz.value),
+                        channelHighlightSideband(viewModel.demodMode.value))
+                    updateSampleRateChips(idx)
+                    // Scroll selected chip into view
+                    (ctrlViews.layoutSampleRateChips!!.parent as? android.widget.HorizontalScrollView)
+                        ?.smoothScrollTo(this.left - (40 * dp).toInt(), 0)
+                }
+            }
+            ctrlViews.layoutSampleRateChips!!.addView(btn)
+        }
+        ctrlViews.tvSampleRateLabel!!.text = sampleRateLabels[savedIdx]
+        updateSampleRateChips(savedIdx)
+        // Scroll to show the selected chip on first render
+        ctrlViews.layoutSampleRateChips!!.post {
+            val selected = ctrlViews.layoutSampleRateChips!!.getChildAt(savedIdx)
+            (ctrlViews.layoutSampleRateChips!!.parent as? android.widget.HorizontalScrollView)
+                ?.scrollTo((selected?.left ?: 0) - (40 * dp).toInt(), 0)
+        }
+    }
+
+    private fun setupGraphControls() {
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_DISPLAY)?.findViewById<com.google.android.material.slider.Slider>(R.id.sliderPlotZoom)?.apply {
+            clearOnChangeListeners(); clearOnSliderTouchListeners()
+            value = (kotlin.math.ln(plotZoom.toDouble()) / kotlin.math.ln(2.0)).toFloat()
+            setLabelFormatter { value -> "${"%.1f".format(Math.pow(2.0, value.toDouble()))}x" }
+            addOnChangeListener { _, v, fromUser -> if (fromUser) setPlotZoom(Math.pow(2.0, v.toDouble()).toFloat(), false) }
+            addOnSliderTouchListener(object : com.google.android.material.slider.Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: com.google.android.material.slider.Slider) {}
+                override fun onStopTrackingTouch(slider: com.google.android.material.slider.Slider) { savePlotZoom() }
+            })
+        }
+        if (!::graphLayout.isInitialized) return
+        graphLayout.bindSlider(ctrlViews.sliderSpecWfRatio, ctrlViews.tvSpecWfRatioValue)
+        val page=pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_DISPLAY) ?: return
+        page.findViewById<android.widget.FrameLayout>(R.id.inlineDisplayLevels).apply {
+            removeAllViews()
+            addView(DisplayLevelControls(this@MainActivity,binding.waterfallView,binding.spectrumView) { low,high,auto ->
+                ctrlViews.switchAutoRange?.isChecked=auto
+                ctrlViews.sliderSpecFloor?.let { it.value=low.toFloat().coerceIn(it.valueFrom,it.valueTo) }
+                ctrlViews.sliderSpecCeiling?.let { it.value=high.toFloat().coerceIn(it.valueFrom,it.valueTo) }
+                ctrlViews.tvSpecFloorValue?.text=low.toString(); ctrlViews.tvSpecCeilingValue?.text=high.toString()
+            })
+        }
+        // Keep the existing bindings as state bridges, with one visible editor.
+        for(id in listOf(R.id.sliderSpecFloor,R.id.sliderSpecCeiling,R.id.switchAutoRange,R.id.switchAutoStretch))
+            (page.findViewById<View>(id)?.parent as? View)?.visibility=View.GONE
+        page.findViewById<View>(R.id.btnResetDbRange)?.visibility=View.GONE
+    }
+
+    private fun showWaterfallQuickAdjust() {
+        val position=pagerAdapter.positionOf(ControlsPagerAdapter.TAB_DISPLAY)
+        if(position<0) { showSnackbar("频谱与瀑布模块已隐藏"); return }
+        binding.controlTabLayout.getTabAt(position)?.select()
+        com.google.android.material.bottomsheet.BottomSheetBehavior.from(binding.controlsBottomSheet).state=
+            com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        (pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_DISPLAY) as? android.widget.ScrollView)?.smoothScrollTo(0,0)
+    }
+    private fun showWaterfallPresets() {
+        val choices = intArrayOf(R.string.waterfall_preset_clear, R.string.waterfall_preset_weak,
+            R.string.waterfall_more, R.string.waterfall_balanced, R.string.waterfall_less,
+            R.string.waterfall_preset_reset).map { getString(it) }.toTypedArray()
+        AlertDialog.Builder(this).setTitle(R.string.waterfall_adjust_title)
+            .setItems(choices) { _, index ->
+                when (index) {
+                    2 -> graphLayout.setRatio(0.25f)
+                    3 -> graphLayout.setRatio(0.4f)
+                    4 -> graphLayout.setRatio(0.65f)
+                    else -> {
+                        val weak = index == 1
+                        val reset = index == 5
+                        val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+                        prefs.edit().putString("pref_waterfall_palette", if (weak) "INFERNO" else "BLUE_WHITE")
+                            .putBoolean("pref_waterfall_auto_stretch", true)
+                            .putInt("pref_waterfall_brightness", 50)
+                            .putInt("pref_waterfall_contrast", if (weak) 65 else 50).apply()
+                        if (reset) graphLayout.setRatio(0.4f)
+                        applyDisplayPreferences()
+                        syncTabControls(ControlsPagerAdapter.TAB_DISPLAY)
+                    }
+                }
+            }.setNegativeButton(android.R.string.cancel, null).show()
+    }
+
+    private fun syncNoiseProcessingControls() {
+        if(!::ctrlViews.isInitialized) return
+        val allowed=com.radiosport.ninegradio.dsp.NoiseProcessingPolicy.allows(viewModel.demodMode.value)
+        val native=com.radiosport.ninegradio.dsp.NativeDsp.isNativeAvailable()
+        ctrlViews.switchNoiseBlanker?.apply {
+            setOnCheckedChangeListener(null)
+            isChecked=allowed && viewModel.noiseBlankerEnabled.value
+            isEnabled=allowed && native
+            tooltipText=if(!allowed) "当前解调模式旁路降噪" else if(!native) "原生脉冲抑制模块未加载" else null
+            setOnCheckedChangeListener { _,checked -> viewModel.setNoiseBlanker(checked); syncNoiseProcessingControls() }
+        }
+        ctrlViews.switchNoiseReducer?.apply {
+            setOnCheckedChangeListener(null)
+            isChecked=allowed && viewModel.noiseReducerEnabled.value
+            isEnabled=allowed
+            tooltipText=if(allowed) null else "当前解调模式旁路降噪"
+            setOnCheckedChangeListener { _,checked -> viewModel.setNoiseReducer(checked); syncNoiseProcessingControls() }
+        }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.let { page ->
+            page.findViewById<View>(R.id.tvNoiseProcessingState)?.isVisible=!allowed
+            page.findViewById<com.google.android.material.slider.Slider>(R.id.sliderNrStrength)?.isEnabled=allowed && viewModel.noiseReducerEnabled.value
+            page.findViewById<TextView>(R.id.tvIqNbThreshold)?.text="脉冲门限　${viewModel.iqNbThreshold.value.toInt()}×"
+            page.findViewById<com.google.android.material.slider.Slider>(R.id.sliderIqNbThreshold)?.apply {
+                clearOnChangeListeners()
+                value=kotlin.math.round(viewModel.iqNbThreshold.value).coerceIn(valueFrom,valueTo)
+                isEnabled=allowed && native && viewModel.noiseBlankerEnabled.value
+                addOnChangeListener { _,next,user -> if(user) viewModel.setIqNoiseBlankerThreshold(next) }
+            }
+        }
+    }
+
+    private fun applyReceiverCapabilities() {
+        setupDemodModeChips()
+        val caps = viewModel.capabilities.value
+        restorePlotContext(viewModel.demodMode.value)
+        setupSampleRateChips()
+        setupBandPresetChips()
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById<com.google.android.material.slider.Slider>(R.id.sliderNrStrength)?.apply {
+            clearOnChangeListeners()
+            value = getSharedPreferences("rtlsdr_prefs", MODE_PRIVATE).getFloat("nrStrength", 1f).coerceIn(0f, 1.5f)
+            addOnChangeListener { _, strength, fromUser -> if (fromUser) viewModel.setNoiseReductionStrength(strength) }
+        }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.let { ReceiverControlUi.apply(it, caps) }
+        (ctrlViews.switchOutOfBound?.parent as? View)?.isVisible = false
+        ctrlViews.switchOutOfBound?.isEnabled = caps.id == "rtl"
+        if (caps.id == "file") {
+            ctrlViews.sliderGain?.isEnabled = false
+            ctrlViews.switchTunerAgc?.isEnabled = false
+        }
+        ctrlViews.sliderSquelch?.isEnabled = true
+        (ctrlViews.sliderSquelch?.parent as? android.view.View)?.visibility = android.view.View.VISIBLE
+        ctrlViews.sliderSquelch?.tooltipText = null
+        binding.spectrumView.setSquelch(viewModel.squelch.value)
+        ctrlViews.sliderGain?.isEnabled = caps.id != "file" && !viewModel.tunerAgcEnabled.value
+        ctrlViews.switchTunerAgc?.isEnabled = caps.id != "file"
+        syncGainLabel(viewModel.gainIndex.value)
+        ctrlViews.switchHardwareAgc?.isEnabled = caps.hardwareAgc
+        ctrlViews.switchBiasTee?.isEnabled = caps.biasTee
+        ctrlViews.spinnerDirectSampling?.isEnabled = caps.directSampling
+        ctrlViews.switchHardwareAgc?.tooltipText = if (caps.hardwareAgc) null else "当前接收机不支持 RTL 数字 AGC"
+        ctrlViews.switchBiasTee?.tooltipText = if (caps.biasTee) null else "当前接收机不支持偏置供电"
+        ctrlViews.spinnerDirectSampling?.tooltipText = if (caps.directSampling) null else "HF+ 无需 RTL 直采"
+        modeChipGroups().forEach { group ->
+            for (i in 0 until group.childCount) {
+                val chip = group.getChildAt(i) as? com.google.android.material.button.MaterialButton ?: continue
+                val mode = chip.tag as? DemodMode ?: continue
+                chip.isEnabled = caps.supportsMode(mode)
+                chip.tooltipText = if (chip.isEnabled) null else "超出当前接收机的频率或带宽能力"
+            }
+        }
+    }
+
     fun showDeviceInfoDialog() = showDeviceInfo()
 
     /**
@@ -3207,7 +3595,8 @@ class MainActivity : AppCompatActivity() {
         val svc = sdrService
         val src = svc?.source
         val isDriverMode = src is com.radiosport.ninegradio.source.RtlTcpSource
-        val isUsbMode    = src is com.radiosport.ninegradio.source.RtlSdrDeviceSource || src == null
+        val isUsbMode    = src is com.radiosport.ninegradio.source.RtlSdrDeviceSource ||
+            src is com.radiosport.ninegradio.source.AirspyHfSource || src == null
 
         val driverInstalled = RtlSdrDriverApp.isInstalled(this)
         val driverLabel     = RtlSdrDriverApp.getAppLabel(this)
@@ -3226,6 +3615,29 @@ class MainActivity : AppCompatActivity() {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
         }
+
+        val hostInput = android.widget.EditText(this).apply {
+            hint = "rtl_tcp host (e.g. 192.168.1.10)"
+            setText(viewModel.savedTcpHost().ifBlank { "127.0.0.1" })
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val portInput = android.widget.EditText(this).apply {
+            hint = "Port"; setText(viewModel.savedTcpPort().toString())
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        root.addView(hostInput)
+        root.addView(portInput)
+        root.addView(android.widget.Button(this).apply {
+            text = "Connect rtl_tcp"
+            setOnClickListener {
+                val port = portInput.text.toString().toIntOrNull()
+                val host = hostInput.text.toString().trim()
+                if (host.isNotBlank() && port != null && port in 1..65535) {
+                    viewModel.connectTcp(host, port)
+                    showSnackbar("Connecting to $host:$port")
+                } else showSnackbar("Enter a valid host and port")
+            }
+        })
 
         // Current source info
         root.addView(android.widget.TextView(this).apply {
@@ -3271,8 +3683,8 @@ class MainActivity : AppCompatActivity() {
                 isDriverMode -> "📡  $driverLabel  (active)"
                 else -> {
                     val devs = viewModel.detectUsbDevices()
-                    if (devs.isNotEmpty()) "🔌  ${com.radiosport.ninegradio.usb.RtlSdrDevice.getDeviceName(devs.first())}"
-                    else "No USB RTL-SDR device detected"
+                    if (devs.isNotEmpty()) "🔌  ${com.radiosport.ninegradio.source.UsbSources.name(devs.first())}"
+                    else "No supported USB receiver detected"
                 }
             }
             setTextAppearance(com.google.android.material.R.style.TextAppearance_MaterialComponents_Body2)
@@ -3346,14 +3758,14 @@ class MainActivity : AppCompatActivity() {
                 sdrService?.disconnectSource()
                 val detected = viewModel.detectUsbDevices()
                 if (detected.isEmpty()) {
-                    showSnackbar("No USB RTL-SDR device found")
-                    tvStatus.text = "No USB RTL-SDR device detected"
+                    showSnackbar("No supported USB receiver found")
+                    tvStatus.text = "No supported USB receiver detected"
                     ignoreNext = true
                     switchSource.isChecked = true
                     tvToggleLabel.text = "Source: Rtl-sdr Driver"
                 } else {
                     val dev = detected.first()
-                    val name = com.radiosport.ninegradio.usb.RtlSdrDevice.getDeviceName(dev)
+                    val name = com.radiosport.ninegradio.source.UsbSources.name(dev)
                     tvStatus.text = "🔌  $name"
                     showSnackbar("Switching to USB: $name")
                     viewModel.connectDevice(dev)
@@ -3457,7 +3869,7 @@ class MainActivity : AppCompatActivity() {
         val verdictBanner = android.widget.TextView(this).apply {
             text = "$verdictIcon  ${report.verdict.level.name}"
             setBackgroundColor(verdictColor)
-            setTextColor(0xFFFFFFFF.toInt())
+            setRadioTextColor(com.radiosport.ninegradio.R.attr.radioText)
             textSize   = 13f
             setPadding(pad, (8 * dp).toInt(), pad, (8 * dp).toInt())
         }
@@ -3538,7 +3950,7 @@ class MainActivity : AppCompatActivity() {
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val mhz = "%.3f".format(viewModel.centerFreqHz.value / 1e6)
         val rate = "${viewModel.sampleRate.value / 1000}kSps"
-        return File(dir, "iq_${mhz}MHz_${rate}_$ts.iq").absolutePath
+        return File(dir, "iq_${mhz}MHz_${rate}_$ts.${if (viewModel.capabilities.value.floatIq) "cf32" else "iq"}").absolutePath
     }
 
     private fun getAudioFilePath(): String {
@@ -3567,7 +3979,7 @@ class MainActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             })
         } else {
-            Toast.makeText(this, "IQ files require an external SDR app to play", Toast.LENGTH_LONG).show()
+            viewModel.playIqRecording(meta)
         }
     }
 
@@ -3599,8 +4011,19 @@ class MainActivity : AppCompatActivity() {
      * entirely by the normal mode-selection path in the Mode tab.
      */
     private fun setupAprsTab() {
+        val displayPrefs=androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+        if(!displayPrefs.getBoolean("aprs_click_details_v1",false)) displayPrefs.edit()
+            .putBoolean("pref_aprs_auto_display",false).putBoolean("aprs_click_details_v1",true).apply()
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_APRS)?.let { page ->
+            val host=page.findViewById<android.widget.FrameLayout>(R.id.aprsMapHost)
+            aprsMapPanel=RadioMapPanel(this,"APRS",true).also { host.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
+            page.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.btnAprsMap).setOnCheckedChangeListener { _,on ->
+                host.isVisible=on; updateDigitalVisualization(); resizePagerToCurrentPage()
+            }
+            page.findViewById<Button>(R.id.btnAprsPanelFull).setOnClickListener { setPanelFullscreen(!panelFullscreen) }
+        }
         val listView = ctrlViews.listAprsTabPackets ?: return
-        aprsListAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, aprsDisplayList)
+        aprsListAdapter = ArrayAdapter(this, R.layout.compact_list_item, aprsDisplayList)
         listView.adapter = aprsListAdapter
 
         listView.setOnItemClickListener { _, _, pos, _ ->
@@ -3637,22 +4060,93 @@ class MainActivity : AppCompatActivity() {
         updateAprsTabVisibility(mode)
     }
 
+    private fun updateAdsbTabVisibility(mode: DemodMode) {
+        if(!::pagerAdapter.isInitialized) return
+        val tab=moduleTab(ControlsPagerAdapter.TAB_ADSB) ?: return
+        val visible=mode==DemodMode.ADSB && viewModel.capabilities.value.supportsMode(mode)
+        tab.view.visibility=if(visible) View.VISIBLE else View.GONE
+        if(visible) binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(ControlsPagerAdapter.TAB_ADSB),false)
+    }
+    private fun setupAdsbTab() {
+        val page=pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB) ?: return
+        var aircraft=emptyList<com.radiosport.ninegradio.dsp.AdsbDecoder.AdsbFrame>()
+        val table=page.findViewById<AdsbAircraftTable>(R.id.listAdsbPanelAircraft)
+        table.onAircraftClick = { ac ->
+                AlertDialog.Builder(this@MainActivity).setTitle(ac.callsign ?: ac.icao24)
+                    .setMessage("ICAO：${ac.icao24}\n高度：${ac.altitude?.let { "$it ft" } ?: "—"}\n速度：${ac.velocity?.let { "$it kt" } ?: "—"}\n航向：${ac.heading?.let { "%.1f°".format(it) } ?: "—"}\n位置：${ac.latitude ?: "—"}, ${ac.longitude ?: "—"}")
+                    .setPositiveButton("关闭",null).show()
+        }
+        val mapHost=page.findViewById<android.widget.FrameLayout>(R.id.adsbMapHost)
+        adsbMapPanel=RadioMapPanel(this,"ADSB",true).also { mapHost.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
+        val mapSwitch=page.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.btnAdsbPanelMap)
+        adsbMapSelected=getSharedPreferences("radio_map",MODE_PRIVATE).getBoolean("adsb_show_map",true)
+        mapSwitch.isChecked=adsbMapSelected
+        mapSwitch.setOnCheckedChangeListener { _,on ->
+            adsbMapSelected=on; getSharedPreferences("radio_map",MODE_PRIVATE).edit().putBoolean("adsb_show_map",on).apply()
+            updateDigitalVisualization()
+        }
+        page.findViewById<Button>(R.id.btnAdsbPanelFull).setOnClickListener { setPanelFullscreen(!panelFullscreen) }
+        val distances=AdsbDistanceTracker(this)
+        page.findViewById<TextView>(R.id.tvAdsbRecordDistance).setOnClickListener {
+            AlertDialog.Builder(this).setTitle("清除历史最远距离？").setPositiveButton("清除") { _,_ -> distances.reset() }.setNegativeButton("取消",null).show()
+        }
+        val radar=page.findViewById<AdsbRadarView>(R.id.adsbPanelRadar)
+        radar.setAnimating(pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_ADSB)
+        val location=getSharedPreferences("radio_map",MODE_PRIVATE)
+        if(location.contains("receiverLat")) radar.setOwnPosition(location.getFloat("receiverLat",0f).toDouble(),location.getFloat("receiverLon",0f).toDouble())
+        lifecycleScope.launch {
+            viewModel.serviceConnected.collectLatest { connected ->
+                if(!connected) return@collectLatest
+                val svc=viewModel.getService() ?: return@collectLatest
+                kotlinx.coroutines.flow.combine(svc.adsbReceiver.aircraft,svc.adsbReceiver.status,svc.connectionState) { tracks,status,state -> Triple(tracks,status,state) }
+                    .collect { (tracks,status,state) ->
+                        aircraft=tracks.sortedBy { it.callsign ?: it.icao24 }
+                        val ranges=distances.update(aircraft)
+                        table.submit(aircraft,ranges.distances); radar.updateAircraft(aircraft)
+                        page.findViewById<TextView>(R.id.tvAdsbPanelCount).text="飞机：${aircraft.size}"
+                        page.findViewById<TextView>(R.id.tvAdsbRecordDistance).text="记录距离：${AdsbDistanceTracker.format(ranges.recordKm)}"
+                        page.findViewById<TextView>(R.id.tvAdsbMaxDistance).text="最大距离：${AdsbDistanceTracker.format(ranges.currentMaxKm)}"
+                        page.findViewById<TextView>(R.id.tvAdsbPanelStatus).text=if(state !is RtlSdrService.ConnectionState.Connected) "接收机已关闭"
+                            else status.error ?: if(status.running) "1090 MHz · 2.400 MS/s · ${status.messages} 帧" else "等待 ADS-B 输入"
+                    }
+            }
+        }
+        updateAdsbTabVisibility(viewModel.demodMode.value)
+        updateDigitalVisualization()
+    }
+
+    private fun updateDigitalVisualization() {
+        if(!::pagerAdapter.isInitialized) return
+        val module=pagerAdapter.moduleAt(binding.controlViewPager.currentItem)
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB)?.let { page ->
+            page.findViewById<View>(R.id.adsbMapHost)?.isVisible=adsbMapSelected
+            page.findViewById<AdsbRadarView>(R.id.adsbPanelRadar)?.let { radar ->
+                radar.isVisible=!adsbMapSelected
+                radar.setAnimating(module==ControlsPagerAdapter.TAB_ADSB && !adsbMapSelected && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))
+            }
+        }
+        adsbMapPanel?.setActive(module==ControlsPagerAdapter.TAB_ADSB && adsbMapSelected)
+        aprsMapPanel?.setActive(module==ControlsPagerAdapter.TAB_APRS && findViewById<View>(R.id.aprsMapHost)?.visibility==View.VISIBLE)
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RDF)?.findViewById<android.widget.FrameLayout>(R.id.rdfControls)
+            ?.let { host -> (host.getChildAt(0) as? RdfControls)?.setActive(module==ControlsPagerAdapter.TAB_RDF) }
+    }
+
     private fun updateAprsTabVisibility(mode: DemodMode) {
         val tabLayout = binding.controlTabLayout
         val aprsTabIndex = ControlsPagerAdapter.TAB_APRS
 
         if (mode == DemodMode.APRS) {
             // Show the APRS tab
-            tabLayout.getTabAt(aprsTabIndex)?.view?.visibility = android.view.View.VISIBLE
+            moduleTab(aprsTabIndex)?.view?.visibility = android.view.View.VISIBLE
             // Navigate to it
-            binding.controlViewPager.setCurrentItem(aprsTabIndex, true)
-            ctrlViews.tvAprsTabStatus?.text = "Listening…"
+            binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(aprsTabIndex), true)
+            ctrlViews.tvAprsTabStatus?.text = "等待信号…"
             ctrlViews.tvAprsTabMode?.text   = "${"%.3f".format(viewModel.centerFreqHz.value / 1e6)} MHz  |  ${viewModel.sampleRate.value / 1000} kS/s"
             startAprsCollect()
         } else {
             // Stop collection and hide the tab
             stopAprsCollect()
-            tabLayout.getTabAt(aprsTabIndex)?.view?.visibility = android.view.View.GONE
+            moduleTab(aprsTabIndex)?.view?.visibility = android.view.View.GONE
         }
     }
 
@@ -3675,13 +4169,13 @@ class MainActivity : AppCompatActivity() {
                 aprsDisplayList.add(0, entry)
                 if (aprsDisplayList.size > 200) aprsDisplayList.removeLast()
                 aprsListAdapter?.notifyDataSetChanged()
-                ctrlViews.tvAprsTabCount?.text  = "Packets: ${aprsPackets.size}"
+                ctrlViews.tvAprsTabCount?.text  = "数据包：${aprsPackets.size}"
                 ctrlViews.tvAprsTabStatus?.text = "Last: ${pkt.source}"
 
                 // Auto-display the packet detail dialog on reception, unless
                 // the user has disabled this in Settings (pref_aprs_auto_display).
                 val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this@MainActivity)
-                val autoDisplay = prefs.getBoolean("pref_aprs_auto_display", true)
+                val autoDisplay = prefs.getBoolean("pref_aprs_auto_display", false)
                 if (autoDisplay) {
                     showAprsPacketAutoDialog(pkt, "APRS")
                 }
@@ -3750,7 +4244,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setupAcarsTab() {
         val listView = ctrlViews.listAcarsTabMessages ?: return
-        acarsListAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, acarsDisplayList)
+        acarsListAdapter = ArrayAdapter(this, R.layout.compact_list_item, acarsDisplayList)
         listView.adapter = acarsListAdapter
 
         listView.setOnItemClickListener { _, _, pos, _ ->
@@ -3791,16 +4285,16 @@ class MainActivity : AppCompatActivity() {
 
         if (mode == DemodMode.ACARS) {
             // Show the ACARS tab
-            tabLayout.getTabAt(acarsTabIndex)?.view?.visibility = android.view.View.VISIBLE
+            moduleTab(acarsTabIndex)?.view?.visibility = android.view.View.VISIBLE
             // Navigate to it
-            binding.controlViewPager.setCurrentItem(acarsTabIndex, true)
-            ctrlViews.tvAcarsTabStatus?.text = "Listening…"
+            binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(acarsTabIndex), true)
+            ctrlViews.tvAcarsTabStatus?.text = "等待信号…"
             ctrlViews.tvAcarsTabMode?.text   = "${"%.3f".format(viewModel.centerFreqHz.value / 1e6)} MHz  |  ${viewModel.sampleRate.value / 1000} kS/s"
             startAcarsCollect()
         } else {
             // Stop collection and hide the tab
             stopAcarsCollect()
-            tabLayout.getTabAt(acarsTabIndex)?.view?.visibility = android.view.View.GONE
+            moduleTab(acarsTabIndex)?.view?.visibility = android.view.View.GONE
         }
     }
 
@@ -3906,29 +4400,29 @@ class MainActivity : AppCompatActivity() {
         // DMR tab: visible only for DemodMode.DMR
         val dmrTabIndex = ControlsPagerAdapter.TAB_DMR
         if (mode == com.radiosport.ninegradio.dsp.DemodMode.DMR) {
-            tabLayout.getTabAt(dmrTabIndex)?.view?.visibility = android.view.View.VISIBLE
-            binding.controlViewPager.setCurrentItem(dmrTabIndex, true)
-            ctrlViews.tvDmrTabStatus?.text  = "Listening…"
+            moduleTab(dmrTabIndex)?.view?.visibility = android.view.View.VISIBLE
+            binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(dmrTabIndex), true)
+            ctrlViews.tvDmrTabStatus?.text  = "等待信号…"
             ctrlViews.tvDmrTabMode?.text    = "${"%.3f".format(viewModel.centerFreqHz.value / 1e6)} MHz  |  ${viewModel.sampleRate.value / 1000} kS/s"
             ctrlViews.tvDmrTabVocoder?.text = VOCODER_STATUS_TEXT
             startDmrCollect()
         } else {
             stopDmrCollect()
-            tabLayout.getTabAt(dmrTabIndex)?.view?.visibility = android.view.View.GONE
+            moduleTab(dmrTabIndex)?.view?.visibility = android.view.View.GONE
         }
 
         // Dig tab: visible only for DemodMode.DIG
         val digTabIndex = ControlsPagerAdapter.TAB_DIG
         if (mode == com.radiosport.ninegradio.dsp.DemodMode.DIG) {
-            tabLayout.getTabAt(digTabIndex)?.view?.visibility = android.view.View.VISIBLE
-            binding.controlViewPager.setCurrentItem(digTabIndex, true)
+            moduleTab(digTabIndex)?.view?.visibility = android.view.View.VISIBLE
+            binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(digTabIndex), true)
             ctrlViews.tvDigTabStatus?.text  = "Auto-detect…"
             ctrlViews.tvDigTabMode?.text    = "${"%.3f".format(viewModel.centerFreqHz.value / 1e6)} MHz  |  ${viewModel.sampleRate.value / 1000} kS/s"
             ctrlViews.tvDigTabVocoder?.text = VOCODER_STATUS_TEXT
             startDigCollect()
         } else {
             stopDigCollect()
-            tabLayout.getTabAt(digTabIndex)?.view?.visibility = android.view.View.GONE
+            moduleTab(digTabIndex)?.view?.visibility = android.view.View.GONE
         }
     }
 
@@ -4103,15 +4597,15 @@ class MainActivity : AppCompatActivity() {
         val tabLayout = binding.controlTabLayout
         val tabIndex  = ControlsPagerAdapter.TAB_YSF
         if (mode == com.radiosport.ninegradio.dsp.DemodMode.YSF) {
-            tabLayout.getTabAt(tabIndex)?.view?.visibility = android.view.View.VISIBLE
-            binding.controlViewPager.setCurrentItem(tabIndex, true)
-            ctrlViews.tvYsfTabStatus?.text  = "Listening…"
+            moduleTab(tabIndex)?.view?.visibility = android.view.View.VISIBLE
+            binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(tabIndex), true)
+            ctrlViews.tvYsfTabStatus?.text  = "等待信号…"
             ctrlViews.tvYsfTabMode?.text    = "${"%.3f".format(viewModel.centerFreqHz.value / 1e6)} MHz  |  ${viewModel.sampleRate.value / 1000} kS/s"
             ctrlViews.tvYsfTabVocoder?.text = VOCODER_STATUS_TEXT
             startYsfCollect()
         } else {
             stopYsfCollect()
-            tabLayout.getTabAt(tabIndex)?.view?.visibility = android.view.View.GONE
+            moduleTab(tabIndex)?.view?.visibility = android.view.View.GONE
         }
     }
 
@@ -4203,15 +4697,15 @@ class MainActivity : AppCompatActivity() {
         val tabLayout = binding.controlTabLayout
         val tabIndex  = ControlsPagerAdapter.TAB_DSTAR
         if (mode == com.radiosport.ninegradio.dsp.DemodMode.DSTAR) {
-            tabLayout.getTabAt(tabIndex)?.view?.visibility = android.view.View.VISIBLE
-            binding.controlViewPager.setCurrentItem(tabIndex, true)
-            ctrlViews.tvDstarTabStatus?.text  = "Listening…"
+            moduleTab(tabIndex)?.view?.visibility = android.view.View.VISIBLE
+            binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(tabIndex), true)
+            ctrlViews.tvDstarTabStatus?.text  = "等待信号…"
             ctrlViews.tvDstarTabMode?.text    = "${"%.3f".format(viewModel.centerFreqHz.value / 1e6)} MHz  |  ${viewModel.sampleRate.value / 1000} kS/s"
             ctrlViews.tvDstarTabVocoder?.text = VOCODER_STATUS_TEXT
             startDstarCollect()
         } else {
             stopDstarCollect()
-            tabLayout.getTabAt(tabIndex)?.view?.visibility = android.view.View.GONE
+            moduleTab(tabIndex)?.view?.visibility = android.view.View.GONE
         }
     }
 
@@ -4297,8 +4791,8 @@ class MainActivity : AppCompatActivity() {
     private fun chooseScanSampleRate(startHz: Long, stopHz: Long, stepHz: Long): Int {
         val range = (stopHz - startHz).coerceAtLeast(1L)
         val target = minOf(range, maxOf(stepHz * 40L, 1_000_000L))
-        return RtlSdrDevice.SAMPLE_RATES.firstOrNull { it >= target }
-            ?: RtlSdrDevice.SAMPLE_RATES.last()
+        return viewModel.availableSampleRates.firstOrNull { it >= target }
+            ?: viewModel.availableSampleRates.last()
     }
 
     /**
@@ -4380,7 +4874,7 @@ class MainActivity : AppCompatActivity() {
         val rate = chooseScanSampleRate(startHz, stopHz, stepHz)
         if (rate != viewModel.sampleRate.value) {
             viewModel.setSampleRate(rate)
-            val idx = RtlSdrDevice.SAMPLE_RATES.indexOfFirst { it == viewModel.sampleRate.value }
+            val idx = viewModel.availableSampleRates.indexOfFirst { it == viewModel.sampleRate.value }
             if (idx >= 0) {
                 sampleRateLabelsCache.getOrNull(idx)?.let { ctrlViews.tvSampleRateLabel?.text = it }
                 updateSampleRateChips(idx)
@@ -4481,6 +4975,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupScanTab() {
+        val scanRoot = pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_SCAN) ?: return
+        val etmBox = scanRoot.findViewById<android.widget.LinearLayout>(R.id.etmContainer)
+        val generalBox = scanRoot.findViewById<View>(R.id.generalScanContainer)
+        etm.bind(etmBox)
+        scanRoot.findViewById<SegmentedSelectorView>(R.id.scannerTypePicker)?.apply {
+            setChoices(listOf("etm" to "ETM", "range" to "范围扫描"), "etm")
+            onSelected = { type ->
+                etmBox.isVisible = type == "etm"; generalBox.isVisible = type == "range"
+                resizePagerToCurrentPage()
+            }
+        }
         val listView = ctrlViews.listScanTabHits ?: return
 
         // Scanner details (start/stop/step/squelch/dwell/mode/direction/adaptive/
@@ -4497,7 +5002,7 @@ class MainActivity : AppCompatActivity() {
 
         val modes = DemodMode.values().map { it.displayName }
         ctrlViews.spinnerScanTabMode?.adapter =
-            ArrayAdapter(this, android.R.layout.simple_spinner_item, modes)
+            ArrayAdapter(this, R.layout.compact_spinner_item, modes)
 
         // Restore whatever scan parameters were last used (separate from the
         // manual 5-slot memory bank above -- this is the *automatic* "keep my
@@ -4514,7 +5019,7 @@ class MainActivity : AppCompatActivity() {
         val scanTabMemSlotLabels = (1..scanTabMemSlotCount).map { slot ->
             if (scanTabMemPrefs.getString("slot_$slot", null) != null) "Slot $slot (saved)" else "Slot $slot (empty)"
         }.toMutableList()
-        val scanTabMemSlotAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, scanTabMemSlotLabels)
+        val scanTabMemSlotAdapter = ArrayAdapter(this, R.layout.compact_spinner_item, scanTabMemSlotLabels)
         ctrlViews.spinnerScanTabMemorySlot?.adapter = scanTabMemSlotAdapter
 
         fun refreshScanTabMemSlotLabels() {
@@ -4569,61 +5074,37 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        scanTabHitAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, scanTabHitLog)
-        listView.adapter = scanTabHitAdapter
-        listView.setOnItemClickListener { _, _, pos, _ ->
-            val hz = scanTabHitFreqs.getOrNull(pos) ?: return@setOnItemClickListener
-            viewModel.setFrequency(hz)
-        }
-        listView.setOnItemLongClickListener { _, _, pos, _ ->
-            val hz = scanTabHitFreqs.getOrNull(pos) ?: return@setOnItemLongClickListener true
-            AlertDialog.Builder(this)
-                .setTitle("${hz.toExactMhzString()} MHz")
-                .setMessage("Lock this frequency out of the current scan? It will be skipped until the scan is stopped.")
-                .setPositiveButton("Lock out") { _, _ ->
+        fun confirmLockout(hz: Long) {
+            AlertDialog.Builder(this).setTitle("${hz.toExactMhzString()} MHz")
+                .setMessage("本轮扫描中排除此频率？")
+                .setPositiveButton("排除") { _,_ ->
                     scanTabScanner?.lockout(hz)
-                    Snackbar.make(binding.root, "Locked out ${hz.toExactMhzString()} MHz", Snackbar.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-            true
+                    Snackbar.make(binding.root,"已排除 ${hz.toExactMhzString()} MHz",Snackbar.LENGTH_SHORT).show()
+                }.setNegativeButton("取消",null).show()
         }
+        scanTabHitAdapter=listView
+        listView.setColumns(listOf(RadioDataTable.Column("时间",76),RadioDataTable.Column("频率 MHz",110),
+            RadioDataTable.Column("模式",64),RadioDataTable.Column("电平 dBFS",94),RadioDataTable.Column("来源",68)))
+        listView.submitRows(scanTabHitLog)
+        listView.onRowClick={ position -> scanTabHitFreqs.getOrNull(position)?.let { viewModel.setFrequency(it) } }
+        listView.onRowLongClick={ position -> scanTabHitFreqs.getOrNull(position)?.let { confirmLockout(it) }; true }
 
-        // Tabulated channel view -- one row per configured channel,
-        // refreshed in place as the scan runs (see attachScanTabCollectors'
-        // collector on sc.channelTable below), rather than an append-only
-        // log like listScanTabHits above. Uses a dedicated multi-column
-        // adapter (ScanChannelTableAdapter) instead of a plain string list
-        // so each field lines up under its own labeled column.
-        val channelListView = ctrlViews.listScanTabChannelTable
-        scanTabChannelAdapter = ScanChannelTableAdapter(this, scanTabChannelRows)
-        channelListView?.adapter = scanTabChannelAdapter
-        channelListView?.setOnItemClickListener { _, _, pos, _ ->
-            val hz = scanTabChannelRows.getOrNull(pos)?.freqHz ?: return@setOnItemClickListener
-            viewModel.setFrequency(hz)
-        }
-        channelListView?.setOnItemLongClickListener { _, _, pos, _ ->
-            val hz = scanTabChannelRows.getOrNull(pos)?.freqHz ?: return@setOnItemLongClickListener true
-            AlertDialog.Builder(this)
-                .setTitle("${hz.toExactMhzString()} MHz")
-                .setMessage("Lock this frequency out of the current scan? It will be skipped until the scan is stopped.")
-                .setPositiveButton("Lock out") { _, _ ->
-                    scanTabScanner?.lockout(hz)
-                    Snackbar.make(binding.root, "Locked out ${hz.toExactMhzString()} MHz", Snackbar.LENGTH_SHORT).show()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-            true
-        }
+        val channelListView=ctrlViews.listScanTabChannelTable
+        scanTabChannelAdapter=channelListView
+        channelListView?.setColumns(listOf(RadioDataTable.Column("状态",40),RadioDataTable.Column("频率 MHz",110),
+            RadioDataTable.Column("电平 dBFS",94),RadioDataTable.Column("底噪 dBFS",94),RadioDataTable.Column("次数",56),RadioDataTable.Column("更新 s",64)))
+        channelListView?.onRowClick={ position -> scanTabChannelRows.getOrNull(position)?.let { viewModel.setFrequency(it.freqHz) } }
+        channelListView?.onRowLongClick={ position -> scanTabChannelRows.getOrNull(position)?.let { confirmLockout(it.freqHz) }; true }
+        renderScanChannelRows()
 
         fun resetScanTabControls() {
             scanTabScanning = false
             scanTabPaused = false
             scanTabSearching = false
-            ctrlViews.btnScanTabStartStop?.text = "Start Scan"
-            ctrlViews.btnScanTabPause?.text = "Pause"
+            ctrlViews.btnScanTabStartStop?.text = "开始"
+            ctrlViews.btnScanTabPause?.text = "暂停"
             ctrlViews.btnScanTabPause?.isVisible = false
-            ctrlViews.btnScanTabSearch?.text = "Search Mode"
+            ctrlViews.btnScanTabSearch?.text = "搜索模式"
             ctrlViews.btnScanTabSearch?.isEnabled = true
             ctrlViews.btnScanTabStartStop?.isEnabled = true
             ctrlViews.progressScanTab?.isVisible = false
@@ -4632,7 +5113,7 @@ class MainActivity : AppCompatActivity() {
         fun scanTabSource(): Pair<RtlSdrService, IqSource>? {
             val svc = sdrService
             if (svc == null) {
-                Snackbar.make(binding.root, "No RTL-SDR connected", Snackbar.LENGTH_SHORT).show()
+                Snackbar.make(binding.root, "No receiver connected", Snackbar.LENGTH_SHORT).show()
                 return null
             }
             val source = svc.source
@@ -4663,9 +5144,9 @@ class MainActivity : AppCompatActivity() {
                 sc.status.collectLatest { status ->
                     ctrlViews.progressScanTab?.progress = (status.progress * 100).toInt()
                     ctrlViews.tvScanTabCurrentFreq?.text = "${status.currentFreqHz.toExactMhzString()} MHz"
-                    ctrlViews.tvScanTabHits?.text = "Hits: ${status.hitsFound}"
+                    ctrlViews.tvScanTabHits?.text = "找到：${status.hitsFound}"
                     ctrlViews.tvScanTabSignal?.text = "${"%.1f".format(status.signalDb)} dB"
-                    ctrlViews.tvScanTabNoiseFloor?.text = "Floor: ${"%.1f".format(status.noiseFloorDb)} dB"
+                    ctrlViews.tvScanTabNoiseFloor?.text = "底噪：${"%.1f".format(status.noiseFloorDb)} dB"
                     ctrlViews.tvScanTabRate?.text = "${"%.1f".format(status.channelsPerSecond)} ch/s"
 
                     // FrequencyScanner retunes the raw IqSource directly every
@@ -4708,20 +5189,19 @@ class MainActivity : AppCompatActivity() {
                     sdrService?.setFrequency(hit.freqHz)
 
                     val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(hit.timestampMs))
-                    val tag = when (hit.source) {
-                        com.radiosport.ninegradio.scanner.FrequencyScanner.HitSource.PRIORITY -> " ★"
-                        com.radiosport.ninegradio.scanner.FrequencyScanner.HitSource.SEARCH -> " ?"
-                        else -> ""
+                    val origin = when(hit.source) {
+                        com.radiosport.ninegradio.scanner.FrequencyScanner.HitSource.PRIORITY -> "优先"
+                        com.radiosport.ninegradio.scanner.FrequencyScanner.HitSource.SEARCH -> "搜索"
+                        else -> "扫描"
                     }
-                    val entry = "[$ts]  ${hit.freqHz.toExactMhzString()} MHz  " +
-                        "${"%.0f".format(hit.signalDb)}dB$tag"
+                    val entry=RadioDataTable.Row(listOf(ts,hit.freqHz.toExactMhzString(),hit.mode.displayName,"%.1f".format(hit.signalDb),origin))
                     scanTabHitLog.add(0, entry)
                     scanTabHitFreqs.add(0, hit.freqHz)
                     if (scanTabHitLog.size > 300) {
                         scanTabHitLog.removeAt(scanTabHitLog.size - 1)
                         scanTabHitFreqs.removeAt(scanTabHitFreqs.size - 1)
                     }
-                    scanTabHitAdapter?.notifyDataSetChanged()
+                    scanTabHitAdapter?.submitRows(scanTabHitLog)
 
                     // Persist every confirmed hit, same as the standalone scanner.
                     val db = (application as com.radiosport.ninegradio.RtlSdrApplication).database
@@ -4741,15 +5221,16 @@ class MainActivity : AppCompatActivity() {
 
             scanTabChannelTableJob?.cancel()
             scanTabChannelTableJob = lifecycleScope.launch {
-                sc.channelTable.collectLatest { rows ->
+                sc.channelTable.sample(250).collect { rows ->
                     scanTabChannelRows.clear()
                     scanTabChannelRows.addAll(rows)
-                    scanTabChannelAdapter?.notifyDataSetChanged()
+                    renderScanChannelRows()
                 }
             }
         }
 
         ctrlViews.btnScanTabStartStop?.setOnClickListener {
+            if (etm.isRunning) return@setOnClickListener
             if (!scanTabScanning) {
                 val (svc, source) = scanTabSource() ?: return@setOnClickListener
 
@@ -4815,7 +5296,7 @@ class MainActivity : AppCompatActivity() {
                     attachScanTabCollectors(sc)
                 }
                 scanTabScanning = true
-                ctrlViews.btnScanTabStartStop?.text = "Stop Scan"
+                ctrlViews.btnScanTabStartStop?.text = "停止"
                 ctrlViews.btnScanTabPause?.isVisible = true
                 ctrlViews.progressScanTab?.isVisible = true
                 ctrlViews.btnScanTabSearch?.isEnabled = false
@@ -4831,11 +5312,11 @@ class MainActivity : AppCompatActivity() {
         ctrlViews.btnScanTabPause?.setOnClickListener {
             if (!scanTabPaused) {
                 scanTabScanner?.pauseScan()
-                ctrlViews.btnScanTabPause?.text = "Resume"
+                ctrlViews.btnScanTabPause?.text = "继续"
                 scanTabPaused = true
             } else {
                 scanTabScanner?.resumeScan()
-                ctrlViews.btnScanTabPause?.text = "Pause"
+                ctrlViews.btnScanTabPause?.text = "暂停"
                 scanTabPaused = false
             }
         }
@@ -4884,7 +5365,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 scanTabSearching = true
                 scanTabScanning = true
-                ctrlViews.btnScanTabSearch?.text = "Stop Search"
+                ctrlViews.btnScanTabSearch?.text = "停止搜索"
                 ctrlViews.btnScanTabStartStop?.isEnabled = false
                 ctrlViews.progressScanTab?.isVisible = true
             } else {
@@ -4909,18 +5390,18 @@ class MainActivity : AppCompatActivity() {
             // Clear the scan results list.
             scanTabHitLog.clear()
             scanTabHitFreqs.clear()
-            scanTabHitAdapter?.notifyDataSetChanged()
+            scanTabHitAdapter?.submitRows(scanTabHitLog)
 
             // Clear the tabulated channel view too.
             scanTabChannelRows.clear()
-            scanTabChannelAdapter?.notifyDataSetChanged()
+            renderScanChannelRows()
 
             // Reset the live status readouts.
             ctrlViews.progressScanTab?.progress = 0
             ctrlViews.tvScanTabCurrentFreq?.text = "---"
-            ctrlViews.tvScanTabHits?.text = "Hits: 0"
+            ctrlViews.tvScanTabHits?.text = "找到：0"
             ctrlViews.tvScanTabSignal?.text = "--- dB"
-            ctrlViews.tvScanTabNoiseFloor?.text = "Floor: --- dB"
+            ctrlViews.tvScanTabNoiseFloor?.text = "底噪：--- dB"
             ctrlViews.tvScanTabRate?.text = "--- ch/s"
 
             Snackbar.make(binding.root, "Scan list reset", Snackbar.LENGTH_SHORT).show()
@@ -4958,8 +5439,8 @@ class MainActivity : AppCompatActivity() {
     private fun showScanTab() {
         val tabLayout = binding.controlTabLayout
         val scanTabIndex = ControlsPagerAdapter.TAB_SCAN
-        tabLayout.getTabAt(scanTabIndex)?.view?.visibility = android.view.View.VISIBLE
-        binding.controlViewPager.setCurrentItem(scanTabIndex, true)
+        moduleTab(scanTabIndex)?.view?.visibility = android.view.View.VISIBLE
+        binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(scanTabIndex), true)
         ctrlViews.etScanTabStart?.setText(viewModel.centerFreqHz.value.toExactMhzString())
     }
 
@@ -4978,16 +5459,26 @@ class MainActivity : AppCompatActivity() {
         scanTabPaused = false
         scanTabSearching = false
         restoreRfSnapshotAfterScan()
-        ctrlViews.btnScanTabStartStop?.text = "Start Scan"
+        ctrlViews.btnScanTabStartStop?.text = "开始"
         ctrlViews.btnScanTabPause?.isVisible = false
         ctrlViews.progressScanTab?.isVisible = false
 
         val tabLayout = binding.controlTabLayout
         val scanTabIndex = ControlsPagerAdapter.TAB_SCAN
-        if (binding.controlViewPager.currentItem == scanTabIndex) {
-            binding.controlViewPager.setCurrentItem(ControlsPagerAdapter.TAB_TUNE, false)
+        if (pagerAdapter.moduleAt(binding.controlViewPager.currentItem) == scanTabIndex) {
+            binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(defaultModule()), false)
         }
-        tabLayout.getTabAt(scanTabIndex)?.view?.visibility = android.view.View.GONE
+        moduleTab(scanTabIndex)?.view?.visibility = if (ModulePreferences(this).visible(scanTabIndex)) View.VISIBLE else View.GONE
+    }
+
+    private fun renderScanChannelRows() {
+        scanTabChannelAdapter?.submitRows(scanTabChannelRows.map { row ->
+            val known=row.lastUpdatedMs>0
+            RadioDataTable.Row(listOf(if(row.active) "●" else "○",row.freqHz.toExactMhzString(),
+                if(known) "%.1f".format(row.lastPowerDb) else "—",
+                if(known) "%.1f".format(row.lastNoiseFloorDb) else "—",row.hitCount.toString(),
+                if(known) ((System.currentTimeMillis()-row.lastUpdatedMs).coerceAtLeast(0)/1000).toString() else "—"),row.active)
+        })
     }
 
 } // end MainActivity
@@ -5007,50 +5498,3 @@ private fun Intent.usbDevice(): UsbDevice? =
     else
         @Suppress("DEPRECATION")
         getParcelableExtra(UsbManager.EXTRA_DEVICE)
-
-/**
- * Adapter for the scan tab's tabulated channel view (see FrequencyScanner's
- * `channelTable`). Binds each [com.radiosport.ninegradio.scanner.FrequencyScanner.ChannelEntry]
- * field to its own fixed-width column in item_scan_channel_row.xml, rather
- * than flattening the row into one string — so frequency, power, floor,
- * hits, and age each stay in their own labeled column (matching the header
- * in item_scan_channel_header.xml) instead of running together.
- */
-private class ScanChannelTableAdapter(
-    context: android.content.Context,
-    rows: List<com.radiosport.ninegradio.scanner.FrequencyScanner.ChannelEntry>
-) : ArrayAdapter<com.radiosport.ninegradio.scanner.FrequencyScanner.ChannelEntry>(
-    context, R.layout.item_scan_channel_row, rows
-) {
-    private class ViewHolder(view: View) {
-        val status: TextView = view.findViewById(R.id.tvColStatus)
-        val freq: TextView = view.findViewById(R.id.tvColFreq)
-        val power: TextView = view.findViewById(R.id.tvColPower)
-        val floor: TextView = view.findViewById(R.id.tvColFloor)
-        val hits: TextView = view.findViewById(R.id.tvColHits)
-        val age: TextView = view.findViewById(R.id.tvColAge)
-    }
-
-    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val view = convertView ?: LayoutInflater.from(context)
-            .inflate(R.layout.item_scan_channel_row, parent, false)
-        val holder = (view.tag as? ViewHolder) ?: ViewHolder(view).also { view.tag = it }
-        val row = getItem(position) ?: return view
-
-        val measured = row.lastUpdatedMs > 0L
-        holder.status.text = if (row.active) "\u25CF" else "\u25CB"
-        holder.status.setTextColor(if (row.active) 0xFF44FF44.toInt() else 0xFF666666.toInt())
-        holder.freq.text = row.freqHz.toExactMhzString()
-        holder.power.text = if (measured) "%.1f".format(row.lastPowerDb) else "---"
-        holder.floor.text = if (measured) "%.1f".format(row.lastNoiseFloorDb) else "---"
-        holder.hits.text = row.hitCount.toString()
-        holder.age.text = if (measured)
-            "${(System.currentTimeMillis() - row.lastUpdatedMs) / 1000}s"
-        else "never"
-        // Highlight the whole row while it's actively above threshold, same
-        // sense as the ● marker, so an active channel is easy to spot at a
-        // glance in a long table.
-        view.setBackgroundColor(if (row.active) 0x332C6E2E else 0x0012161C)
-        return view
-    }
-}

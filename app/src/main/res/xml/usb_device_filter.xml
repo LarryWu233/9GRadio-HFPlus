@@ -6,6 +6,8 @@
     0x0BDA = 3034 (Realtek VID)
 -->
 <resources>
+    <!-- Airspy HF+ / Discovery: 0x03eb / 0x800c -->
+    <usb-device vendor-id="1003" product-id="32780" />
     <!-- RTL-SDR Blog V4 (R828D / 0x2838) -->
     <usb-device vendor-id="3034" product-id="10296" />  <!-- 0x0BDA / 0x2838 -->
     <!-- RTL-SDR Blog V3 / generic R820T2 (0x2832) -->

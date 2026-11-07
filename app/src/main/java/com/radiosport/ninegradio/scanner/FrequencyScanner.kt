@@ -217,7 +217,9 @@ class FrequencyScanner(
          *  known noisy always-on carrier). */
         val lockoutFreqsHz: Set<Long> = emptySet(),
         /** Optional tag/name for this segment, surfaced in [ScanHit.label]. */
-        val label: String = ""
+        val label: String = "",
+        val singlePass: Boolean = false,
+        val broadcastEtm: Boolean = false
     )
 
     data class ScanStatus(
@@ -480,10 +482,11 @@ class FrequencyScanner(
      * does, without blurring a genuine signal's own centre frequency, since
      * every frame here is captured at the same, unchanging [centerFreqHz].
      */
-    private suspend fun captureBlock(centerFreqHz: Long): FftBlock? {
-        device.setCenterFrequency(centerFreqHz)
+    private suspend fun captureBlock(centerFreqHz: Long, settleMs: Long = RETUNE_SETTLE_MS): FftBlock? {
+        if (!device.capabilities.supportsFrequency(centerFreqHz) || !device.setCenterFrequency(centerFreqHz)) return null
         onRetune?.invoke(centerFreqHz)
-        delay(RETUNE_SETTLE_MS)
+        delay(settleMs)
+        fftEngine.resetSpectrumAveraging()
         return try {
             withTimeoutOrNull(IQ_CAPTURE_TIMEOUT_MS * (SCAN_BLOCK_AVERAGES + 1)) {
                 device.iqFlow.first() // discard: may predate the retune settling
@@ -492,7 +495,7 @@ class FrequencyScanner(
                 var sampleRate = device.getSampleRate()
                 repeat(SCAN_BLOCK_AVERAGES) {
                     val raw = device.iqFlow.first()
-                    val spectrum = fftEngine.processUint8(raw)
+                    val spectrum = raw.spectrum(fftEngine)
                     if (accum == null) accum = DoubleArray(spectrum.size)
                     val acc = accum!!
                     for (i in spectrum.indices) acc[i] += 10.0.pow(spectrum[i] / 10.0)
@@ -602,7 +605,7 @@ class FrequencyScanner(
      *  priority poll, and search mode, where a single known channel — not a
      *  whole capture's worth of bandwidth — is what's being evaluated. */
     private suspend fun sampleSignal(freqHz: Long, totalDwellMs: Long, samples: Int): Float {
-        device.setCenterFrequency(freqHz)
+        if (!device.capabilities.supportsFrequency(freqHz) || !device.setCenterFrequency(freqHz)) return -120f
         onRetune?.invoke(freqHz)
         delay(RETUNE_SETTLE_MS)
         val iterations = max(1, samples)
@@ -611,7 +614,7 @@ class FrequencyScanner(
         repeat(iterations) {
             val raw = withTimeoutOrNull(perIterationMs) { device.iqFlow.first() }
             if (raw != null) {
-                val spectrum = fftEngine.processUint8(raw)
+                val spectrum = raw.spectrum(fftEngine)
                 val db = narrowbandDb(spectrum, device.getSampleRate())
                 if (db > peak) peak = db
             } else {
@@ -699,8 +702,14 @@ class FrequencyScanner(
      * detected and reported in one pass, faithfully matching upstream
      * rtl-sdr-scanner-cpp's core scanning behaviour.
      */
-    fun startMultiScan(configs: List<ScanConfig>) {
-        require(configs.isNotEmpty()) { "startMultiScan requires at least one ScanConfig" }
+    fun startMultiScan(requested: List<ScanConfig>) {
+        val configs = requested.filter { device.capabilities.supportsMode(it.mode) }.flatMap { config ->
+            device.capabilities.scanRanges(config.startFreqHz, config.stopFreqHz).map { range ->
+                config.copy(startFreqHz = range.first, stopFreqHz = range.last,
+                    priorityFreqsHz = config.priorityFreqsHz.filter { device.capabilities.supportsFrequency(it) })
+            }
+        }
+        if (configs.isEmpty()) { stopScan(); return }
         if (scanJob?.isActive == true) stopScan()
         noiseFloorInitialized = false
         fftEngine.resetNoiseFloor()
@@ -724,6 +733,8 @@ class FrequencyScanner(
         _status.value = _status.value.copy(state = ScanState.STOPPED)
         Log.i(TAG, "Scan stopped")
     }
+
+    suspend fun stopAndJoin() { stopScan(); scanJob?.join() }
 
     fun pauseScan() {
         _status.value = _status.value.copy(state = ScanState.PAUSED)
@@ -754,6 +765,9 @@ class FrequencyScanner(
      * same key for lockout / hit-counting purposes.
      */
     private fun detectSignals(block: FftBlock, config: ScanConfig): List<DetectedSignal> {
+        if (config.broadcastEtm) return EtmSignalDetector.detect(block.spectrumDb, block.centerFreqHz,
+            block.sampleRate, config.mode == DemodMode.WFM, config.adaptiveMarginDb)
+            .map { DetectedSignal(it.hz, it.powerDb, it.floorDb) }
         val spectrum = block.spectrumDb
         val floor = block.noiseFloorDb
         val n = spectrum.size
@@ -841,7 +855,7 @@ class FrequencyScanner(
         for ((segIdx, config) in configs.withIndex()) {
             val range = (config.stopFreqHz - config.startFreqHz).coerceAtLeast(1)
             val sampleRate = device.getSampleRate().takeIf { it > 0 } ?: 2_048_000
-            val hopHz = max(config.stepHz, (sampleRate * HOP_FRACTION).toLong())
+            val hopHz = max(config.stepHz, (sampleRate * if (config.broadcastEtm) 0.65 else HOP_FRACTION).toLong())
 
             // Start the first capture centred half a bandwidth into the
             // range so the low edge of the range is still inside the block.
@@ -851,7 +865,7 @@ class FrequencyScanner(
             while (currentCoroutineContext().isActive && !wrapped) {
                 if (_status.value.state == ScanState.PAUSED) { delay(100); continue }
 
-                val block = captureBlock(centerFreq)
+                val block = captureBlock(centerFreq, if (config.broadcastEtm) 100L else RETUNE_SETTLE_MS)
                 var currentSignalDb = fallbackSignalLevel()
 
                 if (block != null) {
@@ -861,7 +875,12 @@ class FrequencyScanner(
                     val blockFloorAvg = block.noiseFloorDb
                     updateNoiseFloor(blockFloorAvg, looksLikeHit = false)
 
-                    val detections = detectSignals(block, config)
+                    val firstDetections = detectSignals(block, config)
+                    val confirmation = if (config.broadcastEtm && firstDetections.isNotEmpty())
+                        captureBlock(centerFreq, 100L)?.let { detectSignals(it, config) }.orEmpty() else emptyList()
+                    val detections = firstDetections
+                        .filter { first -> !config.broadcastEtm || confirmation.any { second ->
+                            kotlin.math.abs(first.freqHz - second.freqHz) <= if (config.mode == DemodMode.WFM) 100_000 else 5_000 } }
                         .filter { it.freqHz in config.startFreqHz..config.stopFreqHz }
                         .filter { !isLockedOut(it.freqHz, config) }
 
@@ -946,6 +965,7 @@ class FrequencyScanner(
                 }
             }
         }
+        if (configs.all { it.singlePass }) break
         } // outer continuous-cycle while
         // Only reached if the coroutine was cancelled (stopScan()); the
         // cancellation itself already unwinds us out of the delay()/loop
@@ -993,7 +1013,7 @@ class FrequencyScanner(
      * reading as everything else in this class.
      */
     fun startMemoryScan(
-        frequencies: List<Long>,
+        requestedFrequencies: List<Long>,
         squelchDb: Float,
         dwellTimeMs: Long,
         resumeTimeMs: Long,
@@ -1003,7 +1023,8 @@ class FrequencyScanner(
         lockoutFreqsHz: Set<Long> = emptySet(),
         mode: DemodMode = DemodMode.NFM
     ) {
-        if (frequencies.isEmpty()) return
+        val frequencies = requestedFrequencies.filter { device.capabilities.supportsFrequency(it) }
+        if (frequencies.isEmpty() || !device.capabilities.supportsMode(mode)) return
         scanJob?.cancel()
         noiseFloorInitialized = false
         fftEngine.resetNoiseFloor()
@@ -1103,6 +1124,14 @@ class FrequencyScanner(
         marginDb: Float = DEFAULT_ADAPTIVE_MARGIN_DB,
         mode: DemodMode = DemodMode.NFM
     ) {
+        val ranges = device.capabilities.scanRanges(startFreqHz, stopFreqHz)
+        if (ranges.size != 1 || ranges.firstOrNull()?.let { it.first != startFreqHz || it.last != stopFreqHz } == true) {
+            startMultiScan(ranges.map { range -> ScanConfig(startFreqHz = range.first, stopFreqHz = range.last,
+                stepHz = stepHz, dwellTimeMs = dwellTimeMs, squelchDb = squelchDb,
+                adaptiveSquelch = adaptiveSquelch, adaptiveMarginDb = marginDb, mode = mode) })
+            return
+        }
+
         if (scanJob?.isActive == true) stopScan()
         noiseFloorInitialized = false
         fftEngine.resetNoiseFloor()

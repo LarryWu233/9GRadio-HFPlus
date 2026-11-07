@@ -1,0 +1,6 @@
+<resources>
+    <item type="id" name="switchAudioLeveling"/>
+    <item type="id" name="switchAudioNotch"/>
+    <item type="id" name="sliderAudioLevelLimit"/>
+    <item type="id" name="sliderAudioNotchSpeed"/>
+</resources>

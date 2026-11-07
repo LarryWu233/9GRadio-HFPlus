@@ -41,7 +41,7 @@ import org.json.JSONObject
  *  - A "Search" mode button runs a fast wideband discovery sweep separate
  *    from the channelized scan, for finding unknown activity.
  */
-class ScannerActivity : AppCompatActivity() {
+class ScannerActivity : RadioThemedActivity() {
 
     private companion object {
         /** Number of stored scan-parameter presets offered in the Memory spinner. */

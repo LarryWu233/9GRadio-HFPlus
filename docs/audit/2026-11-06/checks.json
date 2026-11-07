@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-06",
+  "apk_signature": {
+    "tool": "Android SDK build-tools 36.1.0 apksigner verify --print-certs",
+    "result": "passed",
+    "certificate_sha256": "ccadb142793ac755c881a936f09fd7f140e7aade1ff856fae0f58b87c70ea8d2",
+    "limitation": "Signature integrity verified; signer identity not independently authenticated"
+  },
+  "dex_inventory": {
+    "sdk_tool": "Android SDK build-tools 36.1.0 dexdump",
+    "checksum_result": "passed",
+    "independent_inventory_comparison": "exact match",
+    "total_classes": 5276,
+    "application_namespace_classes": 1922
+  },
+  "build_probe": {
+    "source_modified": false,
+    "command": "gradle-8.11.1/bin/gradle.bat --offline --no-daemon --project-cache-dir build/audit/gradle-cache assembleDebug",
+    "configured_gradle": "8.13",
+    "probe_gradle": "8.11.1 (locally cached fallback for environment discovery only)",
+    "result": "failed before project compilation",
+    "error": "Cannot find a Java installation on your machine matching: Compatible with Java 21, JetBrains (from gradle/gradle-daemon-jvm.properties).",
+    "available_java": "17",
+    "wrapper_files_missing": ["gradlew", "gradlew.bat", "gradle/wrapper/gradle-wrapper.jar"],
+    "uncached_required_components": ["Gradle 8.13", "JetBrains Java 21", "AGP 8.13.2", "Kotlin Gradle plugin 2.2.0"],
+    "interpretation": "No Kotlin or C++ compile result. Environment failure is separate from the independently demonstrated source mismatch."
+  },
+  "device_actions": "Read-only ADB device discovery, properties and relevant package listing. No installation, removal, app data access or settings changes.",
+  "application_source_diff": "No changes to app/, build.gradle, settings.gradle, gradle.properties or gradle/"
+}

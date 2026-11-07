@@ -523,6 +523,7 @@ class SpectrumView @JvmOverloads constructor(
 
     private val gestureDetector = GestureDetector(context,
         object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
             override fun onScroll(e1: MotionEvent?, e2: MotionEvent,
                                   dx: Float, dy: Float): Boolean = false
             override fun onSingleTapUp(e: MotionEvent): Boolean {
@@ -530,13 +531,7 @@ class SpectrumView @JvmOverloads constructor(
             }
             override fun onDoubleTap(e: MotionEvent): Boolean = false
             override fun onLongPress(e: MotionEvent) {
-                // Lock a persistent reference marker at this frequency/level
-                refMarkerFreqHz = pixelToFrequency(e.x)
-                val bottomY = (height - AXIS_H)
-                refMarkerDb = if (height > 0) {
-                    dbMax - (e.y / bottomY) * (dbMax - dbMin)
-                } else null
-                postInvalidate()
+                showInspection(e.x,e.y)
             }
         })
 
@@ -754,7 +749,7 @@ class SpectrumView @JvmOverloads constructor(
         centerFreqHz = hz
         val binHz = if (sampleRateHz > 0 && spectrumData.isNotEmpty())
             sampleRateHz.toDouble() / spectrumData.size else 1.0
-        tuningOffsetHz = (tuningOffsetHz + delta) % binHz
+        tuningOffsetHz = 0.0
         postInvalidate()
     }
 
@@ -805,7 +800,14 @@ class SpectrumView @JvmOverloads constructor(
     fun setSquelch(db: Float)           { squelchDb = db; postInvalidate() }
 
     fun setTheme(name: String) {
-        theme = COLOR_THEMES[name] ?: theme
+        theme = if(name=="UI") ColorTheme(
+            UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent),
+            UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioLink),
+            UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioMain)) else COLOR_THEMES[name] ?: theme
+        val marker=if(name=="UI") theme.spectrumColor else 0xff00ccff.toInt()
+        channelHighlightPaint.color=(marker and 0xffffff) or 0x30000000
+        channelEdgePaint.color=(marker and 0xffffff) or 0xcc000000.toInt()
+        channelTickPaint.color=if(name=="UI") marker else 0xff00ffff.toInt()
         rebuildGradient()
         postInvalidate()
     }
@@ -868,8 +870,26 @@ class SpectrumView @JvmOverloads constructor(
     /** Show/hide automatically detected peak frequency labels. */
     fun setShowPeakAnnotations(show: Boolean) { showPeakAnnotations = show; postInvalidate() }
 
-    /** Enable/disable the live crosshair shown while a finger is on the display. */
-    fun setCrosshairEnabled(enable: Boolean) { showCrosshairEnabled = enable }
+    /** Inspection is activated by the shared gesture router after a long press. */
+    fun setCrosshairEnabled(enable: Boolean) {
+        showCrosshairEnabled=enable
+        if(!enable) crosshairVisible=false
+        postInvalidateOnAnimation()
+    }
+    fun isCrosshairEnabled()=showCrosshairEnabled
+    fun showInspection(x: Float,y: Float) {
+        if(!showCrosshairEnabled) return
+        crosshairX=x.coerceIn(0f,width.toFloat().coerceAtLeast(1f))
+        crosshairY=y.coerceIn(0f,(height-AXIS_H).coerceAtLeast(1f))
+        crosshairVisible=true
+        postInvalidateOnAnimation()
+    }
+    fun hideInspection() { if(crosshairVisible) { crosshairVisible=false; postInvalidateOnAnimation() } }
+    data class Inspection(val frequencyHz: Long,val levelDbfs: Float,val x: Float,val y: Float)
+    fun inspection(): Inspection? {
+        if(!crosshairVisible || !showCrosshairEnabled || width<=0 || height<=AXIS_H) return null
+        return Inspection(pixelToFrequency(crosshairX),dbMax-crosshairY/(height-AXIS_H)*(dbMax-dbMin),crosshairX,crosshairY)
+    }
 
     /** Clear the long-press reference marker. */
     fun clearRefMarker() { refMarkerFreqHz = null; refMarkerDb = null; postInvalidate() }
@@ -1024,8 +1044,8 @@ class SpectrumView @JvmOverloads constructor(
         // Tooltip: frequency + dBFS
         val freqHz  = pixelToFrequency(x)
         val db      = dbMax - (y / bottomY) * (dbMax - dbMin)
-        val freqStr = formatFrequency(freqHz)
-        val dbStr   = "${"%.1f".format(db)} dB"
+        val freqStr = String.format(java.util.Locale.US,"%,d Hz",freqHz).replace(',','.')
+        val dbStr   = "${"%.1f".format(db)} dBFS"
         val line1W  = tooltipTextPaint.measureText(freqStr)
         val line2W  = tooltipTextPaint.measureText(dbStr)
         val boxW    = maxOf(line1W, line2W) + 12f
@@ -1038,6 +1058,8 @@ class SpectrumView @JvmOverloads constructor(
         if (bx + boxW > w) bx = x - boxW - PADDING
         var by = y - boxH - PADDING
         if (by < 0f) by = y + PADDING
+        bx=bx.coerceIn(2f,(w-boxW-2f).coerceAtLeast(2f))
+        by=by.coerceIn(2f,(bottomY-boxH-2f).coerceAtLeast(2f))
 
         val rx = RectF(bx, by, bx + boxW, by + boxH)
         canvas.drawRoundRect(rx, 6f, 6f, tooltipBgPaint)
@@ -1175,6 +1197,14 @@ class SpectrumView @JvmOverloads constructor(
         canvas.drawLine(edgeL - TICK, bottomY, edgeL + TICK, bottomY, channelTickPaint)
         canvas.drawLine(edgeR - TICK, 0f,      edgeR + TICK, 0f,      channelTickPaint)
         canvas.drawLine(edgeR - TICK, bottomY, edgeR + TICK, bottomY, channelTickPaint)
+        val handle=12f*resources.displayMetrics.density
+        if(fullPx>handle*4) {
+            val savedStroke=channelTickPaint.strokeWidth
+            channelTickPaint.strokeWidth=4f*resources.displayMetrics.density
+            if(demodChannelSideband<=0 && edgeL>0) canvas.drawLine(edgeL,bottomY/2-handle,edgeL,bottomY/2+handle,channelTickPaint)
+            if(demodChannelSideband>=0 && edgeR<w) canvas.drawLine(edgeR,bottomY/2-handle,edgeR,bottomY/2+handle,channelTickPaint)
+            channelTickPaint.strokeWidth=savedStroke
+        }
 
         val bwLabel = when {
             demodChannelBwHz >= 1_000_000L -> "${"%.2f".format(demodChannelBwHz / 1e6)}MHz"
@@ -1183,7 +1213,7 @@ class SpectrumView @JvmOverloads constructor(
         }
         val savedColor = textPaint.color
         val savedSize  = textPaint.textSize
-        textPaint.color    = 0xFF00FFFF.toInt()
+        textPaint.color    = channelTickPaint.color
         textPaint.textSize = 22f
         val labelW = textPaint.measureText(bwLabel)
         val labelX = centre.coerceIn(labelW / 2f + 4f, w - labelW / 2f - 4f)
@@ -1289,6 +1319,30 @@ class SpectrumView @JvmOverloads constructor(
         return freqToPixel(binFreqHz, w)
     }
 
+    fun visibleBandwidthHz(): Long = displayBandwidthHz
+    fun clearSpectrum() {
+        spectrumData = FloatArray(0); peakData = FloatArray(0)
+        annotatedPeaks = emptyList(); estimatedNoiseFloor = -200f
+        postInvalidateOnAnimation()
+    }
+    fun frequencyAtPixel(x: Float): Long = pixelToFrequency(x)
+    fun bandwidthEdgeHit(x: Float): Boolean {
+        if(demodChannelBwHz<=0) return false
+        val dial=demodDialFreqHz.takeIf { it!=0L } ?: centerFreqHz
+        val lo=if(demodChannelSideband>0) dial else if(demodChannelSideband<0) dial-demodChannelBwHz else dial-demodChannelBwHz/2
+        val hi=if(demodChannelSideband<0) dial else if(demodChannelSideband>0) dial+demodChannelBwHz else dial+demodChannelBwHz/2
+        val left=freqToPixel(lo,width.toFloat())
+        val right=freqToPixel(hi,width.toFloat())
+        val margin=20*resources.displayMetrics.density
+        if(right-left<margin*2) return false
+        return (left in 0f..width.toFloat() && kotlin.math.abs(x-left)<=margin && demodChannelSideband<=0) ||
+            (right in 0f..width.toFloat() && kotlin.math.abs(x-right)<=margin && demodChannelSideband>=0)
+    }
+    fun bandwidthAtPixel(x: Float): Int {
+        val dial=demodDialFreqHz.takeIf { it!=0L } ?: centerFreqHz
+        return (kotlin.math.abs(frequencyAtPixel(x)-dial)*(if(demodChannelSideband==0) 2 else 1)).coerceIn(1,Int.MAX_VALUE.toLong()).toInt()
+    }
+
     private fun pixelToFrequency(x: Float): Long {
         return centerFreqHz + Math.round(pixelToRelHz(x, width.toFloat()))
     }
@@ -1341,23 +1395,10 @@ class SpectrumView @JvmOverloads constructor(
     // ─── Touch ────────────────────────────────────────────────────────────────
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Track crosshair position for single-finger touches
-        if (showCrosshairEnabled) {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    crosshairX = event.x; crosshairY = event.y; crosshairVisible = true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (event.pointerCount == 1) {
-                        crosshairX = event.x; crosshairY = event.y
-                    } else {
-                        crosshairVisible = false
-                    }
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    crosshairVisible = false
-                }
-            }
+        // Standalone/fullscreen views share the same hold-to-inspect contract.
+        when(event.actionMasked) {
+            MotionEvent.ACTION_DOWN,MotionEvent.ACTION_POINTER_DOWN,MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL -> hideInspection()
+            MotionEvent.ACTION_MOVE -> if(crosshairVisible && event.pointerCount==1) showInspection(event.x,event.y)
         }
         // scaleDetector is intentionally not fed touch events: zoom/pan is
         // disabled entirely on this view (see the "Gesture detectors"

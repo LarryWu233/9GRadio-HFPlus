@@ -3,14 +3,15 @@
     <!-- Brand / Primary palette -->
     <color name="colorPrimary">#00CCFF</color>
     <color name="colorPrimaryDark">#0088BB</color>
-    <color name="colorAccent">#FF8800</color>
-    <color name="colorSecondary">#44FF88</color>
+    <color name="colorAccent">#EFA66B</color>
+    <color name="colorSecondary">#EFA66B</color>
+    <color name="controlSlider">#75AAA9</color>
 
     <!-- Backgrounds -->
-    <color name="bgMain">#0D1117</color>
-    <color name="bgSurface">#161B22</color>
-    <color name="bgCard">#1C2128</color>
-    <color name="bgElevated">#21262D</color>
+    <color name="bgMain">#071018</color>
+    <color name="bgSurface">#0D1822</color>
+    <color name="bgCard">#12202B</color>
+    <color name="bgElevated">#192935</color>
 
     <!-- Text -->
     <color name="textPrimary">#FFFFFFFF</color>

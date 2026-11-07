@@ -3,7 +3,7 @@
 
     <!-- FFT Decimation -->
     <string-array name="decimation_entries">
-        <item>Off (Full BW)</item>
+        <item>关闭（全宽）</item>
         <item>÷2 (½ BW)</item>
         <item>÷4 (¼ BW)</item>
         <item>÷8 (⅛ BW)</item>
@@ -22,9 +22,9 @@
     </string-array>
 
     <!-- Direct sampling -->    <string-array name="direct_sampling_entries">
-        <item>Off (Tuner)</item>
-        <item>I-Branch (&lt;28.8 MHz)</item>
-        <item>Q-Branch (V4 HF, recommended)</item>
+        <item>关闭（调谐器）</item>
+        <item>I 支路（低于 28.8 MHz）</item>
+        <item>Q 支路（V4 短波，推荐）</item>
     </string-array>
     <string-array name="direct_sampling_values">
         <item>0</item>
@@ -159,18 +159,18 @@
              MainActivity to index into WaterfallView.Companion.Palette.values(). -->
     <string-array name="waterfall_palette_entries">
         <!-- Original palettes (ordinals 0-4) -->
-        <item>Rainbow</item>
-        <item>Heat</item>
-        <item>Grayscale</item>
-        <item>Blue-White</item>
-        <item>Purple-Yellow</item>
+        <item>彩虹</item>
+        <item>热度</item>
+        <item>灰度</item>
+        <item>蓝白</item>
+        <item>紫黄</item>
         <!-- New scientific palettes (ordinals 5-10) -->
-        <item>Viridis</item>
-        <item>Inferno</item>
-        <item>Magma</item>
-        <item>Turbo</item>
-        <item>Solar</item>
-        <item>Night Vision</item>
+        <item>翠绿</item>
+        <item>烈焰</item>
+        <item>熔岩</item>
+        <item>高对比</item>
+        <item>日光</item>
+        <item>夜视</item>
     </string-array>
     <string-array name="waterfall_palette_values">
         <item>RAINBOW</item>
@@ -188,12 +188,13 @@
 
     <!-- Spectrum themes -->
     <string-array name="spectrum_theme_entries">
+        <item>跟随界面</item>
         <!-- Original themes (ordinals 0-4) -->
         <item>Classic (Green)</item>
         <item>Futuristic (Cyan)</item>
-        <item>Amber</item>
-        <item>Grayscale</item>
-        <item>Purple</item>
+        <item>琥珀</item>
+        <item>灰度</item>
+        <item>紫色</item>
         <!-- New themes (ordinals 5-9) -->
         <item>Solar (Orange)</item>
         <item>Neon (Magenta)</item>
@@ -202,6 +203,7 @@
         <item>Sakura (Pink)</item>
     </string-array>
     <string-array name="spectrum_theme_values">
+        <item>UI</item>
         <item>Classic</item>
         <item>Futuristic</item>
         <item>Amber</item>
@@ -228,9 +230,9 @@
 
     <!-- Audio output -->
     <string-array name="audio_output_entries">
-        <item>Speaker</item>
+        <item>扬声器</item>
         <item>Earphone</item>
-        <item>Bluetooth</item>
+        <item>蓝牙</item>
     </string-array>
     <string-array name="audio_output_values">
         <item>speaker</item>

@@ -250,6 +250,11 @@ interface SignalLogDao {
 
 @Dao
 interface RecordingMetaDao {
+    @Insert
+    fun insertSession(meta: RecordingMeta): Long
+
+    @Query("UPDATE recordings SET durationMs = :duration, fileSizeBytes = :bytes WHERE id = :id")
+    fun finishSession(id: Long, duration: Long, bytes: Long)
     @Query("SELECT * FROM recordings ORDER BY createdAt DESC")
     fun getAll(): Flow<List<RecordingMeta>>
 

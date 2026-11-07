@@ -1,5 +1,29 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(ninegradio_native)
+# Keep local checkout paths out of __FILE__, diagnostics and native debug info.
+# Apply before creating targets, including the packaged decoder executables.
+get_filename_component(NINEGRADIO_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+add_compile_options(
+    "-ffile-prefix-map=${NINEGRADIO_SOURCE_ROOT}=/src/9gradio"
+    "-fdebug-prefix-map=${NINEGRADIO_SOURCE_ROOT}=/src/9gradio")
+include(readsb.cmake)
+include(audio_content.cmake)
+
+# Pinned upstream sources and their licenses are kept under vendor/.
+set(USB_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libusb)
+add_library(usb-1.0 SHARED
+    ${USB_ROOT}/libusb/core.c ${USB_ROOT}/libusb/descriptor.c
+    ${USB_ROOT}/libusb/hotplug.c ${USB_ROOT}/libusb/io.c
+    ${USB_ROOT}/libusb/sync.c ${USB_ROOT}/libusb/strerror.c
+    ${USB_ROOT}/libusb/os/linux_usbfs.c ${USB_ROOT}/libusb/os/events_posix.c
+    ${USB_ROOT}/libusb/os/threads_posix.c ${USB_ROOT}/libusb/os/linux_netlink.c)
+target_include_directories(usb-1.0 PRIVATE ${USB_ROOT}/android ${USB_ROOT}/libusb ${USB_ROOT}/libusb/os)
+target_link_libraries(usb-1.0 log)
+set(HF_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/airspyhf/libairspyhf/src)
+add_library(ninegradio_airspyhf SHARED airspyhf_jni.cpp ${HF_ROOT}/airspyhf.c ${HF_ROOT}/iqbalancer.c)
+target_include_directories(ninegradio_airspyhf PRIVATE ${USB_ROOT}/libusb ${HF_ROOT})
+target_compile_options(ninegradio_airspyhf PRIVATE -O3)
+target_link_libraries(ninegradio_airspyhf usb-1.0 log m)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -134,6 +158,8 @@ target_link_libraries(dsd_neo
 )
 
 # ── ninegradio_dsp: existing NEON/VOLK DSP library ───────────────────────────
-add_library(ninegradio_dsp SHARED ninegradio_dsp_jni.cpp)
+add_library(ninegradio_dsp SHARED ninegradio_dsp_jni.cpp listening_audio_jni.cpp iq_noise_blanker_jni.cpp
+    vendor/wdsp/anf.c vendor/wdsp-nb/nobII.c)
+target_compile_definitions(ninegradio_dsp PRIVATE NINEGRADIO_STANDALONE_ANF=1)
 target_compile_options(ninegradio_dsp PRIVATE -O3 -ffast-math)
 target_link_libraries(ninegradio_dsp ${log-lib} android)

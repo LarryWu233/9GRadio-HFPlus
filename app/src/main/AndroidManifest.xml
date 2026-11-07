@@ -3,7 +3,6 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -27,6 +26,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
         android:name=".RtlSdrApplication"
         android:allowBackup="true"
@@ -62,6 +63,7 @@
         <activity android:name=".ui.BookmarkActivity"  android:exported="false" android:label="Bookmarks" />
         <activity android:name=".ui.AdsbActivity"     android:exported="false"
             android:configChanges="orientation|screenSize" android:label="ADS-B Radar" />
+        <activity android:name=".ui.RadioMapActivity" android:exported="false" android:label="Radio map" />
         <activity android:name=".ui.AprsActivity"     android:exported="false" android:label="APRS Monitor" />
         <activity android:name=".ui.AcarsActivity"    android:exported="false" android:label="ACARS Monitor" />
 

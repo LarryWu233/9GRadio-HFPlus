@@ -12,7 +12,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#0D1117">
+    android:background="?attr/radioMain">
 
     <!-- Summary line -->
     <TextView
@@ -24,7 +24,7 @@
         android:textSize="14sp"
         android:textStyle="bold"
         android:gravity="center"
-        android:background="#161B22" />
+        android:background="?attr/radioSurface" />
 
     <!-- Run / Clear buttons -->
     <LinearLayout
@@ -32,7 +32,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:padding="8dp"
-        android:background="#161B22">
+        android:background="?attr/radioSurface">
 
         <Button
             android:id="@+id/btnRunTests"
@@ -42,7 +42,7 @@
             android:layout_marginEnd="4dp"
             android:text="Run Tests"
             android:textColor="#0D1117"
-            android:backgroundTint="#00CCFF" />
+            android:backgroundTint="?attr/radioLink" />
 
         <Button
             android:id="@+id/btnClearLog"
@@ -51,7 +51,7 @@
             android:layout_weight="1"
             android:layout_marginStart="4dp"
             android:text="Clear Log"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/radioText"
             android:backgroundTint="#21262D" />
     </LinearLayout>
 
@@ -68,7 +68,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="monospace"
-            android:textColor="#AAFFFFFF"
+            android:textColor="?attr/radioSecondary"
             android:textSize="11sp"
             android:textIsSelectable="true" />
     </ScrollView>

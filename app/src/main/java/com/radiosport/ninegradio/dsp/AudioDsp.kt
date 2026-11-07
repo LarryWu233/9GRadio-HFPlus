@@ -45,7 +45,8 @@ object AudioDsp {
      * indefinitely after any strong transient.
      */
     class NoiseBlanker(private val thresholdFactor: Float = 4f) {
-        private var avgPower = 0f
+        private var avgPower = 1e-8f
+        private var warmup = 256
         private val alpha    = 0.001f
         private var effectiveThreshold = thresholdFactor
 
@@ -54,9 +55,16 @@ object AudioDsp {
             for (i in samples.indices) {
                 val s = samples[i]
                 val power = s * s
-                val threshold = effectiveThreshold * sqrt(avgPower)
+                if (warmup > 0) {
+                    avgPower += alpha * (power - avgPower)
+                    out[i] = s
+                    warmup--
+                    continue
+                }
+                val threshold = effectiveThreshold * sqrt(avgPower.coerceAtLeast(1e-12f))
                 if (abs(s) > threshold) {
                     out[i] = 0f
+                    avgPower += alpha * (minOf(power, avgPower * 2f + 1e-12f) - avgPower)
                     // Do NOT update avgPower from blanked samples —
                     // feeding zeros back collapses the estimate and the threshold,
                     // causing a positive-feedback loop that blanks everything.
@@ -75,127 +83,17 @@ object AudioDsp {
     }
 
     // ─── Spectral Subtraction Noise Reducer ───────────────────────────────────
-    /**
-     * Broadband noise reducer using a Wiener gain derived from a minimum-statistics
-     * noise floor estimate.
-     *
-     * Algorithm (time-domain power-based):
-     *   1. Compute short-term power of each audio frame (RMS²).
-     *   2. During the first CALIB_FRAMES frames, accumulate a running minimum power
-     *      — this becomes the initial noise floor estimate (P_noise).
-     *   3. After calibration, update P_noise slowly with a decaying minimum tracker:
-     *      P_noise lags toward the observed minimum, catching noise-only segments.
-     *   4. Wiener gain: G = max((SNR − β) / SNR, G_min)
-     *      where SNR = P_frame / P_noise and β = 1.5 (over-subtraction factor).
-     *   5. Gain is smoothed with separate attack/release time constants to avoid
-     *      audible block-rate amplitude modulation ("watery" tremolo artefact).
-     *
-     * No FFT is needed — a scalar power estimate per frame is sufficient for
-     * broadband NR, and avoids the I/Q-vs-real-audio mismatch of FftEngine.
-     */
+    /** Stateful STFT Wiener processing for listening audio; decoder audio bypasses this stage. */
     class NoiseReducer {
-        // ── Calibration ──────────────────────────────────────────────────────
-        private var calibrated   = false
-        private var calibFrames  = 0
-        private val CALIB_FRAMES = 20          // ~400 ms at typical block rate
-
-        // Running minimum power during calibration
-        private var minPowerDuringCalib = Float.MAX_VALUE
-
-        // ── Noise floor tracker (post-calibration) ───────────────────────────
-        // noiseFloor holds the estimated noise power (linear, not dB).
-        private var noiseFloor   = 1e-8f       // safe non-zero init; overwritten at calib end
-        // Slow exponential tracker that decays toward the observed frame power.
-        // On each frame the floor drifts down toward recent minima so the estimator
-        // self-corrects if the noise level drops (e.g. squelch opened on a cleaner channel).
-        private val floorDecayAlpha  = 0.999f  // ~1000 frames (≈20 s) to follow a floor drop
-
-        // ── Gain smoother ────────────────────────────────────────────────────
-        // Separate attack (fast gain reduction) / release (slow gain return) to
-        // avoid block-rate amplitude steps — same technique as AudioAgc.
-        private var smoothedGain     = 1f
-        private val gainAttackAlpha  = 0.80f   // ~5 blocks ≈ 330 ms attack
-        private val gainReleaseAlpha = 0.97f   // ~33 blocks ≈ 2.2 s release
-
-        // Over-subtraction factor β and minimum gain floor.
-        private val beta   = 1.5f
-        private val gMin   = 0.10f             // −20 dB maximum suppression
-
-        /**
-         * Feed a frame of audio to the noise floor calibration.
-         * Should be called on the first [CALIB_FRAMES] frames while receiving
-         * broadband noise (no signal), or whenever [reset] is called.
-         * DspEngine drives this automatically — callers do not call it directly.
-         *
-         * Internally accumulates the minimum observed short-term power over the
-         * calibration window. The minimum (rather than mean) is used so that
-         * occasional quiet frames anchor the estimate even if some frames contain
-         * signal bursts during the calibration window.
-         */
-        internal fun calibrate(samples: FloatArray) {
-            // Short-term power of this frame
-            var power = 0f
-            for (s in samples) power += s * s
-            power /= samples.size.coerceAtLeast(1)
-
-            if (power < minPowerDuringCalib) minPowerDuringCalib = power
-
-            calibFrames++
-            if (calibFrames >= CALIB_FRAMES) {
-                // Use collected minimum as initial noise floor.
-                // Guard against pathological silence (power = 0) which would
-                // collapse the Wiener gain permanently.
-                noiseFloor = minPowerDuringCalib.coerceAtLeast(1e-10f)
-                smoothedGain = 1f   // reset gain smoother for clean start
-                calibrated = true
-            }
-        }
-
-        /**
-         * Apply broadband noise reduction to [samples].
-         * Returns [samples] unchanged until calibration is complete.
-         */
-        fun process(samples: FloatArray): FloatArray {
-            if (!calibrated) return samples
-
-            // Short-term power of this frame
-            var framePower = 0f
-            for (s in samples) framePower += s * s
-            framePower /= samples.size.coerceAtLeast(1)
-
-            // Update noise floor: drift slowly downward toward the frame power,
-            // but never let it exceed the current estimate (only track minima).
-            // This lets the floor self-correct when the channel gets quieter.
-            if (framePower < noiseFloor) {
-                noiseFloor = floorDecayAlpha * noiseFloor + (1f - floorDecayAlpha) * framePower
-            }
-            // Keep floor non-zero to avoid division collapse
-            val pNoise = noiseFloor.coerceAtLeast(1e-10f)
-
-            // Wiener gain: G = max((SNR − β) / SNR, G_min)
-            // equivalent to G = max(1 − β/SNR, G_min)
-            val snr    = framePower / pNoise
-            val rawGain = ((snr - beta) / snr.coerceAtLeast(1e-6f)).coerceIn(gMin, 1f)
-
-            // Smooth gain: attack (reduction) is faster than release (recovery)
-            smoothedGain = if (rawGain < smoothedGain) {
-                gainAttackAlpha  * smoothedGain + (1f - gainAttackAlpha)  * rawGain
-            } else {
-                gainReleaseAlpha * smoothedGain + (1f - gainReleaseAlpha) * rawGain
-            }
-
-            return FloatArray(samples.size) { samples[it] * smoothedGain }
-        }
-
-        fun isCalibrated(): Boolean = calibrated
-
-        fun reset() {
-            calibrated          = false
-            calibFrames         = 0
-            minPowerDuringCalib = Float.MAX_VALUE
-            noiseFloor          = 1e-8f
-            smoothedGain        = 1f
-        }
+        private val spectral = SpectralNoiseReducer()
+        private val listening = ListeningNoiseProcessor(spectral)
+        fun setStrength(value: Float) { spectral.strength = value }
+        fun setSampleRate(rate: Int) = spectral.setSampleRate(rate)
+        internal fun calibrate(samples: FloatArray) = Unit
+        fun process(samples: FloatArray) = spectral.process(samples)
+        fun processListening(samples: FloatArray, enabled: Boolean, rate: Int) = listening.process(samples, enabled, rate)
+        fun isCalibrated() = true
+        fun reset() = spectral.reset()
     }
 
     // ─── Auto Notch Filter (LMS adaptive notch) ───────────────────────────────

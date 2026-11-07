@@ -29,7 +29,7 @@ import java.util.*
  *  4. LIVE DSP METRICS    — service-level stats + audio routing + display health
  *  5. DIAGNOSTIC LOG      — errors & warnings only (last 200)
  */
-class DebugPanelActivity : AppCompatActivity() {
+class DebugPanelActivity : RadioThemedActivity() {
 
     companion object {
         private const val REFRESH_MS = 500L

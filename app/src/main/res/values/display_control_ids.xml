@@ -1,0 +1,6 @@
+<resources>
+    <item type="id" name="levelTargetSelector"/>
+    <item type="id" name="switchInlineAutoLevels"/>
+    <item type="id" name="sliderInlineMinLevel"/>
+    <item type="id" name="sliderInlineMaxLevel"/>
+</resources>

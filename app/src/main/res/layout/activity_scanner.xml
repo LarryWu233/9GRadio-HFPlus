@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#0D1117"
+    android:background="?attr/radioMain"
     android:padding="16dp">
 
     <!-- Config section -->
@@ -13,7 +13,7 @@
             android:orientation="vertical">
 
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:text="Scan Range (MHz)" android:textColor="#00CCFF" android:textSize="13sp"
+                android:text="Scan Range (MHz)" android:textColor="?attr/radioLink" android:textSize="13sp"
                 android:layout_marginBottom="8dp"/>
 
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -27,7 +27,7 @@
                         android:id="@+id/etScanStart"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:inputType="numberDecimal" android:text="136.0"
-                        android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+                        android:textColor="?attr/radioText" android:fontFamily="monospace"/>
                 </com.google.android.material.textfield.TextInputLayout>
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="0dp" android:layout_height="wrap_content"
@@ -37,7 +37,7 @@
                         android:id="@+id/etScanStop"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:inputType="numberDecimal" android:text="174.0"
-                        android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+                        android:textColor="?attr/radioText" android:fontFamily="monospace"/>
                 </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
 
@@ -52,7 +52,7 @@
                         android:id="@+id/etScanStep"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:inputType="number" android:text="12500"
-                        android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+                        android:textColor="?attr/radioText" android:fontFamily="monospace"/>
                 </com.google.android.material.textfield.TextInputLayout>
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="0dp" android:layout_height="wrap_content"
@@ -62,7 +62,7 @@
                         android:id="@+id/etScanSquelch"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:inputType="numberSigned" android:text="-80"
-                        android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+                        android:textColor="?attr/radioText" android:fontFamily="monospace"/>
                 </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
 
@@ -77,11 +77,11 @@
                         android:id="@+id/etScanDwell"
                         android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:inputType="number" android:text="200"
-                        android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+                        android:textColor="?attr/radioText" android:fontFamily="monospace"/>
                 </com.google.android.material.textfield.TextInputLayout>
                 <Spinner android:id="@+id/spinnerScanMode"
                     android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:backgroundTint="#00CCFF"/>
+                    android:layout_weight="1" android:backgroundTint="?attr/radioLink"/>
             </LinearLayout>
 
             <!-- Scan direction switch -->
@@ -90,7 +90,7 @@
                 android:layout_marginTop="12dp">
                 <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                     android:layout_weight="1" android:text="Scan Direction: Down"
-                    android:textColor="#AAFFFFFF" android:textSize="13sp"/>
+                    android:textColor="?attr/radioSecondary" android:textSize="13sp"/>
                 <Switch android:id="@+id/switchScanDirection"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"/>
             </LinearLayout>
@@ -102,7 +102,7 @@
                 <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="Adaptive Squelch (auto noise-floor tracking)"
-                    android:textColor="#AAFFFFFF" android:textSize="13sp"/>
+                    android:textColor="?attr/radioSecondary" android:textSize="13sp"/>
                 <Switch android:id="@+id/switchScanAdaptive"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:checked="false"/>
@@ -113,21 +113,21 @@
                 android:orientation="horizontal" android:gravity="center_vertical"
                 android:layout_marginTop="12dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="Memory" android:textColor="#00CCFF" android:textSize="13sp"
+                    android:text="Memory" android:textColor="?attr/radioLink" android:textSize="13sp"
                     android:layout_marginEnd="8dp"/>
                 <Spinner android:id="@+id/spinnerScanMemorySlot"
                     android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:backgroundTint="#00CCFF"
+                    android:layout_weight="1" android:backgroundTint="?attr/radioLink"
                     android:layout_marginEnd="8dp"/>
                 <Button android:id="@+id/btnScanMemSave"
                     android:layout_width="wrap_content" android:layout_height="40dp"
                     android:text="Save" android:textSize="12sp"
-                    android:backgroundTint="#2C3440" android:textColor="#FFFFFF"
+                    android:backgroundTint="#2C3440" android:textColor="?attr/radioText"
                     android:layout_marginEnd="8dp"/>
                 <Button android:id="@+id/btnScanMemLoad"
                     android:layout_width="wrap_content" android:layout_height="40dp"
                     android:text="Load" android:textSize="12sp"
-                    android:backgroundTint="#2C3440" android:textColor="#FFFFFF"/>
+                    android:backgroundTint="#2C3440" android:textColor="?attr/radioText"/>
             </LinearLayout>
 
             <!-- Control buttons -->
@@ -141,7 +141,7 @@
                 <Button android:id="@+id/btnScanReset"
                     android:layout_width="0dp" android:layout_height="48dp"
                     android:layout_weight="1" android:text="Reset"
-                    android:backgroundTint="#2C3440" android:textColor="#FFFFFF"
+                    android:backgroundTint="#2C3440" android:textColor="?attr/radioText"
                     android:layout_marginEnd="8dp"/>
                 <Button android:id="@+id/btnScanPause"
                     android:layout_width="0dp" android:layout_height="48dp"
@@ -156,13 +156,13 @@
                     android:layout_width="0dp" android:layout_height="44dp"
                     android:layout_weight="1" android:text="Search Mode"
                     android:textSize="12sp"
-                    android:backgroundTint="#7A5CFF" android:textColor="#FFFFFF"
+                    android:backgroundTint="#7A5CFF" android:textColor="?attr/radioText"
                     android:layout_marginEnd="8dp"/>
                 <Button android:id="@+id/btnScanBusiest"
                     android:layout_width="0dp" android:layout_height="44dp"
                     android:layout_weight="1" android:text="Busiest"
                     android:textSize="12sp"
-                    android:backgroundTint="#2C3440" android:textColor="#FFFFFF"/>
+                    android:backgroundTint="#2C3440" android:textColor="?attr/radioText"/>
             </LinearLayout>
 
             <!-- Progress -->
@@ -170,7 +170,7 @@
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent" android:layout_height="8dp"
                 android:layout_marginTop="12dp"
-                android:progressTint="#00CCFF" android:max="100"
+                android:progressTint="?attr/radioLink" android:max="100"
                 android:visibility="gone"/>
 
             <!-- Status -->
@@ -179,7 +179,7 @@
                 <TextView android:id="@+id/tvScanCurrentFreq"
                     android:layout_width="0dp" android:layout_height="wrap_content"
                     android:layout_weight="1" android:text="---"
-                    android:textColor="#00CCFF" android:textSize="16sp"
+                    android:textColor="?attr/radioLink" android:textSize="16sp"
                     android:fontFamily="monospace"/>
                 <TextView android:id="@+id/tvScanSignal"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -207,7 +207,7 @@
 
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:text="Active Frequencies (tap to tune, long-press to lock out):"
-                android:textColor="#88FFFFFF" android:textSize="12sp"
+                android:textColor="?attr/radioSecondary" android:textSize="12sp"
                 android:layout_marginTop="12dp" android:layout_marginBottom="4dp"/>
         </LinearLayout>
     </ScrollView>
@@ -217,8 +217,8 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#161B22"
-        android:divider="#33FFFFFF"
+        android:background="?attr/radioSurface"
+        android:divider="?attr/radioOutline"
         android:dividerHeight="0.5dp"/>
 
 </LinearLayout>

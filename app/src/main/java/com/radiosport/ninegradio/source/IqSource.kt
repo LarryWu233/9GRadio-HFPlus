@@ -1,6 +1,6 @@
 package com.radiosport.ninegradio.source
 
-import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.Closeable
 
@@ -17,8 +17,9 @@ interface IqSource : Closeable {
 
     // ── Raw IQ stream ─────────────────────────────────────────────────────────
 
-    /** Raw interleaved unsigned-8 IQ bytes.  Same format as RTL-SDR USB output. */
-    val iqFlow: SharedFlow<ByteArray>
+    /** Typed IQ blocks; float sources retain the receiver's full precision. */
+    val iqFlow: Flow<IqBlock>
+    val capabilities: DeviceCapabilities get() = DeviceCapabilities.RTL
 
     /** Current subscriber count on [iqFlow]. */
     val iqSubscriberCount: Int

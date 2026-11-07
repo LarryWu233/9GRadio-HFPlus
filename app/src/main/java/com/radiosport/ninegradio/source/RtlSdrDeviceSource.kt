@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 /**
  * [IqSource] adapter that wraps the existing [RtlSdrDevice] (direct USB).
@@ -57,7 +59,7 @@ class RtlSdrDeviceSource(
 
     // ── IqSource: flow proxies ─────────────────────────────────────────────────
 
-    override val iqFlow: SharedFlow<ByteArray> get() = device.iqFlow
+    override val iqFlow: Flow<IqBlock> = device.iqFlow.map { IqBlock.Unsigned8(it.copyOf()) }
     override val iqSubscriberCount: Int        get() = device.iqSubscriberCount
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────

@@ -1,0 +1,14 @@
+<resources>
+    <attr name="radioMain" format="color"/>
+    <attr name="radioSurface" format="color"/>
+    <attr name="radioCard" format="color"/>
+    <attr name="radioElevated" format="color"/>
+    <attr name="radioText" format="color"/>
+    <attr name="radioSecondary" format="color"/>
+    <attr name="radioMuted" format="color"/>
+    <attr name="radioAccent" format="color"/>
+    <attr name="radioSlider" format="color"/>
+    <attr name="radioOutline" format="color"/>
+    <attr name="radioSelected" format="color"/>
+    <attr name="radioLink" format="color"/>
+</resources>

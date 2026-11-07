@@ -18,7 +18,7 @@ import kotlin.math.*
  * in real time.  No device connection required — all tests exercise the DSP
  * and driver logic in isolation.
  */
-class RtlSdrTestActivity : AppCompatActivity() {
+class RtlSdrTestActivity : RadioThemedActivity() {
 
     private lateinit var tvLog: TextView
     private lateinit var btnRun: Button

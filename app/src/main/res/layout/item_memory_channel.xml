@@ -15,12 +15,12 @@
 
             <TextView android:id="@+id/tvChannelName"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="Channel Name" android:textColor="#FFFFFF"
+                android:text="Channel Name" android:textColor="?attr/radioText"
                 android:textSize="15sp" android:textStyle="bold"/>
 
             <TextView android:id="@+id/tvChannelFreq"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="100.000 MHz" android:textColor="#00CCFF"
+                android:text="100.000 MHz" android:textColor="?attr/radioLink"
                 android:textSize="18sp" android:fontFamily="monospace"
                 android:layout_marginTop="2dp"/>
 
@@ -35,7 +35,7 @@
                 <View android:layout_width="8dp" android:layout_height="1dp"/>
                 <TextView android:id="@+id/tvChannelGroup"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="Default" android:textColor="#88FFFFFF"
+                    android:text="Default" android:textColor="?attr/radioSecondary"
                     android:textSize="11sp"/>
             </LinearLayout>
         </LinearLayout>
@@ -43,6 +43,6 @@
         <Button android:id="@+id/btnLoadChannel"
             android:layout_width="60dp" android:layout_height="36dp"
             android:text="TUNE" android:textSize="11sp"
-            android:backgroundTint="#00CCFF" android:textColor="#000000"/>
+            android:backgroundTint="?attr/radioLink" android:textColor="#000000"/>
     </LinearLayout>
 </LinearLayout>

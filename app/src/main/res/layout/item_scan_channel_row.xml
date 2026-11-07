@@ -17,7 +17,7 @@
         android:layout_width="20dp"
         android:layout_height="wrap_content"
         android:text="\u25CB"
-        android:textColor="#666666"
+        android:textColor="?attr/radioMuted"
         android:textSize="13sp"
         android:gravity="center"
         android:fontFamily="monospace"/>
@@ -29,7 +29,7 @@
         android:layout_height="wrap_content"
         android:layout_weight="2.2"
         android:text="---.------"
-        android:textColor="#00CCFF"
+        android:textColor="?attr/radioLink"
         android:textSize="12sp"
         android:fontFamily="monospace"/>
 
@@ -76,7 +76,7 @@
         android:layout_height="wrap_content"
         android:layout_weight="1.4"
         android:text="never"
-        android:textColor="#88FFFFFF"
+        android:textColor="?attr/radioSecondary"
         android:textSize="11sp"
         android:fontFamily="monospace"
         android:gravity="end"/>

@@ -124,12 +124,12 @@ class RtlTcpSource(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var streamingJob: Job? = null
 
-    private val _iqFlow = MutableSharedFlow<ByteArray>(
+    private val _iqFlow = MutableSharedFlow<IqBlock>(
         replay = 1,
         extraBufferCapacity = 16,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
-    override val iqFlow: SharedFlow<ByteArray> = _iqFlow.asSharedFlow()
+    override val iqFlow: SharedFlow<IqBlock> = _iqFlow.asSharedFlow()
     override val iqSubscriberCount: Int get() = _iqFlow.subscriptionCount.value
 
     private val _statusFlow = MutableStateFlow(IqSource.SourceStatus())
@@ -249,7 +249,7 @@ class RtlTcpSource(
                         filled += n
                     }
                     // Emit a copy — the pool isn't needed for TCP (no DMA constraints)
-                    _iqFlow.tryEmit(readBuf.copyOf())
+                    _iqFlow.tryEmit(IqBlock.Unsigned8(readBuf.copyOf()))
                 }
             } catch (e: SocketException) {
                 if (_isStreaming) {  // not a deliberate close

@@ -7,6 +7,8 @@ import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.Choreographer
+import android.view.ViewConfiguration
 import com.radiosport.ninegradio.dsp.FrequencyStepManager
 import kotlin.math.*
 
@@ -49,22 +51,42 @@ class TuningDialView @JvmOverloads constructor(
 
     /** Called when the dial produces a frequency change. */
     var onStep: ((deltaHz: Long) -> Unit)? = null
+    var onTuningFinished: (() -> Unit)? = null
+    var compact = false
+    var showLabels = true
+    var showCurrentFrequency=false
+    private var frequencyText="100.000.000 Hz"
+    data class Choice(val value: Long, val label: String)
+    private var choices = emptyList<Choice>()
+    private var choiceIndex = 0
+    var onChoiceSelected: ((Long) -> Unit)? = null
+    fun setChoices(values: List<Choice>, selected: Long) {
+        choices = values
+        choiceIndex = values.indexOfFirst { it.value == selected }.coerceAtLeast(0)
+        compact = true; pxPerStep = 84 * resources.displayMetrics.density
+        contentDescription = values.getOrNull(choiceIndex)?.label
+        invalidate()
+    }
+    fun selectChoice(value: Long) {
+        choices.indexOfFirst { it.value == value }.takeIf { it >= 0 }?.let { choiceIndex = it; contentDescription = choices[it].label; invalidate() }
+    }
+    private val haptics = TuningHaptics(this)
 
     /** Current demod mode string — set from MainActivity whenever mode changes. */
     var demodMode: String = "NFM"
-        set(v) { field = v; computeStep(); invalidate() }
+        set(v) { if (field == v) return; field = v; computeStep(); invalidate() }
 
     /** Current frequency — used for band-aware step selection. */
     var currentFreqHz: Long = 100_000_000L
-        set(v) { field = v; computeStep(); invalidate() }
+        set(v) { if (field == v) return; field = v; frequencyText=String.format(java.util.Locale.ROOT,"%,d",v).replace(',','.')+" Hz"; computeStep(); invalidate() }
 
     /** Fine-tune mode: step is 10× smaller than protocol step. */
     var fineMode: Boolean = false
-        set(v) { field = v; computeStep(); onFineModeChanged?.invoke(v); invalidate() }
+        set(v) { if (field == v) return; field = v; computeStep(); onFineModeChanged?.invoke(v); invalidate() }
 
     /** Optional manual step override set by step-size chip selection. Cleared on mode change. */
     var overrideStepHz: Long? = null
-        set(v) { field = v; computeStep(); invalidate() }
+        set(v) { if (field == v) return; field = v; computeStep(); invalidate() }
 
     /** Called when [fineMode] toggles via long-press gesture. */
     var onFineModeChanged: ((Boolean) -> Unit)? = null
@@ -85,9 +107,10 @@ class TuningDialView @JvmOverloads constructor(
 
     // ── Paint ─────────────────────────────────────────────────────────────────
 
+    private val readoutPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface) }
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = 0xFF0D1117.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioMain)
     }
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -106,7 +129,7 @@ class TuningDialView @JvmOverloads constructor(
     private val majorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 3f
-        color = 0xFF00AACC.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
     }
     private val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -115,7 +138,7 @@ class TuningDialView @JvmOverloads constructor(
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.MONOSPACE
         textAlign = Paint.Align.CENTER
-        color = 0xFFAABBCC.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioText)
     }
     private val stepLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.MONOSPACE
@@ -153,10 +176,48 @@ class TuningDialView @JvmOverloads constructor(
     // ── Gesture ───────────────────────────────────────────────────────────────
     private var velocityX: Float = 0f
     private var isFling = false
+    private var lastFrameNanos = 0L
+    private var downX = 0f
+    private var downY = 0f
+    private var gestureAxis = 0
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val pointerPath = Path()
+    private val leftFadePaint = Paint()
+    private val rightFadePaint = Paint()
+    private val labelCache = object : LinkedHashMap<Long, String>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>?) = size > 64
+    }
+    private var stepText = ""
+    private var bandText = ""
+    private val frameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(now: Long) {
+            if (!isFling) return
+            if (lastFrameNanos != 0L) {
+                val dt = ((now - lastFrameNanos) / 1e9f).coerceIn(0f, 0.05f)
+                roll(-velocityX * dt)
+                velocityX *= exp(-10.15f * dt)
+            }
+            lastFrameNanos = now
+            if (abs(velocityX) < 50f) stopFling(true)
+            else Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+    private fun stopFling(commit: Boolean) {
+        isFling = false
+        lastFrameNanos = 0
+        Choreographer.getInstance().removeFrameCallback(frameCallback)
+        if (commit) finishGesture()
+    }
+    private fun finishGesture() {
+        if (choices.isNotEmpty()) { accumulatedPx=0f; drumOffsetPx=0f; invalidate() }
+        onTuningFinished?.invoke()
+    }
 
     private val gestureDetector = GestureDetector(context,
         object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
             override fun onLongPress(e: MotionEvent) {
+                if (compact) return
                 fineMode = !fineMode
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
@@ -165,14 +226,16 @@ class TuningDialView @JvmOverloads constructor(
                 // Horizontal-swipe only: vertical motion (distanceY) is
                 // ignored entirely so this view never fights a parent
                 // ScrollView for vertical drags.
-                roll(distanceX)
+                if (gestureAxis == 1) roll(distanceX)
                 return true
             }
             override fun onFling(e1: MotionEvent?, e2: MotionEvent,
                                  velocityX: Float, velocityY: Float): Boolean {
+                if (gestureAxis != 1) return false
                 this@TuningDialView.velocityX = velocityX
                 isFling = true
-                postFling()
+                lastFrameNanos = 0
+                Choreographer.getInstance().postFrameCallback(frameCallback)
                 return true
             }
         })
@@ -191,6 +254,8 @@ class TuningDialView @JvmOverloads constructor(
         protocolStepHz = overrideStepHz
             ?: FrequencyStepManager.recommendedStep(currentFreqHz, demodMode).hz
         activeStepHz   = if (fineMode) maxOf(1L, protocolStepHz / 10) else protocolStepHz
+        stepText = "STEP ${formatHz(activeStepHz)}"
+        bandText = FrequencyStepManager.bestPreset(currentFreqHz)?.name ?: demodMode
     }
 
     /**
@@ -203,31 +268,26 @@ class TuningDialView @JvmOverloads constructor(
      * value into view" gesture for a horizontal tuning strip.
      */
     private fun roll(dx: Float) {
-        drumOffsetPx += dx
         accumulatedPx += dx
 
         val stepsRaw = (accumulatedPx / pxPerStep).toInt()
         if (stepsRaw != 0) {
             accumulatedPx -= stepsRaw * pxPerStep
-            val delta = stepsRaw * activeStepHz
-            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            onStep?.invoke(delta)
+            if (choices.isNotEmpty()) {
+                val index = (choiceIndex + stepsRaw).coerceIn(choices.indices)
+                if (choiceIndex != index) {
+                    choiceIndex = index; haptics.tick()
+                    contentDescription = choices[index].label
+                    onChoiceSelected?.invoke(choices[index].value)
+                }
+            } else {
+                val delta = stepsRaw * activeStepHz
+                haptics.tick(); onStep?.invoke(delta)
+            }
         }
-        invalidate()
+        drumOffsetPx = accumulatedPx
+        postInvalidateOnAnimation()
     }
-
-    private fun postFling() {
-        if (!isFling) return
-        velocityX *= 0.85f
-        if (abs(velocityX) < 50f) { isFling = false; return }
-        // onScroll's distanceX has the opposite sign convention to fling
-        // velocity (a fast rightward fling has positive velocityX but should
-        // behave like a negative distanceX), so negate here.
-        roll(-velocityX * 0.016f)
-        postDelayed({ postFling() }, 16)
-    }
-
-    // ── Size ──────────────────────────────────────────────────────────────────
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         cx = w / 2f; cy = h / 2f
@@ -249,10 +309,10 @@ class TuningDialView @JvmOverloads constructor(
         trackPaint.shader = LinearGradient(
             0f, trackTop, 0f, trackBottom,
             intArrayOf(
-                0xFF101C2C.toInt(),
-                0xFF24405C.toInt(),
-                0xFF152230.toInt(),
-                0xFF0A1018.toInt()
+                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),
+                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioElevated),
+                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioCard),
+                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioMain)
             ),
             floatArrayOf(0f, 0.32f, 0.7f, 1f),
             Shader.TileMode.CLAMP
@@ -260,7 +320,17 @@ class TuningDialView @JvmOverloads constructor(
 
         // pxPerStep scales with width so the gesture feel is consistent
         // across phone/tablet sizes — roughly 1 step per 6% of view width.
-        pxPerStep = (w * 0.06f).coerceIn(28f, 80f)
+        pxPerStep = if (choices.isNotEmpty()) 84 * resources.displayMetrics.density else (w * 0.06f).coerceIn(28f, 80f)
+        val size = trackH * 0.16f
+        pointerPath.reset()
+        pointerPath.moveTo(cx, trackTop - 2f)
+        pointerPath.lineTo(cx - size * 0.6f, trackTop - size * 1.4f)
+        pointerPath.lineTo(cx + size * 0.6f, trackTop - size * 1.4f)
+        pointerPath.close()
+        leftFadePaint.shader = LinearGradient(trackLeft, 0f, trackLeft + trackW * 0.18f, 0f,
+            0xFF0D1117.toInt(), 0x000D1117, Shader.TileMode.CLAMP)
+        rightFadePaint.shader = LinearGradient(trackRight - trackW * 0.18f, 0f, trackRight, 0f,
+            0x000D1117, 0xFF0D1117.toInt(), Shader.TileMode.CLAMP)
     }
 
     // ── Draw ──────────────────────────────────────────────────────────────────
@@ -344,12 +414,13 @@ class TuningDialView @JvmOverloads constructor(
 
             // Frequency label under major ticks near the centre, fading out
             // toward the edges along with the tick itself.
-            if (isMajor && scale > 0.55f) {
-                val labelHz = currentFreqHz + i.toLong() * activeStepHz
+            if (showLabels && (isMajor || choices.isNotEmpty()) && scale > 0.4f && !(choices.isNotEmpty() && i==0)) {
+                val labelHz = if (compact) i.toLong() * activeStepHz else currentFreqHz + i.toLong() * activeStepHz
                 labelPaint.alpha = alpha
-                labelPaint.textSize = (trackH * 0.16f * scale).coerceAtLeast(1f)
+                labelPaint.textSize = if (choices.isNotEmpty()) 13 * resources.displayMetrics.scaledDensity * scale.coerceAtLeast(0.75f)
+                    else (trackH * 0.16f * scale).coerceAtLeast(1f)
                 canvas.drawText(
-                    formatHz(labelHz), perspectiveX, trackBottom - trackH * 0.06f, labelPaint
+                    if (choices.isNotEmpty()) choices.getOrNull(choiceIndex + i)?.label.orEmpty() else labelCache.getOrPut(labelHz) { formatHz(labelHz) }, perspectiveX, if(choices.isNotEmpty()) trackTop+trackH*0.7f else trackBottom-trackH*0.06f, labelPaint
                 )
             }
         }
@@ -362,37 +433,40 @@ class TuningDialView @JvmOverloads constructor(
 
         // Centre pointer: a downward triangle above the drum, indicating the
         // currently-tuned frequency sits at the centre tick.
-        val pSize = trackH * 0.16f
-        val pPath = Path().apply {
-            moveTo(cx, trackTop - 2f)
-            lineTo(cx - pSize * 0.6f, trackTop - pSize * 1.4f)
-            lineTo(cx + pSize * 0.6f, trackTop - pSize * 1.4f)
-            close()
-        }
-        canvas.drawPath(pPath, pointerPaint)
+        canvas.drawPath(pointerPath, pointerPaint)
 
         // Centre highlight line through the drum, marking the active frequency.
         canvas.drawLine(cx, trackTop + 2f, cx, trackBottom - 2f, centrePaint)
 
         // Left/right edge fade overlays — reinforce the "wrapping cylinder"
         // illusion by darkening toward the extremes of the drum.
-        edgeFadePaint.shader = LinearGradient(
-            trackLeft, 0f, trackLeft + trackW * 0.18f, 0f,
-            intArrayOf(0xFF0D1117.toInt(), 0x000D1117),
-            null, Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(trackLeft, trackTop, trackLeft + trackW * 0.18f, trackBottom, edgeFadePaint)
-        edgeFadePaint.shader = LinearGradient(
-            trackRight - trackW * 0.18f, 0f, trackRight, 0f,
-            intArrayOf(0x000D1117, 0xFF0D1117.toInt()),
-            null, Shader.TileMode.CLAMP
-        )
-        canvas.drawRect(trackRight - trackW * 0.18f, trackTop, trackRight, trackBottom, edgeFadePaint)
+        canvas.drawRect(trackLeft, trackTop, trackLeft + trackW * 0.18f, trackBottom, leftFadePaint)
+        canvas.drawRect(trackRight - trackW * 0.18f, trackTop, trackRight, trackBottom, rightFadePaint)
 
+        if(choices.isNotEmpty()) {
+            labelPaint.textSize=13*resources.displayMetrics.scaledDensity
+            labelPaint.color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
+            val selected=choices.getOrNull(choiceIndex)?.label.orEmpty()
+            val labelWidth=labelPaint.measureText(selected)
+            canvas.drawRoundRect(cx-labelWidth/2-8f,trackTop+trackH*0.22f,cx+labelWidth/2+8f,trackBottom-trackH*0.15f,8f,8f,readoutPaint)
+            canvas.drawText(selected,cx,trackTop+trackH*0.7f,labelPaint)
+        }
+        if(showCurrentFrequency) {
+            val face=labelPaint.typeface
+            labelPaint.typeface=Typeface.MONOSPACE
+            labelPaint.color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
+            labelPaint.textSize=13*resources.displayMetrics.scaledDensity
+            val length=labelPaint.measureText(frequencyText)
+            if(length>trackW*0.76f) labelPaint.textSize*=trackW*0.76f/length
+            val labelWidth=labelPaint.measureText(frequencyText)
+            canvas.drawRoundRect(cx-labelWidth/2-12f,trackTop+trackH*0.22f,cx+labelWidth/2+12f,trackBottom-trackH*0.15f,8f,8f,readoutPaint)
+            canvas.drawText(frequencyText,cx,trackTop+trackH*0.7f,labelPaint)
+            labelPaint.typeface=face
+        }
+        if (compact) return
         // Step label below the drum
-        val stepStr = formatHz(activeStepHz)
         stepLabelPaint.textSize = h * 0.075f
-        canvas.drawText("STEP $stepStr", cx, trackBottom + h * 0.10f, stepLabelPaint)
+        canvas.drawText(stepText, cx, trackBottom + h * 0.10f, stepLabelPaint)
 
         // Fine / Coarse label at bottom of view
         val modeLabel = if (fineMode) "⊙ FINE  (hold to toggle)" else "◎ COARSE  (hold to toggle)"
@@ -401,11 +475,11 @@ class TuningDialView @JvmOverloads constructor(
         canvas.drawText(modeLabel, cx, h - 6f, modePaint)
 
         // Mode / band label at top
-        val bandLabel = FrequencyStepManager.bestPreset(currentFreqHz)?.name ?: demodMode
+        val bandLabel = bandText
         labelPaint.textSize = h * 0.06f
         labelPaint.color = 0xFF445566.toInt()
         canvas.drawText(bandLabel, cx, labelPaint.textSize + 2f, labelPaint)
-        labelPaint.color = 0xFFAABBCC.toInt()
+        labelPaint.color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioText)
 
         // Swipe hint arrows either side of centre, reinforcing the
         // horizontal-only gesture.
@@ -414,33 +488,46 @@ class TuningDialView @JvmOverloads constructor(
         val arrowY = (trackTop + trackBottom) / 2f + labelPaint.textSize * 0.35f
         canvas.drawText("◀", trackLeft + trackW * 0.05f, arrowY, labelPaint)
         canvas.drawText("▶", trackRight - trackW * 0.05f, arrowY, labelPaint)
-        labelPaint.color = 0xFFAABBCC.toInt()
+        labelPaint.color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioText)
     }
 
     // ── Touch ─────────────────────────────────────────────────────────────────
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.action) {
+        when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                isFling = false
-                // The dial lives inside vertically-scrolling containers
-                // (ScrollView / NestedScrollView). Claim the gesture stream so
-                // a horizontal swipe on the dial is never stolen by the parent
-                // as a page scroll. Vertical drags are ignored by roll()
-                // entirely (only distanceX is used), so releasing the claim on
-                // UP/CANCEL lets the parent resume normal vertical scrolling
-                // immediately afterwards.
+                stopFling(false)
+                downX = event.x; downY = event.y; gestureAxis = 0
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_MOVE -> {
+                if (gestureAxis == 0) {
+                    val x = abs(event.x - downX); val y = abs(event.y - downY)
+                    if (max(x, y) > touchSlop) {
+                        gestureAxis = if (x >= y) 1 else 2
+                        if (gestureAxis == 2) parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                stopFling(true)
                 parent?.requestDisallowInterceptTouchEvent(false)
+                return true
             }
         }
         gestureDetector.onTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP) {
+            parent?.requestDisallowInterceptTouchEvent(false)
+            if (!isFling) finishGesture()
+            performClick()
+        }
         return true
     }
-
-    // ── Measure ───────────────────────────────────────────────────────────────
+    override fun performClick(): Boolean { super.performClick(); return true }
+    override fun onDetachedFromWindow() {
+        stopFling(true)
+        super.onDetachedFromWindow()
+    }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val density = context.resources.displayMetrics.density

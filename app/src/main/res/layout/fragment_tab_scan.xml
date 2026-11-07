@@ -1,300 +1,75 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Tab – Scan: embedded frequency scanner. Hidden by default; shown only
-     when explicitly invoked (Scanner button / FAB), same pattern as the
-     APRS/ACARS/DMR/YSF/D-STAR/Dig protocol tabs but triggered on demand
-     instead of by DemodMode. -->
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:paddingHorizontal="12dp"
-    android:paddingTop="10dp"
-    android:paddingBottom="12dp">
-
-    <!-- Section label -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Frequency Scanner"
-        android:textColor="#00CCFF"
-        android:textSize="13sp"
-        android:textAllCaps="true"
-        android:letterSpacing="0.1"
-        android:layout_marginBottom="8dp"/>
-
-    <!-- Scanner details toggle header. The detail fields below are collapsed
-         by default; tapping this row expands/collapses them. -->
-    <LinearLayout android:id="@+id/rowScanTabDetailsToggle"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:clickable="true" android:focusable="true"
-        android:background="?attr/selectableItemBackground"
-        android:paddingVertical="6dp">
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="Scanner Details"
-            android:textColor="#AAFFFFFF" android:textSize="12sp"
-            android:textAllCaps="true" android:letterSpacing="0.05"/>
-        <TextView android:id="@+id/tvScanTabDetailsChevron"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="&#9656;"
-            android:textColor="#AAFFFFFF" android:textSize="14sp"/>
+<?xml version='1.0' encoding='utf-8'?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:paddingHorizontal="10dp" android:paddingTop="10dp" android:paddingBottom="12dp">
+  <com.radiosport.ninegradio.ui.SegmentedSelectorView android:id="@+id/scannerTypePicker" android:layout_width="match_parent" android:layout_height="44dp" />
+  <LinearLayout android:id="@+id/etmContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+  <LinearLayout android:id="@+id/generalScanContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+    <LinearLayout android:id="@+id/rowScanTabDetailsToggle" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:clickable="true" android:focusable="true" android:background="?attr/selectableItemBackground" android:paddingVertical="6dp">
+      <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="扫描参数" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
+      <TextView android:id="@+id/tvScanTabDetailsChevron" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="▸" android:textColor="?attr/radioSecondary" android:textSize="14sp" />
     </LinearLayout>
-
-    <!-- Collapsible container: everything the user needs to configure before
-         starting a scan. Collapsed (GONE) by default; expanded on demand via
-         rowScanTabDetailsToggle so the tab opens compact. -->
-    <LinearLayout android:id="@+id/llScanTabDetails"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:visibility="gone">
-
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal">
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:hint="Start MHz"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-            android:layout_marginEnd="8dp">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etScanTabStart"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:inputType="numberDecimal" android:text="136.0"
-                android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+    <LinearLayout android:id="@+id/llScanTabDetails" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+        <com.google.android.material.textfield.TextInputLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="Start MHz" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox" android:layout_marginEnd="8dp">
+          <com.google.android.material.textfield.TextInputEditText android:id="@+id/etScanTabStart" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="numberDecimal" android:text="136.0" android:textColor="?attr/radioText" android:fontFamily="monospace" android:textSize="12sp" />
         </com.google.android.material.textfield.TextInputLayout>
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:hint="Stop MHz"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etScanTabStop"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:inputType="numberDecimal" android:text="174.0"
-                android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+        <com.google.android.material.textfield.TextInputLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="Stop MHz" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+          <com.google.android.material.textfield.TextInputEditText android:id="@+id/etScanTabStop" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="numberDecimal" android:text="174.0" android:textColor="?attr/radioText" android:fontFamily="monospace" android:textSize="12sp" />
         </com.google.android.material.textfield.TextInputLayout>
-    </LinearLayout>
-
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:layout_marginTop="8dp">
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:hint="Step Hz"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-            android:layout_marginEnd="8dp">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etScanTabStep"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:inputType="number" android:text="12500"
-                android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+      </LinearLayout>
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="8dp">
+        <com.google.android.material.textfield.TextInputLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="Step Hz" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox" android:layout_marginEnd="8dp">
+          <com.google.android.material.textfield.TextInputEditText android:id="@+id/etScanTabStep" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="number" android:text="12500" android:textColor="?attr/radioText" android:fontFamily="monospace" android:textSize="12sp" />
         </com.google.android.material.textfield.TextInputLayout>
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:hint="Squelch dB"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etScanTabSquelch"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:inputType="numberSigned" android:text="-80"
-                android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+        <com.google.android.material.textfield.TextInputLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="Squelch dB" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+          <com.google.android.material.textfield.TextInputEditText android:id="@+id/etScanTabSquelch" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="numberSigned" android:text="-80" android:textColor="?attr/radioText" android:fontFamily="monospace" android:textSize="12sp" />
         </com.google.android.material.textfield.TextInputLayout>
-    </LinearLayout>
-
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:layout_marginTop="8dp">
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:hint="Dwell ms"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-            android:layout_marginEnd="8dp">
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etScanTabDwell"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:inputType="number" android:text="200"
-                android:textColor="#FFFFFF" android:fontFamily="monospace"/>
+      </LinearLayout>
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="8dp">
+        <com.google.android.material.textfield.TextInputLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="Dwell ms" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox" android:layout_marginEnd="8dp">
+          <com.google.android.material.textfield.TextInputEditText android:id="@+id/etScanTabDwell" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="number" android:text="200" android:textColor="?attr/radioText" android:fontFamily="monospace" android:textSize="12sp" />
         </com.google.android.material.textfield.TextInputLayout>
-        <Spinner android:id="@+id/spinnerScanTabMode"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:backgroundTint="#00CCFF"/>
+        <Spinner android:id="@+id/spinnerScanTabMode" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:backgroundTint="?attr/radioLink" />
+      </LinearLayout>
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="向下扫描" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
+        <Switch android:id="@+id/switchScanTabDirection" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="有信号时停留" android:layout_marginStart="12dp" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
+        <Switch android:id="@+id/switchScanTabHoldOnSignal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+      </LinearLayout>
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="2dp">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="静噪门限自动跟随噪声底" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
+        <Switch android:id="@+id/switchScanTabAdaptive" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" />
+      </LinearLayout>
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="10dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="参数组" android:textColor="?attr/radioLink" android:textSize="12sp" android:layout_marginEnd="8dp" />
+        <Spinner android:id="@+id/spinnerScanTabMemorySlot" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:backgroundTint="?attr/radioLink" android:layout_marginEnd="8dp" />
+        <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabMemSave" android:layout_width="wrap_content" android:layout_height="44dp" android:text="保存" android:textSize="12sp" android:layout_marginEnd="8dp" />
+        <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabMemLoad" android:layout_width="wrap_content" android:layout_height="44dp" android:text="载入" android:textSize="12sp" />
+      </LinearLayout>
     </LinearLayout>
-
-    <!-- Scan direction switch -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginTop="10dp">
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="Scan Direction: Down"
-            android:textColor="#AAFFFFFF" android:textSize="12sp"/>
-        <Switch android:id="@+id/switchScanTabDirection"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <!-- Standard scanner "hold" behaviour: stay on a hit and keep playing
-             audio for as long as the carrier is present, only resuming the
-             sweep after the signal actually drops (matches how SDRangel's
-             channel demodulators stay locked to an active signal rather than
-             timing out on a fixed dwell), instead of always resuming after a
-             fixed resumeTimeMs regardless of whether the transmission is
-             still going. Default ON since this is standard scanner behaviour. -->
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Hold on Signal" android:layout_marginStart="12dp"
-            android:textColor="#AAFFFFFF" android:textSize="12sp"/>
-        <Switch android:id="@+id/switchScanTabHoldOnSignal"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:checked="true"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="8dp">
+      <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabStartStop" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="开始" android:textSize="12sp" android:layout_marginEnd="8dp" />
+      <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabReset" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="重置" android:textSize="12sp" android:layout_marginEnd="8dp" />
+      <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabPause" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="暂停" android:textSize="12sp" android:visibility="gone" />
     </LinearLayout>
-
-    <!-- Adaptive squelch switch -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginTop="2dp">
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Adaptive Squelch (auto noise-floor tracking)"
-            android:textColor="#AAFFFFFF" android:textSize="12sp"/>
-        <Switch android:id="@+id/switchScanTabAdaptive"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:checked="false"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="8dp">
+      <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabSearch" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="搜索模式" android:textSize="12sp" android:layout_marginEnd="8dp" />
+      <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabBusiest" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="活跃频道" android:textSize="12sp" android:layout_marginEnd="8dp" />
+      <Button style="@style/RadioPanelAction" android:id="@+id/btnScanTabClose" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="关闭" android:textSize="12sp" />
     </LinearLayout>
-
-    <!-- Scan parameter memory slots -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginTop="10dp">
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Memory" android:textColor="#00CCFF" android:textSize="12sp"
-            android:layout_marginEnd="8dp"/>
-        <Spinner android:id="@+id/spinnerScanTabMemorySlot"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:backgroundTint="#00CCFF"
-            android:layout_marginEnd="8dp"/>
-        <Button android:id="@+id/btnScanTabMemSave"
-            android:layout_width="wrap_content" android:layout_height="36dp"
-            android:text="Save" android:textSize="11sp"
-            android:backgroundTint="#2C3440" android:textColor="#FFFFFF"
-            android:layout_marginEnd="8dp"/>
-        <Button android:id="@+id/btnScanTabMemLoad"
-            android:layout_width="wrap_content" android:layout_height="36dp"
-            android:text="Load" android:textSize="11sp"
-            android:backgroundTint="#2C3440" android:textColor="#FFFFFF"/>
+    <ProgressBar android:id="@+id/progressScanTab" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="6dp" android:layout_marginTop="10dp" android:progressTint="?attr/radioLink" android:max="100" android:visibility="gone" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="8dp">
+      <TextView android:id="@+id/tvScanTabCurrentFreq" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="---" android:textColor="?attr/radioLink" android:textSize="14sp" android:fontFamily="monospace" />
+      <TextView android:id="@+id/tvScanTabSignal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--- dB" android:textColor="#44FF88" android:textSize="12sp" android:fontFamily="monospace" android:layout_marginEnd="12dp" />
+      <TextView android:id="@+id/tvScanTabHits" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Hits: 0" android:textColor="#FFAA00" android:textSize="12sp" android:fontFamily="monospace" />
     </LinearLayout>
-
-    </LinearLayout><!-- /llScanTabDetails -->
-
-    <!-- Control buttons -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:layout_marginTop="12dp">
-        <Button android:id="@+id/btnScanTabStartStop"
-            android:layout_width="0dp" android:layout_height="44dp"
-            android:layout_weight="1" android:text="Start Scan"
-            android:textSize="12sp"
-            android:backgroundTint="#00CC44" android:textColor="#000000"
-            android:layout_marginEnd="8dp"/>
-        <Button android:id="@+id/btnScanTabReset"
-            android:layout_width="0dp" android:layout_height="44dp"
-            android:layout_weight="1" android:text="Reset"
-            android:textSize="12sp"
-            android:backgroundTint="#2C3440" android:textColor="#FFFFFF"
-            android:layout_marginEnd="8dp"/>
-        <Button android:id="@+id/btnScanTabPause"
-            android:layout_width="0dp" android:layout_height="44dp"
-            android:layout_weight="1" android:text="Pause"
-            android:textSize="12sp"
-            android:backgroundTint="#FFAA00" android:textColor="#000000"
-            android:visibility="gone"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginTop="4dp">
+      <TextView android:id="@+id/tvScanTabNoiseFloor" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Floor: --- dB" android:textColor="#77AACCFF" android:textSize="11sp" android:fontFamily="monospace" />
+      <TextView android:id="@+id/tvScanTabRate" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--- ch/s" android:textColor="#77AACCFF" android:textSize="11sp" android:fontFamily="monospace" />
     </LinearLayout>
-
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:layout_marginTop="8dp">
-        <Button android:id="@+id/btnScanTabSearch"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:text="Search Mode"
-            android:textSize="11sp"
-            android:backgroundTint="#7A5CFF" android:textColor="#FFFFFF"
-            android:layout_marginEnd="8dp"/>
-        <Button android:id="@+id/btnScanTabBusiest"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:text="Busiest"
-            android:textSize="11sp"
-            android:backgroundTint="#2C3440" android:textColor="#FFFFFF"
-            android:layout_marginEnd="8dp"/>
-        <Button android:id="@+id/btnScanTabClose"
-            android:layout_width="0dp" android:layout_height="40dp"
-            android:layout_weight="1" android:text="Close"
-            android:textSize="11sp"
-            android:backgroundTint="#442222" android:textColor="#FFFFFF"/>
-    </LinearLayout>
-
-    <!-- Progress -->
-    <ProgressBar android:id="@+id/progressScanTab"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent" android:layout_height="6dp"
-        android:layout_marginTop="10dp"
-        android:progressTint="#00CCFF" android:max="100"
-        android:visibility="gone"/>
-
-    <!-- Status -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:layout_marginTop="8dp">
-        <TextView android:id="@+id/tvScanTabCurrentFreq"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="---"
-            android:textColor="#00CCFF" android:textSize="14sp"
-            android:fontFamily="monospace"/>
-        <TextView android:id="@+id/tvScanTabSignal"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="--- dB" android:textColor="#44FF88"
-            android:textSize="12sp" android:fontFamily="monospace"
-            android:layout_marginEnd="12dp"/>
-        <TextView android:id="@+id/tvScanTabHits"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Hits: 0" android:textColor="#FFAA00"
-            android:textSize="12sp" android:fontFamily="monospace"/>
-    </LinearLayout>
-
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:layout_marginTop="4dp">
-        <TextView android:id="@+id/tvScanTabNoiseFloor"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:text="Floor: --- dB"
-            android:textColor="#77AACCFF" android:textSize="11sp"
-            android:fontFamily="monospace"/>
-        <TextView android:id="@+id/tvScanTabRate"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="--- ch/s" android:textColor="#77AACCFF"
-            android:textSize="11sp" android:fontFamily="monospace"/>
-    </LinearLayout>
-
-    <!-- Tabulated channel view: one row per configured channel, refreshed
-         in place with its latest power/activity every time the scan
-         revisits it (as opposed to the hit log below, which only ever
-         appends). Modeled on SDRangel's Frequency Scanner channel table. -->
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Channel Table (tap to tune, long-press to lock out):"
-        android:textColor="#88FFFFFF" android:textSize="11sp"
-        android:layout_marginTop="10dp" android:layout_marginBottom="4dp"/>
-
-    <include layout="@layout/item_scan_channel_header"/>
-
-    <ListView
-        android:id="@+id/listScanTabChannelTable"
-        android:layout_width="match_parent"
-        android:layout_height="220dp"
-        android:background="#0D1117"
-        android:divider="#22FFFFFF"
-        android:dividerHeight="0.5dp"
-        android:nestedScrollingEnabled="true"/>
-
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Active Frequencies (tap to tune, long-press to lock out):"
-        android:textColor="#88FFFFFF" android:textSize="11sp"
-        android:layout_marginTop="10dp" android:layout_marginBottom="4dp"/>
-
-    <!-- Hit log (fixed height inside the drawer's own scroll view) -->
-    <ListView
-        android:id="@+id/listScanTabHits"
-        android:layout_width="match_parent"
-        android:layout_height="220dp"
-        android:background="#0D1117"
-        android:divider="#22FFFFFF"
-        android:dividerHeight="0.5dp"
-        android:nestedScrollingEnabled="true"/>
-
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="频道" android:textColor="?attr/radioSecondary" android:textSize="11sp" android:layout_marginTop="10dp" android:layout_marginBottom="4dp" />
+    <com.radiosport.ninegradio.ui.RadioDataTable android:id="@+id/listScanTabChannelTable" android:layout_width="match_parent" android:layout_height="180dp" android:background="?attr/radioMain" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="发现记录" android:textColor="?attr/radioSecondary" android:textSize="11sp" android:layout_marginTop="10dp" android:layout_marginBottom="4dp" />
+    <com.radiosport.ninegradio.ui.RadioDataTable android:id="@+id/listScanTabHits" android:layout_width="match_parent" android:layout_height="180dp" android:background="?attr/radioMain" />
+  </LinearLayout>
 </LinearLayout>

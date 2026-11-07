@@ -21,7 +21,29 @@ class RtlSdrApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
         instance = this
+        // Older builds stored the de-emphasis slider as an integer. The two
+        // supported standards are now represented by a ListPreference.
+        val preferences = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+        if(!preferences.getBoolean("theme_link_v17",false)) {
+            preferences.edit().putString("spectrum_theme_before_ui",preferences.getString("pref_spectrum_theme","Futuristic"))
+                .putString("pref_spectrum_theme","UI").putBoolean("theme_link_v17",true).apply()
+        }
+        val receiverPrefs=getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE)
+        if(!receiverPrefs.getBoolean("spectrum_resolution_v2",false)) {
+            val fft=preferences.getString("pref_fft_size",null)?.toIntOrNull() ?: receiverPrefs.getInt("fftSize",256)
+            if(fft<=512) {
+                receiverPrefs.edit().putInt("fftSize",2048).apply()
+                preferences.edit().putString("pref_fft_size","2048").apply()
+            }
+            receiverPrefs.edit().putBoolean("spectrum_resolution_v2",true).apply()
+        }
+        val oldDeemphasis = preferences.all["pref_deemph_us"]
+        val deemphasis = if (oldDeemphasis?.toString() == "50") "50" else "75"
+        if (oldDeemphasis !is String || oldDeemphasis != deemphasis) {
+            preferences.edit().putString("pref_deemph_us", deemphasis).apply()
+        }
         createNotificationChannels()
     }
 

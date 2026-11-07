@@ -1,0 +1,231 @@
+{
+  "search_query": "9GRadio fork:true",
+  "date": "2026-11-06",
+  "forks": [
+    {
+      "name": "coderogueproject404-del/9GRadio",
+      "commit": "6415a8819efe50c0f6c7ed6bca304130b943cd1e",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "9GRadio_Guide.docx",
+        "LICENSE",
+        "MLAT_Guide.md",
+        "RDF_User_Guide.docx",
+        "README.md",
+        "app",
+        "build.gradle",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "z14309-max/9GRadio",
+      "commit": "c803568cc7840ad860f4880b665b93f5d1d79362",
+      "app_tree": "10a07ca074d9346e489e543a89853fe7acf557de",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "MLAT_Guide.md",
+        "README.md",
+        "app",
+        "build.gradle",
+        "build_app.bat",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "paopao-sudo/9GRadio",
+      "commit": "b12cd81c1f260d4fa51cd35b3b1c90f2fca2db02",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "MLAT_Guide.md",
+        "README.md",
+        "app",
+        "build.gradle",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "rip2503/9GRadio",
+      "commit": "b12cd81c1f260d4fa51cd35b3b1c90f2fca2db02",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "MLAT_Guide.md",
+        "README.md",
+        "app",
+        "build.gradle",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "chengzi80/9GRadio",
+      "commit": "6ddd1df798f39640ee87f16b4abc1074c962dcfb",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "README.md",
+        "app",
+        "build.gradle",
+        "docs",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "sample",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "epiHATR/9GRadio",
+      "commit": "dc971ee83784ad92a6cdac3b03d19ca4ccd080d8",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "README.md",
+        "app",
+        "build.gradle",
+        "docs",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "torks-admin/9GRadio",
+      "commit": "8464cef1655534f3484849c32e3102d66cf9796c",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "README.md",
+        "app",
+        "build.gradle",
+        "docs",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "sample",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "khanfar/9GRadio",
+      "commit": "ddca6fb55a3cd859a5196a5281037daba528a328",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "README.md",
+        "app",
+        "build.gradle",
+        "docs",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "TurtleMcTurtle/9GRadio",
+      "commit": "9c43637f8e6f0f5c2e98969096ebf335563566e2",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "README.md",
+        "app",
+        "build.gradle",
+        "docs",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "settings.gradle"
+      ]
+    },
+    {
+      "name": "W5TSU/9GRadio",
+      "commit": "97e2d7c8ae971ffccfd9ea8b1309ac45b392f44e",
+      "app_tree": "da22ac0333b35900335e6bbea3b335b0539d475d",
+      "root_entries": [
+        ".gitignore",
+        "LICENSE",
+        "README.md",
+        "app",
+        "build.gradle",
+        "docs",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "sample",
+        "settings.gradle",
+        "web"
+      ]
+    },
+    {
+      "name": "jumo-fryna/9GRadio-ADS-B-Logger",
+      "commit": "56fb84243338cd13c2faa2f769a02a4631663207",
+      "app_tree": "3923c7e0060590fd94ce92274b9553ccbafd7844",
+      "root_entries": [
+        ".github",
+        ".gitignore",
+        "CHANGED_FILES.md",
+        "CHANGELOG_ADSB_LOGGER.md",
+        "LICENSE",
+        "README.md",
+        "app",
+        "build.gradle",
+        "docs",
+        "gradle.properties",
+        "gradle",
+        "images",
+        "sample",
+        "scripts",
+        "settings.gradle"
+      ]
+    }
+  ],
+  "details": [
+    {
+      "name": "z14309-max/9GRadio",
+      "truncated": false,
+      "app_files": 257,
+      "kotlin": 53,
+      "feature_paths": [
+        "app/build.gradle",
+        "app/src/main/java/com/radiosport/ninegradio/dsp/AudioDsp.kt"
+      ]
+    },
+    {
+      "name": "jumo-fryna/9GRadio-ADS-B-Logger",
+      "truncated": false,
+      "app_files": 49,
+      "kotlin": 33,
+      "feature_paths": [
+        "app/build.gradle"
+      ]
+    }
+  ],
+  "notes": [
+    "Inspected default master trees of the 11 similarly named fork candidates returned by the search.",
+    "Nine candidates have the exact upstream 1.39 app tree. z14309-max declares 1.52 and lacks the probed newer modules. The ADS-B Logger is a separate reduced app (com.radiosport.skylog1090).",
+    "This is not an exhaustive search of every non-default fork branch or private repository."
+  ]
+}

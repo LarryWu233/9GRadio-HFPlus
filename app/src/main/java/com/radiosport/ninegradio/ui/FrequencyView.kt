@@ -1,192 +1,149 @@
 package com.radiosport.ninegradio.ui
 
 import android.content.Context
-import android.graphics.*
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
-import kotlin.math.*
+import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
 
-/**
- * Large frequency readout with:
- *  - GHz / MHz / kHz / Hz digit groups
- *  - Tap a digit group to select it
- *  - Scroll on selected group to increment/decrement
- *  - Step-size indicator
- *  - Programmatic setFrequency / getFrequency
- */
-class FrequencyView @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
-) : View(context, attrs, defStyleAttr) {
-
+/** A single authoritative readout; select any decimal digit and drag vertically. */
+class FrequencyView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0) : View(context, attrs, defStyleAttr) {
     var onFrequencyChanged: ((Long) -> Unit)? = null
+    var onLongPress: ((Long) -> Unit)? = null
+    var onTuningFinished: (() -> Unit)? = null
+    var onTuningStepChanged: ((Long) -> Unit)? = null
+    var frequencyLimiter: ((Long, Long) -> Long)? = null
+    private var frequencyHz = 100_000_000L
+    private var digits = "0100000000"
+    private var selectedExponent = 3
+    var tuningStepHz = 1000L
+        private set
+    private var lastY = 0f
+    private var pendingDrag = 0f
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = RadioFonts.digits(context); textAlign = Paint.Align.CENTER }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSecondary) }
+    private val selectionPaint = Paint().apply { color = (UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent) and 0xffffff) or 0x22000000 }
+    private val groupPaint = Paint()
+    private val glyphBounds=android.graphics.Rect()
+    private val haptics = TuningHaptics(this)
+    private val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent) = true
+        override fun onLongPress(e: MotionEvent) { onLongPress?.invoke(frequencyHz) }
+    })
 
-    /** Invoked when the user long-presses any digit group — use this to show a manual-entry dialog. */
-    var onLongPress: ((currentHz: Long) -> Unit)? = null
-
-    private var frequencyHz: Long = 100_000_000L   // 100 MHz default
-    private var selectedGroup = 1  // 0=GHz, 1=MHz, 2=kHz, 3=Hz
-
-    private val bgPaint = Paint().apply {
-        color = 0xFF0D1117.toInt()
-        style = Paint.Style.FILL
-    }
-    private val digitPaint = Paint().apply {
-        typeface = Typeface.MONOSPACE
-        isAntiAlias = true
-        textAlign = Paint.Align.CENTER
-    }
-    private val separatorPaint = Paint().apply {
-        color = 0xFF444444.toInt()
-        strokeWidth = 1f
-    }
-    private val selectionPaint = Paint().apply {
-        color = 0x3300CCFF
-        style = Paint.Style.FILL
-    }
-    private val labelPaint = Paint().apply {
-        color = 0xFF666688.toInt()
-        isAntiAlias = true
-        textAlign = Paint.Align.CENTER
-    }
-
-    private val gestureDetector = GestureDetector(context,
-        object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapUp(e: MotionEvent): Boolean {
-                selectGroupAt(e.x); return true
-            }
-            override fun onLongPress(e: MotionEvent) {
-                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                onLongPress?.invoke(frequencyHz)
-            }
-            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
-                val step = groupStep(selectedGroup)
-                val delta = if (dy > 0) step else -step
-                setFrequency((frequencyHz + delta).coerceIn(500_000L, 1_766_000_000L))
-                return true
-            }
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-                val step = groupStep(selectedGroup)
-                val ticks = (vy / 200).toInt().coerceIn(-20, 20)
-                setFrequency((frequencyHz + step * ticks).coerceIn(500_000L, 1_766_000_000L))
-                return true
-            }
-        })
-
-    // ─── Public API ───────────────────────────────────────────────────────────
-
+    /** Programmatic updates are silent: rendering must never send a second tune command. */
     fun setFrequency(hz: Long) {
+        if (frequencyHz == hz) return
         frequencyHz = hz
-        invalidate()
-        onFrequencyChanged?.invoke(hz)
+        digits = hz.coerceAtLeast(0).toString().padStart(10, '0').takeLast(10)
+        contentDescription = "$hz Hz"
+        postInvalidateOnAnimation()
     }
-
-    fun getFrequency(): Long = frequencyHz
-
-    fun stepUp()   { setFrequency((frequencyHz + groupStep(selectedGroup)).coerceAtMost(1_766_000_000L)) }
-    fun stepDown() { setFrequency((frequencyHz - groupStep(selectedGroup)).coerceAtLeast(500_000L)) }
-
-    private fun groupStep(group: Int): Long = when (group) {
-        0 -> 1_000_000_000L
-        1 -> 1_000_000L
-        2 -> 1_000L
-        3 -> 1L
-        else -> 1_000L
+    fun getFrequency() = frequencyHz
+    fun setTuningStep(hz: Long) {
+        if (tuningStepHz == hz) return
+        tuningStepHz = hz.coerceAtLeast(1)
+        selectedExponent = floor(log10(tuningStepHz.toDouble())).toInt().coerceIn(0, 9)
+        onTuningStepChanged?.invoke(tuningStepHz)
+        postInvalidateOnAnimation()
     }
-
-    // ─── Drawing ──────────────────────────────────────────────────────────────
-
+    fun stepUp() = changeBy(tuningStepHz)
+    fun stepDown() = changeBy(-tuningStepHz)
+    var reverseTuning=false
+    private fun changeBy(rawDelta: Long) {
+        val delta=if(reverseTuning) -rawDelta else rawDelta
+        val target = TuningMath.snap(frequencyHz + delta, tuningStepHz)
+        val next = frequencyLimiter?.invoke(frequencyHz, target)
+            ?: target.coerceIn(0L, 9_999_999_999L)
+        if (next == frequencyHz) return
+        setFrequency(next)
+        onFrequencyChanged?.invoke(next)
+        haptics.tick()
+    }
+    private fun digitX(index: Int): Float {
+        val groupGap = width * 0.035f
+        val cell = (width - groupGap * 3) / 10f
+        val gaps = when { index == 0 -> 0; index <= 3 -> 1; index <= 6 -> 2; else -> 3 }
+        return cell * (index + 0.5f) + gaps * groupGap
+    }
     override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
-        canvas.drawRoundRect(0f, 0f, w, h, 12f, 12f, bgPaint)
-
-        val ghz  =  frequencyHz / 1_000_000_000L
-        val mhz  = (frequencyHz % 1_000_000_000L) / 1_000_000L
-        val khz  = (frequencyHz % 1_000_000L) / 1_000L
-        val hz   =  frequencyHz % 1_000L
-
-        val groups = listOf(
-            Pair("GHz", "%1d".format(ghz)),
-            Pair("MHz", "%03d".format(mhz)),
-            Pair("kHz", "%03d".format(khz)),
-            Pair("Hz",  "%03d".format(hz))
-        )
-
-        val groupCount = 4
-        val segW = w / groupCount
-        val centerY = h / 2f + 8f
-
-        for (i in groups.indices) {
-            val cx = segW * i + segW / 2f
-            val segRight = segW * (i + 1)
-
-            // Highlight selected group
-            if (i == selectedGroup) {
-                canvas.drawRect(segW * i + 4f, 4f, segRight - 4f, h - 4f, selectionPaint)
-            }
-
-            // Value digits
-            digitPaint.color = when {
-                i == selectedGroup -> 0xFF00EEFF.toInt()
-                i < selectedGroup -> 0xFF88AACC.toInt()
-                else -> 0xFF446688.toInt()
-            }
-            digitPaint.textSize = when (i) {
-                0 -> h * 0.30f
-                1 -> h * 0.42f
-                2 -> h * 0.34f
-                else -> h * 0.28f
-            }
-            canvas.drawText(groups[i].second, cx, centerY, digitPaint)
-
-            // Unit label below digits
-            labelPaint.textSize = h * 0.16f
-            canvas.drawText(groups[i].first, cx, h - 6f, labelPaint)
-
-            // Separator dot (between groups, except last)
-            if (i < groupCount - 1) {
-                val dotX = segRight - 2f
-                separatorPaint.color = 0xFF445566.toInt()
-                separatorPaint.strokeWidth = 3f
-                canvas.drawCircle(dotX, centerY - digitPaint.textSize * 0.4f, 5f, separatorPaint)
-            }
+        val cell = width * 0.0895f
+        val selected = 9 - selectedExponent
+        for ((first, last) in listOf(0 to 0, 1 to 3, 4 to 6, 7 to 9)) {
+            groupPaint.color = UiThemes.color(context,if(first==1) com.radiosport.ninegradio.R.attr.radioElevated else com.radiosport.ninegradio.R.attr.radioCard)
+            canvas.drawRoundRect(digitX(first) - cell * 0.49f, height * 0.1f,
+                digitX(last) + cell * 0.49f, height * 0.8f, 6f, 6f, groupPaint)
         }
-
-        // Step size indicator
-        val stepLabel = when (selectedGroup) {
-            0 -> "Step: 1 GHz"
-            1 -> "Step: 1 MHz"
-            2 -> "Step: 1 kHz"
-            3 -> "Step: 1 Hz"
-            else -> ""
+        canvas.drawRoundRect(digitX(selected) - cell / 2, height * 0.14f,
+            digitX(selected) + cell / 2, height * 0.77f, 5f, 5f, selectionPaint)
+        textPaint.textSize = minOf(cell * 1.45f, height * 0.47f)
+        for (index in 0..9) {
+            textPaint.textSize = minOf(cell * 1.45f, height * 0.47f) * if (index >= 7) 0.78f else 1f
+            textPaint.color = when {
+                index == selected -> UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
+                index >= 7 && tuningStepHz >= 1000 -> UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioMuted)
+                index in 1..3 -> UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioText)
+                else -> UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSecondary)
+            }
+            val glyphWidth=textPaint.measureText("8")
+            if(glyphWidth>cell*0.83f) textPaint.textSize*=cell*0.83f/glyphWidth
+            textPaint.getTextBounds("8",0,1,glyphBounds)
+            val baseline=height*0.45f-(glyphBounds.top+glyphBounds.bottom)/2f
+            val lit=textPaint.color
+            textPaint.color=(UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioText) and 0xffffff) or 0x11000000
+            canvas.drawText("8",digitX(index),baseline,textPaint)
+            textPaint.color=lit
+            canvas.drawText(digits, index, index + 1, digitX(index), baseline, textPaint)
         }
-        labelPaint.textAlign = Paint.Align.RIGHT
-        labelPaint.textSize = 22f
-        canvas.drawText(stepLabel, w - 8f, 20f, labelPaint)
-
-        // Long-press hint (subtle, bottom-left)
-        labelPaint.textAlign = Paint.Align.LEFT
-        labelPaint.textSize = 18f
-        canvas.drawText("⌛ hold to type", 8f, h - 6f, labelPaint)
-
-        labelPaint.textAlign = Paint.Align.CENTER
+        textPaint.color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSecondary)
+        textPaint.textSize = minOf(cell * 1.1f, height * 0.37f)
+        for ((left, right) in listOf(0 to 1, 3 to 4, 6 to 7))
+            canvas.drawCircle((digitX(left)+digitX(right))/2f,height*0.63f,height*0.014f,textPaint)
+        labelPaint.textSize = height * 0.12f
+        canvas.drawText("GHz", digitX(0), height * 0.95f, labelPaint)
+        canvas.drawText("MHz", digitX(2), height * 0.95f, labelPaint)
+        canvas.drawText("kHz", digitX(5), height * 0.95f, labelPaint)
+        canvas.drawText("Hz", digitX(8), height * 0.95f, labelPaint)
     }
-
-    private fun selectGroupAt(x: Float) {
-        selectedGroup = ((x / width * 4).toInt()).coerceIn(0, 3)
-        invalidate()
-    }
-
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        gestureDetector.onTouchEvent(event)
+        detector.onTouchEvent(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val digit = (0..9).minBy { abs(digitX(it) - event.x) }
+                setTuningStep(10.0.pow(9 - digit).toLong())
+                lastY = event.y
+                pendingDrag = 0f
+                parent?.requestDisallowInterceptTouchEvent(true)
+                invalidate()
+            }
+            MotionEvent.ACTION_MOVE -> {
+                pendingDrag += lastY - event.y
+                lastY = event.y
+                val tickHeight = 18 * resources.displayMetrics.density
+                val ticks = (pendingDrag / tickHeight).toInt()
+                if (ticks != 0) {
+                    changeBy(ticks * tuningStepHz)
+                    pendingDrag -= ticks * tickHeight
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                onTuningFinished?.invoke()
+                if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
+            }
+        }
         return true
     }
-
+    override fun performClick(): Boolean { super.performClick(); return true }
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val desiredH = (context.resources.displayMetrics.density * 72).toInt()
-        val h = resolveSize(desiredH, heightMeasureSpec)
-        super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY))
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), resolveSize((72 * resources.displayMetrics.density).toInt(), heightMeasureSpec))
     }
 }

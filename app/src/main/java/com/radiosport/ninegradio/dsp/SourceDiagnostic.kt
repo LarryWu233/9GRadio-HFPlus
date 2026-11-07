@@ -92,8 +92,10 @@ class SourceDiagnostic(
         val sampleRate    = source.getSampleRate()
         val isUsb         = source is RtlSdrDeviceSource
         val isTcp         = source is RtlTcpSource
-        val dspBlockBytes = DspEngine.DSP_CHUNK_SIZE
-        val blockPeriodMs = dspBlockBytes.toDouble() / (sampleRate.toDouble() * BYTES_PER_SAMPLE) * 1000.0
+        val samplesPerBlock = source.capabilities.blockSamples
+        val bytesPerSample = if (source.capabilities.floatIq) 8 else 2
+        val dspBlockBytes = samplesPerBlock * bytesPerSample
+        val blockPeriodMs = samplesPerBlock.toDouble() / sampleRate * 1000.0
         val wfmIfRate     = DspEngine.wfmIfRate(sampleRate)
         val flowBudgetMs  = FLOW_DEPTH * blockPeriodMs
 
@@ -119,7 +121,7 @@ class SourceDiagnostic(
             })
 
         findings += Finding("DSP block size",
-            "%,d bytes  (%,d IQ samples)".format(dspBlockBytes, dspBlockBytes / BYTES_PER_SAMPLE),
+            "%,d bytes  (%,d IQ samples)".format(dspBlockBytes, samplesPerBlock),
             Level.INFO, "Both sources deliver this block size to processIqBlock()")
 
         findings += Finding("Block period",
@@ -148,7 +150,7 @@ class SourceDiagnostic(
         val iqExtras  = DebugBus.getExtras(DebugBus.STAGE_IQ_STREAM)
         val iqRate    = stages[DebugBus.STAGE_IQ_STREAM].ratePerSec
         val dspRate   = stages[DebugBus.STAGE_DSP_PROCESS].ratePerSec
-        val expectedRate = sampleRate.toFloat() / (dspBlockBytes / BYTES_PER_SAMPLE.toFloat())
+        val expectedRate = sampleRate.toFloat() / (samplesPerBlock.toFloat())
 
         val deliveryLevel = when {
             iqRate < 1f                                        -> Level.INFO   // not yet streaming
@@ -235,8 +237,9 @@ class SourceDiagnostic(
 
         // 3a FFT (uses only fftSize samples of the block, rest ignored)
         val benchFft  = FftEngine(dspEngine.fftEngine.fftSize)
-        val dummyRaw  = ByteArray(dspBlockBytes)
-        val fftMs     = medianMs { benchFft.processUint8(dummyRaw) }
+        val dummyRaw  = ByteArray(samplesPerBlock * 2)
+        val dummyFloat = FloatArray(samplesPerBlock * 2)
+        val fftMs     = medianMs { if (source.capabilities.floatIq) benchFft.processFloat(dummyFloat) else benchFft.processUint8(dummyRaw) }
         val fftPct    = (fftMs / blockPeriodMs * 100).toInt()
         findings += Finding("FFT (${dspEngine.fftEngine.fftSize}-pt)",
             "%.3f ms   %d%% of budget".format(fftMs, fftPct),
@@ -247,22 +250,22 @@ class SourceDiagnostic(
         // 3b IQ→float + DC removal estimate (NativeDsp; proportional to block size)
         // Measured as: scan + scale + DC-block on dspBlockBytes/2 float IQ pairs.
         // Approximate: 1 float multiply+add pair per sample at ~1.5 ns/op.
-        val nativeDspMs = (dspBlockBytes / 2.0) * 1.5e-6   // rough estimate ~1.5 ns/sample
+        val nativeDspMs = samplesPerBlock * 1.5e-6   // rough estimate ~1.5 ns/sample
         findings += Finding("IQ→float + DC removal",
             "~%.2f ms  (estimate)".format(nativeDspMs),
             if (nativeDspMs > blockPeriodMs * 0.2) Level.WARN else Level.INFO,
-            "NativeDsp.convertUint8ToFloat + removeDc on ${dspBlockBytes / 2} IQ samples — O(N)")
+            "NativeDsp.convertUint8ToFloat + removeDc on ${samplesPerBlock} IQ samples — O(N)")
 
         // 3c ComplexDecimator: deviceRate → wfmIfRate
         val decimator = ComplexDecimator(sampleRate, wfmIfRate)
-        val dummyIq   = FloatArray(dspBlockBytes)        // dspBlockBytes/2 IQ pairs
+        val dummyIq   = FloatArray(samplesPerBlock * 2)        // dspBlockBytes/2 IQ pairs
         val decimMs   = medianMs { decimator.process(dummyIq) }
         val decimOut  = decimator.process(dummyIq)       // capture real output for §3d input
         val decimPct  = (decimMs / blockPeriodMs * 100).toInt()
         findings += Finding("ComplexDecimator (÷${sampleRate / wfmIfRate})",
             "%.3f ms   %d%% of budget".format(decimMs, decimPct),
             if (decimPct > 40) Level.WARN else Level.PASS,
-            "${dspBlockBytes / 2} IQ → ${decimOut.size / 2} IQ  " +
+            "${samplesPerBlock} IQ → ${decimOut.size / 2} IQ  " +
             "(%,d → %,d S/s)".format(sampleRate, wfmIfRate))
 
         // 3d WFM Demodulator: FM discriminator + de-emphasis + 15 kHz LPF

@@ -20,6 +20,8 @@ import kotlin.math.*
  * can safely call them concurrently without data races on the internal buffers.
  */
 class FftEngine(fftSize: Int = 2048) {
+    @Volatile var analysisIntervalSamples=0
+    private var samplesSinceTransform=0L
 
     var fftSize: Int = fftSize
         private set
@@ -30,11 +32,15 @@ class FftEngine(fftSize: Int = 2048) {
      */
     @Volatile var decimationFactor: Int = 1
         set(value) {
-            field = when (value) {
-                1, 2, 4, 8, 16, 32, 64 -> value
-                else -> 1
+            synchronized(this) {
+                val normalized = if (value in intArrayOf(1, 2, 4, 8, 16, 32, 64)) value else 1
+                if (field != normalized) {
+                    field = normalized
+                    resetInput()
+                }
             }
         }
+
 
     enum class WindowType {
         RECTANGULAR, HANN, HAMMING, BLACKMAN, BLACKMAN_HARRIS, FLAT_TOP, KAISER, NUTTALL
@@ -56,6 +62,25 @@ class FftEngine(fftSize: Int = 2048) {
     private var scratchRe     = DoubleArray(fftSize)
     private var scratchIm     = DoubleArray(fftSize)
     private var scratchResult = FloatArray(fftSize)
+
+    // Assemble a complete FFT window across USB blocks, after decimation.
+    // HF+ callbacks have 4096 samples: at x64 only 64 remain per callback.
+    private var inputRe = DoubleArray(fftSize)
+    private var inputIm = DoubleArray(fftSize)
+    private var inputCount = 0
+    private var validInputCount = 0
+    private var decimationCount = 0
+    private var decimationI = 0.0
+    private var decimationQ = 0.0
+
+    private fun resetInput() {
+        samplesSinceTransform=0
+        inputCount = 0
+        validInputCount = 0
+        decimationCount = 0
+        decimationI = 0.0
+        decimationQ = 0.0
+    }
 
     // Smoothing factor (0 = instant / all-new, 1 = max smooth / all-old)
     @Volatile var smoothingAlpha = 0.3f
@@ -127,6 +152,7 @@ class FftEngine(fftSize: Int = 2048) {
      */
     @Synchronized
     fun resetSpectrumAveraging() {
+        resetInput()
         resetFrameAvg()
         resyncPending = true
     }
@@ -193,6 +219,9 @@ class FftEngine(fftSize: Int = 2048) {
         frameAvgBuffer = DoubleArray(n) { 0.0 }
         frameAvgAccum  = 0
         noiseFloorEst  = FloatArray(n) { -150f }
+        inputRe = DoubleArray(n)
+        inputIm = DoubleArray(n)
+        resetInput()
         buildTwiddleTable(n)
     }
 
@@ -203,82 +232,55 @@ class FftEngine(fftSize: Int = 2048) {
      */
     @Synchronized
     fun processUint8(rawIq: ByteArray): FloatArray {
-        val n = fftSize
-        val re = scratchRe
-        val im = scratchIm
-        val totalSamples = rawIq.size / 2
-        val dec = decimationFactor.coerceAtLeast(1)
-
-        val dcSamples = totalSamples.coerceAtLeast(1)
-        var sumI = 0.0; var sumQ = 0.0
-        for (i in 0 until dcSamples) {
-            sumI += (rawIq[2 * i].toInt() and 0xFF)
-            sumQ += (rawIq[2 * i + 1].toInt() and 0xFF)
+        for (i in 0 until rawIq.size / 2) {
+            accumulateSample(((rawIq[2 * i].toInt() and 0xff) - 127.5) / 128.0,
+                ((rawIq[2 * i + 1].toInt() and 0xff) - 127.5) / 128.0)
         }
-        val meanI = sumI / dcSamples
-        val meanQ = sumQ / dcSamples
-
-        val effectiveSamples = totalSamples / dec
-        val samples  = minOf(n, effectiveSamples.coerceAtLeast(0))
-        val decOffset = effectiveSamples - samples
-
-        for (i in 0 until samples) {
-            val rawStart = (decOffset + i) * dec
-            var avgI = 0.0; var avgQ = 0.0; var count = 0
-            for (d in 0 until dec) {
-                val src = rawStart + d
-                if (src < totalSamples) {
-                    avgI += (rawIq[2 * src].toInt() and 0xFF) - meanI
-                    avgQ += (rawIq[2 * src + 1].toInt() and 0xFF) - meanQ
-                    count++
-                }
-            }
-            if (count > 0) {
-                re[i] = (avgI / count / 128.0) * window[i]
-                im[i] = (avgQ / count / 128.0) * window[i]
-            }
-        }
-        if (samples < n) { re.fill(0.0, samples, n); im.fill(0.0, samples, n) }
-        return computeFft(re, im)
+        return transformAvailableInput()
     }
 
-    /**
-     * Compute FFT from float IQ array (interleaved I, Q pairs).
-     */
+    /** Float IQ retains driver precision, including partial decimation groups. */
     @Synchronized
     fun processFloat(floatIq: FloatArray): FloatArray {
-        val n = fftSize
-        val re = scratchRe
-        val im = scratchIm
-        val totalSamples = floatIq.size / 2
-        val dec = decimationFactor.coerceAtLeast(1)
+        for (i in 0 until floatIq.size / 2)
+            accumulateSample(floatIq[2 * i].toDouble(), floatIq[2 * i + 1].toDouble())
+        return transformAvailableInput()
+    }
 
-        var meanI = 0.0; var meanQ = 0.0
-        for (i in 0 until totalSamples) { meanI += floatIq[2 * i]; meanQ += floatIq[2 * i + 1] }
-        if (totalSamples > 0) { meanI /= totalSamples; meanQ /= totalSamples }
+    private fun accumulateSample(i: Double, q: Double) {
+        samplesSinceTransform++
+        decimationI += i
+        decimationQ += q
+        decimationCount++
+        if (decimationCount < decimationFactor) return
+        inputRe[inputCount] = decimationI / decimationCount
+        inputIm[inputCount] = decimationQ / decimationCount
+        decimationCount = 0
+        decimationI = 0.0
+        decimationQ = 0.0
+        inputCount = (inputCount + 1) % fftSize
+        validInputCount = (validInputCount + 1).coerceAtMost(fftSize)
+    }
 
-        val effectiveSamples = totalSamples / dec
-        val samples  = minOf(n, effectiveSamples.coerceAtLeast(0))
-        val decOffset = effectiveSamples - samples
-
-        for (i in 0 until samples) {
-            val rawStart = (decOffset + i) * dec
-            var avgI = 0.0; var avgQ = 0.0; var count = 0
-            for (d in 0 until dec) {
-                val src = rawStart + d
-                if (src < totalSamples) {
-                    avgI += floatIq[2 * src]     - meanI
-                    avgQ += floatIq[2 * src + 1] - meanQ
-                    count++
-                }
-            }
-            if (count > 0) {
-                re[i] = (avgI / count) * window[i]
-                im[i] = (avgQ / count) * window[i]
-            }
+    // At most one transform per source block; large USB blocks must not trigger
+    // dozens of transforms just because the selected FFT is small.
+    private fun transformAvailableInput(): FloatArray {
+        if (validInputCount < fftSize || samplesSinceTransform<analysisIntervalSamples) return smoothed
+        samplesSinceTransform=0
+        var meanI = 0.0
+        var meanQ = 0.0
+        for (index in 0 until fftSize) {
+            meanI += inputRe[index]
+            meanQ += inputIm[index]
         }
-        if (samples < n) { re.fill(0.0, samples, n); im.fill(0.0, samples, n) }
-        return computeFft(re, im)
+        meanI /= fftSize
+        meanQ /= fftSize
+        for (index in 0 until fftSize) {
+            val source = (inputCount + index) % fftSize
+            scratchRe[index] = (inputRe[source] - meanI) * window[index]
+            scratchIm[index] = (inputIm[source] - meanQ) * window[index]
+        }
+        return computeFft(scratchRe, scratchIm)
     }
 
     private fun computeFft(re: DoubleArray, im: DoubleArray): FloatArray {

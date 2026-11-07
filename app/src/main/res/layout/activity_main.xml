@@ -4,19 +4,23 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0D1117">
+    android:background="?attr/radioMain">
 
     <!-- Toolbar -->
     <com.google.android.material.appbar.AppBarLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar">
+        android:background="?attr/radioSurface"
+        app:elevation="0dp"
+        android:stateListAnimator="@null"
+        app:statusBarForeground="?attr/radioSurface"
+        >
 
         <androidx.appcompat.widget.Toolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="#161B22"
+            android:background="?attr/radioSurface"
             app:titleTextColor="#CCFFFFFF">
 
             <LinearLayout
@@ -27,19 +31,37 @@
 
                 <ImageView
                     android:id="@+id/statusIndicator"
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
                     android:src="@drawable/ic_disconnected"
                     android:layout_marginEnd="8dp" />
 
                 <TextView
                     android:id="@+id/tvDeviceName"
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
+                    android:maxWidth="156dp" android:singleLine="true" android:ellipsize="end"
                     android:text="Not Connected"
-                    android:textColor="#AAFFFFFF"
-                    android:textSize="13sp" />
+                    android:textColor="?attr/radioSecondary"
+                    android:textSize="12sp" />
+
+            <!-- Manual listening switch -->
+            <TextView
+                android:id="@+id/tvSquelchStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:text="OPEN"
+                android:textSize="11sp"
+                android:textColor="#00FF88"
+                android:fontFamily="monospace"
+                android:minWidth="64dp"
+                android:gravity="center"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                />
+
+                <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
 
                 <ProgressBar
                     android:id="@+id/progressConnect"
@@ -47,6 +69,11 @@
                     android:layout_width="20dp"
                     android:layout_height="20dp"
                     android:visibility="gone" />
+                <ImageButton android:id="@+id/btnToolbarSettings"
+                    android:layout_width="44dp" android:layout_height="44dp"
+                    android:src="@drawable/ic_module_settings" android:tint="#AFC5D2"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:padding="10dp" android:contentDescription="设备与设置"/>
             </LinearLayout>
         </androidx.appcompat.widget.Toolbar>
     </com.google.android.material.appbar.AppBarLayout>
@@ -61,8 +88,8 @@
         <!-- Status bar: Demod, Rate, Signal -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="36dp"
-            android:background="#161B22"
+            android:layout_height="28dp"
+            android:background="?attr/radioSurface"
             android:gravity="center_vertical"
             android:paddingHorizontal="12dp"
             android:orientation="horizontal">
@@ -70,10 +97,10 @@
             <TextView
                 android:id="@+id/tvDemodMode"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_height="wrap_content" android:singleLine="true" android:maxWidth="80dp" android:ellipsize="end"
                 android:text="NFM"
-                android:textColor="#00CCFF"
-                android:textSize="13sp"
+                android:textColor="?attr/radioLink"
+                android:textSize="12sp"
                 android:fontFamily="monospace"
                 android:background="#22004488"
                 android:paddingHorizontal="6dp"
@@ -84,32 +111,20 @@
             <TextView
                 android:id="@+id/tvSampleRate"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_height="wrap_content" android:singleLine="true" android:maxWidth="94dp" android:ellipsize="end"
                 android:text="2.048 MS/s"
-                android:textColor="#88FFFFFF"
-                android:textSize="12sp"
+                android:textColor="?attr/radioSecondary"
+                android:textSize="11sp"
                 android:fontFamily="monospace"/>
 
             <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
-
-            <!-- Squelch status -->
-            <TextView
-                android:id="@+id/tvSquelchStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="CLOSED"
-                android:textSize="11sp"
-                android:textColor="#FF4444"
-                android:fontFamily="monospace"/>
-
-            <View android:layout_width="12dp" android:layout_height="1dp"/>
 
             <!-- Signal meter -->
             <ProgressBar
                 android:id="@+id/signalMeter"
                 style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="80dp"
-                android:layout_height="10dp"
+                android:layout_width="56dp"
+                android:layout_height="6dp"
                 android:max="100"
                 android:progress="0"
                 android:progressTint="#00FF44"
@@ -117,13 +132,13 @@
 
             <TextView
                 android:id="@+id/tvSignalDb"
-                android:layout_width="70dp"
+                android:layout_width="86dp"
                 android:layout_height="wrap_content"
                 android:text="-120 dBFS"
-                android:textColor="#88FFFFFF"
-                android:textSize="11sp"
+                android:textColor="?attr/radioSecondary"
+                android:textSize="10sp"
                 android:fontFamily="monospace"
-                android:gravity="end"
+                android:gravity="end" android:singleLine="true" android:maxLines="1"
                 android:layout_marginStart="6dp"/>
         </LinearLayout>
 
@@ -132,34 +147,19 @@
             android:id="@+id/frequencyView"
             android:layout_width="match_parent"
             android:layout_height="72dp"
-            android:background="#0D1117"/>
+            android:background="?attr/radioMain"/>
 
-        <!-- Freq step buttons -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="32dp"
-            android:orientation="horizontal"
-            android:background="#0D1117">
-
-            <Button
-                android:id="@+id/btnFreqDown"
-                style="@style/Widget.AppCompat.Button.Borderless"
-                android:layout_width="80dp"
-                android:layout_height="match_parent"
-                android:text="◀  −"
-                android:textColor="#0088CC"
-                android:textSize="16sp"/>
-
-            <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
-
-            <Button
-                android:id="@+id/btnFreqUp"
-                style="@style/Widget.AppCompat.Button.Borderless"
-                android:layout_width="80dp"
-                android:layout_height="match_parent"
-                android:text="+  ▶"
-                android:textColor="#0088CC"
-                android:textSize="16sp"/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="36dp"
+            android:gravity="center_vertical" android:background="?attr/radioSurface" android:orientation="horizontal">
+        <TextView android:id="@+id/tvBandContext"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:singleLine="true" android:ellipsize="end"
+            android:gravity="center_vertical" android:paddingHorizontal="12dp"
+            android:textColor="?attr/radioSecondary" android:textSize="12sp" android:background="?attr/radioSurface"/>
+        <TextView android:id="@+id/btnGraphGesture" android:layout_width="wrap_content"
+            android:layout_height="match_parent" android:gravity="center" android:paddingHorizontal="10dp"
+            android:text="拖动调谐 ▾" android:textColor="?attr/radioLink" android:textSize="12sp"
+            android:clickable="true" android:focusable="true"/>
         </LinearLayout>
 
         <!-- Spectrum view -->
@@ -167,7 +167,31 @@
             android:id="@+id/spectrumView"
             android:layout_width="match_parent"
             android:layout_height="160dp"
-            android:background="#0D1117"/>
+            android:background="?attr/radioMain"/>
+
+        <LinearLayout android:id="@+id/plotTuningBar" android:layout_width="match_parent" android:layout_height="48dp"
+            android:orientation="horizontal" android:gravity="center_vertical" android:background="?attr/radioSurface">
+            <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <Button android:id="@+id/btnPlotZoomOut" style="@style/RadioCompactButton"
+                    android:layout_width="40dp" android:layout_height="48dp" android:text="−" android:contentDescription="扩大显示宽度"/>
+                <com.radiosport.ninegradio.ui.RadioWidthReadout android:id="@+id/tvPlotZoom" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+                    android:gravity="center" android:textColor="?attr/radioSecondary" android:textSize="11sp" android:maxLines="2"
+                    android:clickable="true" android:focusable="true" android:contentDescription="显示宽度，恢复全宽"/>
+                <Button android:id="@+id/btnPlotZoomIn" style="@style/RadioCompactButton"
+                    android:layout_width="40dp" android:layout_height="48dp" android:text="+" android:contentDescription="缩小显示宽度"/>
+            </LinearLayout>
+            <View android:layout_width="1dp" android:layout_height="28dp" android:background="?attr/radioOutline"/>
+            <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <Button android:id="@+id/btnStepDown" style="@style/RadioCompactButton"
+                    android:layout_width="40dp" android:layout_height="48dp" android:text="−" android:contentDescription="减小 Step"/>
+                <com.radiosport.ninegradio.ui.RadioWidthReadout android:id="@+id/tvTuningStep" android:layout_width="0dp" android:layout_weight="1" android:layout_height="48dp"
+                    android:gravity="center" android:textColor="?attr/radioSecondary" android:textSize="11sp" android:maxLines="2"/>
+                <Button android:id="@+id/btnStepUp" style="@style/RadioCompactButton"
+                    android:layout_width="40dp" android:layout_height="48dp" android:text="+" android:contentDescription="增大 Step"/>
+            </LinearLayout>
+        </LinearLayout>
 
         <!-- Waterfall view: takes remaining space above the bottom sheet peek -->
         <com.radiosport.ninegradio.ui.WaterfallView
@@ -197,33 +221,26 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="#161B22"
+        android:background="?attr/radioSurface"
         android:elevation="8dp"
         app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior"
         app:behavior_peekHeight="100dp"
         app:behavior_hideable="false">
-
-        <!-- Drag handle — always visible -->
-        <View
-            android:layout_width="40dp"
-            android:layout_height="4dp"
-            android:layout_gravity="center_horizontal"
-            android:background="#44FFFFFF"
-            android:layout_marginTop="6dp"
-            android:layout_marginBottom="2dp"/>
 
         <!-- Tab bar — always visible, never scrolls away -->
         <com.google.android.material.tabs.TabLayout
             android:id="@+id/controlTabLayout"
             android:layout_width="match_parent"
             android:layout_height="44dp"
-            android:background="#0D1117"
-            app:tabMode="fixed"
-            app:tabGravity="fill"
+            android:background="?attr/radioMain"
+            app:tabMode="scrollable"
+            app:tabGravity="center"
+            app:tabMinWidth="48dp"
             app:tabTextColor="#667788"
-            app:tabSelectedTextColor="#00CCFF"
-            app:tabIndicatorColor="#00CCFF"
+            app:tabSelectedTextColor="?attr/radioLink"
+            app:tabIndicatorColor="?attr/radioLink"
             app:tabIndicatorHeight="3dp"
+            app:tabIconTint="@color/module_tab_icon"
             app:tabTextAppearance="@android:style/TextAppearance.Small"/>
 
         <!-- Scrollable content region — only this part scrolls -->
@@ -259,6 +276,14 @@
         </androidx.core.widget.NestedScrollView>
 
     </LinearLayout>
+
+    <com.radiosport.ninegradio.ui.PanelToggleView android:id="@+id/sheetToggle"
+        android:layout_width="48dp" android:layout_height="32dp"
+        android:contentDescription="控制面板" android:clickable="true" android:focusable="true"
+        android:elevation="12dp" android:background="@android:color/transparent"
+        android:translationY="4dp"
+        app:layout_anchor="@id/controlsBottomSheet" app:layout_anchorGravity="top|center_horizontal"
+        android:layout_gravity="center"/>
 
     <!-- FABs -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton

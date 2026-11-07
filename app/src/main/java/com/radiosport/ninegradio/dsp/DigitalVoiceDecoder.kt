@@ -103,21 +103,31 @@ class DigitalVoiceDecoder {
     // RSSI
     private var rssiDb = -100f
 
-    fun setMode(mode: DemodMode) {
+    private var closed = false
+
+    @Synchronized fun setMode(mode: DemodMode) {
+        if (closed) return
         if (mode != activeMode) {
             activeMode = mode
             resetState()
         }
     }
 
-    fun reset() = resetState()
+    @Synchronized fun reset() { if (!closed) resetState() }
+
+    @Synchronized fun close() {
+        closed = true
+        DsdccNative.destroy(nativeHandle)
+        nativeHandle = -1L
+    }
 
     /**
      * Call this when the vocoder mode changes (mbelib ↔ plugin).
      * Destroys and recreates the native decoder handle so it is
      * initialised with the new enableMbelib() flag.
      */
-    fun rebuildHandle() {
+    @Synchronized fun rebuildHandle() {
+        if (closed) return
         DsdccNative.destroy(nativeHandle)
         nativeHandle = -1L
         val proto = activeProtoOrdinal()
@@ -133,7 +143,8 @@ class DigitalVoiceDecoder {
     //  samples: 48 kHz normalised float discriminator output
     // --------------------------------------------------------
 
-    fun feed(samples: FloatArray, rfSignalDb: Float = Float.NaN) {
+    @Synchronized fun feed(samples: FloatArray, rfSignalDb: Float = Float.NaN) {
+        if (closed) return
         if (!rfSignalDb.isNaN()) rssiDb = rfSignalDb
 
         val n = samples.size

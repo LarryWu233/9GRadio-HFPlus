@@ -1,0 +1,116 @@
+{
+  "audit_date": "2026-11-06",
+  "repository": "rkarikari/9GRadio",
+  "latest_release": {
+    "tag": "9GRadio_v1.83",
+    "published_at": "2026-11-03T13:01:53Z",
+    "url": "https://github.com/rkarikari/9GRadio/releases/tag/9GRadio_v1.83",
+    "assets": [
+      {
+        "name": "9GRadio_v1.83_release.apk",
+        "size": 13117184,
+        "url": "https://github.com/rkarikari/9GRadio/releases/download/9GRadio_v1.83/9GRadio_v1.83_release.apk"
+      }
+    ]
+  },
+  "release_tag_commit": "625424bbb0cae43cfbce657607942177cd501178",
+  "branches": [
+    {
+      "name": "master",
+      "commit": "002c355ab02069e96da26755a4169095bb25614e"
+    }
+  ],
+  "releases_checked": [
+    {
+      "tag": "9GRadio_v1.83",
+      "assets": [
+        {
+          "name": "9GRadio_v1.83_release.apk",
+          "size": 13117184
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.82",
+      "assets": [
+        {
+          "name": "9GRadio_v1.82_release.apk",
+          "size": 12942281
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.81",
+      "assets": [
+        {
+          "name": "9GRadio_v1.81_release.apk",
+          "size": 12937925
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.80",
+      "assets": [
+        {
+          "name": "9GRadio_v1.80_release.apk",
+          "size": 12581170
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.79",
+      "assets": [
+        {
+          "name": "9GRadio_v1.79_release.apk",
+          "size": 12576018
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.77",
+      "assets": [
+        {
+          "name": "9GRadio_v1.77_release.apk",
+          "size": 12553462
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.74",
+      "assets": [
+        {
+          "name": "9GRadio_v1.74_release.apk",
+          "size": 12175255
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.73",
+      "assets": [
+        {
+          "name": "9GRadio_v1.73_release.apk",
+          "size": 12161528
+        }
+      ]
+    },
+    {
+      "tag": "9GRadio_v1.50",
+      "assets": [
+        {
+          "name": "9GRadio_v1.50_release.apk",
+          "size": 10198300
+        }
+      ]
+    }
+  ],
+  "endpoints": [
+    "https://api.github.com/repos/rkarikari/9GRadio/releases/latest",
+    "https://api.github.com/repos/rkarikari/9GRadio/releases?per_page=100",
+    "https://api.github.com/repos/rkarikari/9GRadio/branches",
+    "https://api.github.com/repos/rkarikari/9GRadio/git/ref/tags/9GRadio_v1.83"
+  ],
+  "limitations": [
+    "GitHub generated source archives use their tag trees; they are not independent source uploads.",
+    "This snapshot covers the public upstream repository, its branches and published release assets, not private or unpublished sources."
+  ]
+}

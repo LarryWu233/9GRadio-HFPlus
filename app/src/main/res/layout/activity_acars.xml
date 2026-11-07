@@ -10,7 +10,7 @@
         android:id="@+id/layoutAcarsStatus"
         android:layout_width="match_parent"
         android:layout_height="44dp"
-        android:background="#0D1117"
+        android:background="?attr/radioMain"
         android:gravity="center_vertical"
         android:paddingHorizontal="12dp"
         android:orientation="horizontal">
@@ -39,7 +39,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="131.725 MHz"
-            android:textColor="#00CCFF"
+            android:textColor="?attr/radioLink"
             android:textSize="13sp"
             android:fontFamily="monospace"
             android:layout_marginEnd="10dp"/>
@@ -58,7 +58,7 @@
     <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#161B22"
+        android:background="?attr/radioSurface"
         android:scrollbars="none">
 
         <LinearLayout
@@ -78,48 +78,48 @@
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="40dp"
                 android:minHeight="0dp"
-                android:text="131.825" android:textColor="#00CCFF" android:textSize="12sp"
+                android:text="131.825" android:textColor="?attr/radioLink" android:textSize="12sp"
                 android:paddingHorizontal="10dp"/>
             <Button android:id="@+id/btnCh129125"
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="40dp"
                 android:minHeight="0dp"
-                android:text="129.125" android:textColor="#00CCFF" android:textSize="12sp"
+                android:text="129.125" android:textColor="?attr/radioLink" android:textSize="12sp"
                 android:paddingHorizontal="10dp"/>
             <Button android:id="@+id/btnCh130025"
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="40dp"
                 android:minHeight="0dp"
-                android:text="130.025" android:textColor="#00CCFF" android:textSize="12sp"
+                android:text="130.025" android:textColor="?attr/radioLink" android:textSize="12sp"
                 android:paddingHorizontal="10dp"/>
             <Button android:id="@+id/btnCh130425"
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="40dp"
                 android:minHeight="0dp"
-                android:text="130.425" android:textColor="#00CCFF" android:textSize="12sp"
+                android:text="130.425" android:textColor="?attr/radioLink" android:textSize="12sp"
                 android:paddingHorizontal="10dp"/>
             <Button android:id="@+id/btnCh130450"
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="40dp"
                 android:minHeight="0dp"
-                android:text="130.450" android:textColor="#00CCFF" android:textSize="12sp"
+                android:text="130.450" android:textColor="?attr/radioLink" android:textSize="12sp"
                 android:paddingHorizontal="10dp"/>
             <Button android:id="@+id/btnCh131125"
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="40dp"
                 android:minHeight="0dp"
-                android:text="131.125" android:textColor="#00CCFF" android:textSize="12sp"
+                android:text="131.125" android:textColor="?attr/radioLink" android:textSize="12sp"
                 android:paddingHorizontal="10dp"/>
             <Button android:id="@+id/btnCh131550"
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="40dp"
                 android:minHeight="0dp"
-                android:text="131.550" android:textColor="#00CCFF" android:textSize="12sp"
+                android:text="131.550" android:textColor="?attr/radioLink" android:textSize="12sp"
                 android:paddingHorizontal="10dp"/>
 
             <!-- Separator -->
             <View android:layout_width="1dp" android:layout_height="20dp"
-                android:background="#33FFFFFF" android:layout_marginHorizontal="6dp"/>
+                android:background="?attr/radioOutline" android:layout_marginHorizontal="6dp"/>
 
             <Button android:id="@+id/btnAcarsClear"
                 style="@style/Widget.AppCompat.Button.Borderless"
@@ -161,7 +161,7 @@
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="32dp"
                 android:minHeight="0dp"
-                android:text="All" android:textColor="#FFFFFF"
+                android:text="All" android:textColor="?attr/radioText"
                 android:textSize="11sp" android:paddingHorizontal="10dp"
                 android:backgroundTint="#33004488"/>
 
@@ -177,7 +177,7 @@
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="32dp"
                 android:minHeight="0dp"
-                android:text="Q0 Pos" android:textColor="#00CCFF"
+                android:text="Q0 Pos" android:textColor="?attr/radioLink"
                 android:textSize="11sp" android:paddingHorizontal="10dp"
                 android:backgroundTint="#22000044"/>
 
@@ -201,7 +201,7 @@
                 style="@style/Widget.AppCompat.Button.Borderless"
                 android:layout_width="wrap_content" android:layout_height="32dp"
                 android:minHeight="0dp"
-                android:text="Other" android:textColor="#AAAAAA"
+                android:text="Other" android:textColor="?attr/radioSecondary"
                 android:textSize="11sp" android:paddingHorizontal="10dp"
                 android:backgroundTint="#22222222"/>
 
@@ -212,7 +212,7 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="28dp"
-        android:background="#0D1117"
+        android:background="?attr/radioMain"
         android:gravity="center_vertical"
         android:paddingHorizontal="12dp"
         android:orientation="horizontal">
@@ -242,7 +242,7 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:background="#0A1118"
-        android:divider="#1AFFFFFF"
+        android:divider="?attr/radioOutline"
         android:dividerHeight="1dp"
         android:scrollbarThumbVertical="@android:color/darker_gray"/>
 

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="receiver_attenuation">输入衰减</string>
+    <string name="receiver_hf_agc">HF+ 自动增益</string>
+    <string name="receiver_attenuation_hint">0–48 dB，间隔 6 dB；衰减越小灵敏度越高</string>
+    <string name="receiver_hf_agc_hint">关闭自动增益后可手动设置衰减</string>
+    <string name="spectrum_waterfall_drag">频谱与瀑布图</string>
+    <string name="spectrum_waterfall_hint">显示比例与电平</string>
+    <string name="spectrum_height">频谱高度</string>
+    <string name="waterfall_quick_adjust">频谱与瀑布电平</string>
+    <string name="waterfall_adjust_title">频谱与瀑布图</string>
+    <string name="waterfall_preset_clear">清晰 · 深色背景</string>
+    <string name="waterfall_preset_weak">弱信号 · 高对比度</string>
+    <string name="waterfall_preset_reset">重置配色与布局</string>
+    <string name="waterfall_more">瀑布图优先</string>
+    <string name="waterfall_balanced">均衡布局</string>
+    <string name="waterfall_less">频谱优先</string>
+    <string name="receiver_power_hint">开启或关闭接收机</string>
+    <string name="receive_filter">BW</string>
+    <string name="receive_filter_hint">接收滤波带宽</string>
+    <string name="filter_narrower">−</string>
+    <string name="filter_wider">+</string>
+    <string name="filter_auto">Auto</string>
+    <string name="tab_tune">调谐</string>
+    <string name="tab_mode">解调模式</string>
+    <string name="tab_rf">射频与声音</string>
+    <string name="tab_display">频谱与瀑布</string>
+    <string name="tab_record">录制</string>
+    <string name="tab_settings">设置</string>
+    <string name="tuning_digit_hint">左右滑条松手回中，离中心越远调得越快。顶部按 GHz / MHz / kHz / Hz 分组；点选数位可细调，长按输入。普通步进按整 kHz 对齐。</string>
+    <string name="auto_demod">自动解调模式</string>
+    <string name="region_recommendations">地区与附近机场推荐</string>
+    <string name="manage_modules">菜单模块 · 排序与显隐</string>
+    <string name="etm_scan">ETM · 短波 / FM</string>
+    <string name="tuning_step_value">Step · %1$s</string>
+    <string name="more_steps">更多…</string>
+    <string name="choose_step">Step</string>
+    <string name="listening_audio">声音控制</string>
+    <string name="noise_reduction">降噪（NR）</string>
+    <string name="noise_reduction_hint">只处理监听声音，保留数字解码所需的原始信号。</string>
+    <string name="noise_reduction_strength">降噪强度</string>
+    <string name="receiver_controls_location">接收控制</string>
+    <string name="receiver_controls_location_hint">频率与 BW 位于调谐页，增益、衰减与声音位于射频页。</string>
+</resources>

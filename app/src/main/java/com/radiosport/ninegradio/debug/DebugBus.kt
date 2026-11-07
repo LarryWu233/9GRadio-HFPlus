@@ -363,7 +363,10 @@ object DebugBus {
     }
 
     /** Called by RtlSdrDevice when SharedFlow.tryEmit() returns false (DROP_OLDEST fired). */
-    fun incrementIqFlowDrops() { iqFlowDropCount.incrementAndGet() }
+    fun incrementIqFlowDrops(count: Long = 1) { iqFlowDropCount.addAndGet(count) }
+    fun getIqFlowDropCount()=iqFlowDropCount.get()
+    fun counter(stage: Int)=counters[stage].get()
+    fun rate(stage: Int)=lastRatePerSec[stage]
 
     /** Reset all IQ bulk-transfer performance counters (called from resetAll()). */
     @Synchronized

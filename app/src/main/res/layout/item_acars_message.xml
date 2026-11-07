@@ -31,7 +31,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="H1"
-            android:textColor="#FFFFFF"
+            android:textColor="?attr/radioText"
             android:textSize="10sp"
             android:fontFamily="monospace"
             android:paddingHorizontal="6dp"

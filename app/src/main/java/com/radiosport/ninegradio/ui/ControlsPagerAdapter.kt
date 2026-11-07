@@ -29,11 +29,11 @@ import com.radiosport.ninegradio.R
  *                                                    (Scanner button / FAB); not tied
  *                                                    to a DemodMode like the tabs above
  */
-class ControlsPagerAdapter : RecyclerView.Adapter<ControlsPagerAdapter.TabHolder>() {
+class ControlsPagerAdapter(private val moduleOrder: List<Int> = (0 until TAB_COUNT).filter { it != TAB_SETTINGS }) : RecyclerView.Adapter<ControlsPagerAdapter.TabHolder>() {
 
     companion object {
-        const val TAB_MODE      = 0
-        const val TAB_TUNE      = 1
+        const val TAB_MODE      = 1
+        const val TAB_TUNE      = 0
         const val TAB_RF        = 2
         const val TAB_DISPLAY   = 3
         const val TAB_RECORDING = 4
@@ -45,16 +45,22 @@ class ControlsPagerAdapter : RecyclerView.Adapter<ControlsPagerAdapter.TabHolder
         const val TAB_DSTAR     = 10
         const val TAB_DIG       = 11
         const val TAB_SCAN      = 12
-        const val TAB_COUNT     = 13
+        const val TAB_RDF       = 13
+        const val TAB_ADSB      = 14
+        const val TAB_CW        = 15
+        const val TAB_SSTV      = 16
+        const val TAB_SAT       = 17
+        const val TAB_EIBI      = 18
+        const val TAB_COUNT     = 19
 
         val TAB_TITLES = arrayOf(
-            "Mode", "Tune", "RF", "Display", "Rec", "Settings",
-            "APRS", "ACARS", "DMR", "YSF", "D-STAR", "Dig", "Scan"
+            "Tune", "Mode", "RF", "Display", "Rec", "Settings",
+            "APRS", "ACARS", "DMR", "YSF", "D-STAR", "Dig", "Scan", "测向仪", "ADS-B", "CW", "SSTV", "SAT", "EiBi"
         )
 
         private val LAYOUTS = intArrayOf(
-            R.layout.fragment_tab_mode,
             R.layout.fragment_tab_tune,
+            R.layout.fragment_tab_mode,
             R.layout.fragment_tab_rf,
             R.layout.fragment_tab_display,
             R.layout.fragment_tab_recording,
@@ -65,7 +71,13 @@ class ControlsPagerAdapter : RecyclerView.Adapter<ControlsPagerAdapter.TabHolder
             R.layout.fragment_tab_ysf,
             R.layout.fragment_tab_dstar,
             R.layout.fragment_tab_dig,
-            R.layout.fragment_tab_scan
+            R.layout.fragment_tab_scan,
+            R.layout.fragment_tab_rdf,
+            R.layout.fragment_tab_adsb,
+            R.layout.fragment_tab_audio_content,
+            R.layout.fragment_tab_audio_content,
+            R.layout.fragment_tab_audio_content,
+            R.layout.fragment_tab_audio_content
         )
     }
 
@@ -74,9 +86,12 @@ class ControlsPagerAdapter : RecyclerView.Adapter<ControlsPagerAdapter.TabHolder
 
     inner class TabHolder(val root: View) : RecyclerView.ViewHolder(root)
 
-    override fun getItemCount() = TAB_COUNT
+    override fun getItemCount() = moduleOrder.size
 
-    override fun getItemViewType(position: Int) = position  // unique type per tab = no recycling
+    fun moduleAt(position: Int) = moduleOrder[position]
+    fun positionOf(module: Int) = moduleOrder.indexOf(module).coerceAtLeast(0)
+
+    override fun getItemViewType(position: Int) = moduleOrder[position]  // unique type per tab = no recycling
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): TabHolder {
         val v = LayoutInflater.from(parent.context)

@@ -22,7 +22,12 @@ import com.radiosport.ninegradio.source.RtlTcpSource
 import com.radiosport.ninegradio.ui.MainActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.sync.Mutex
+import com.radiosport.ninegradio.source.UsbSources
+import com.radiosport.ninegradio.source.DeviceCapabilities
+import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+import android.os.SystemClock
 
 /**
  * Foreground service that owns the IQ source connection (USB RTL-SDR or TCP rtl_tcp)
@@ -53,10 +58,51 @@ class RtlSdrService : Service() {
     }
 
     private val binder = LocalBinder()
+    val audioContent by lazy { com.radiosport.ninegradio.content.AudioContentReceiver(this) { receiverWanted } }
+    val adsbReceiver by lazy { com.radiosport.ninegradio.dsp.ReadsbReceiver(this) }
+    private var requestedMode: DemodMode?=null
     private val scope  = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     /** Prevents concurrent connectSource() calls racing. */
-    private val connectMutex = Mutex()
+    private val controlDispatcher = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "receiver-control").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
+    private val controlScope = CoroutineScope(controlDispatcher + SupervisorJob())
+    private val generation = AtomicLong()
+    private var monitorJob: Job? = null
+    private data class Tune(val hz: Long, val generation: Long, val immediate: Boolean)
+    private val tunes = Channel<Tune>(Channel.CONFLATED)
+    private fun control(action: () -> Unit) {
+        val expected = generation.get()
+        controlScope.launch { if (expected == generation.get()) action() }
+    }
+    init {
+        controlScope.launch {
+            var nextAllowed = 0L
+            for (initial in tunes) {
+                var request = initial
+                while (!request.immediate) {
+                    val wait = nextAllowed - SystemClock.uptimeMillis()
+                    if (wait <= 0) break
+                    request = withTimeoutOrNull(wait) { tunes.receive() } ?: break
+                }
+                while (true) { request = tunes.tryReceive().getOrNull() ?: break }
+                if (request.generation != generation.get()) continue
+                val src = source ?: continue
+                if (!src.capabilities.supportsFrequency(request.hz)) {
+                    if (src.capabilities.supportsBrowsing(request.hz)) dspEngine?.setReceptionAvailable(false)
+                    continue
+                }
+                dspEngine?.setCarrierFrequency(request.hz) ?: src.setCenterFrequency(request.hz)
+                dspEngine?.setReceptionAvailable(true)
+                nextAllowed = SystemClock.uptimeMillis() + 33L
+            }
+        }
+    }
+    @Volatile private var receiverWanted = true
+    private var selectedFactory: (() -> IqSource)? = null
+    private var selectedCapabilities = DeviceCapabilities.RTL
+    val capabilities: DeviceCapabilities get() = source?.capabilities ?: selectedCapabilities
 
     @Volatile var source: IqSource? = null
         private set
@@ -69,6 +115,28 @@ class RtlSdrService : Service() {
     @Volatile private var pendingSampleRate: Int    = 1_920_000
     @Volatile private var pendingNoiseBlanker: Boolean  = false
     @Volatile private var pendingNoiseReducer: Boolean  = false
+    @Volatile private var pendingNrStrength = 1f
+    @Volatile private var pendingIqNbThreshold=8f
+    fun setIqNoiseBlankerThreshold(value: Float) {
+        pendingIqNbThreshold=value.coerceIn(3f,20f)
+        dspEngine?.setIqNoiseBlankerThreshold(pendingIqNbThreshold)
+    }
+    @Volatile private var pendingListeningAudio=com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings()
+    fun setListeningAudio(settings: com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings) {
+        pendingListeningAudio=settings
+        dspEngine?.setListeningAudio(settings)
+    }
+    fun setReceiverEnabled(enabled: Boolean) {
+        val changed = receiverWanted != enabled
+        receiverWanted = enabled
+        if (enabled && (changed || source == null && _connectionState.value !is ConnectionState.Connecting))
+            selectedFactory?.let { switchSource(it) }
+        else if (!enabled) disconnectSource()
+    }
+    fun setNoiseReductionStrength(strength: Float) {
+        pendingNrStrength = strength
+        dspEngine?.setNoiseReductionStrength(strength)
+    }
     @Volatile private var pendingIfBandwidth: Int   = 0
     @Volatile private var pendingAudioSinkRate: Int = DspEngine.DEFAULT_AUDIO_SINK_RATE
 
@@ -101,14 +169,14 @@ class RtlSdrService : Service() {
                 startForegroundNotification()
                 if (usbDevice != null) {
                     val usbManager = getSystemService(USB_SERVICE) as UsbManager
-                    scope.launch { connectSource(RtlSdrDeviceSource(usbManager, usbDevice)) }
+                    switchSource({ UsbSources.create(usbManager, usbDevice) })
                 }
             }
             ACTION_START_TCP -> {
                 val host = intent.getStringExtra(EXTRA_TCP_HOST) ?: "localhost"
                 val port = intent.getIntExtra(EXTRA_TCP_PORT, DEFAULT_TCP_PORT)
                 startForegroundNotification()
-                scope.launch { connectSource(RtlTcpSource(host, port)) }
+                connectTcp(host, port)
             }
             ACTION_STOP -> {
                 disconnectSource()
@@ -122,125 +190,92 @@ class RtlSdrService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        disconnectSource()
+        audioContent.stop()
+        generation.incrementAndGet()
+        controlScope.launch {
+            disconnectNow()
+            controlScope.cancel()
+            controlDispatcher.close()
+        }
         scope.cancel()
         Log.i(TAG, "RtlSdrService destroyed")
     }
 
     // ── Connection logic ──────────────────────────────────────────────────────
 
-    private suspend fun connectSource(newSource: IqSource) {
-        if (!connectMutex.tryLock()) {
-            Log.w(TAG, "connectSource() called while already connecting — ignoring duplicate")
-            return
-        }
-        try {
+    private fun switchSource(factory: () -> IqSource, rateOverride: Int? = null) {
+        receiverWanted = true
+        val expected = generation.incrementAndGet()
+        controlScope.launch {
+            disconnectNow()
+            if (expected != generation.get()) return@launch
             _connectionState.value = ConnectionState.Connecting
-            withContext(Dispatchers.IO) {
-                try {
-                    if (!newSource.open()) {
-                        DebugBus.setError(DebugBus.STAGE_USB_OPEN, "source.open() returned false")
-                        _connectionState.value = ConnectionState.Error("Failed to open source: ${newSource.getSourceName()}")
-                        return@withContext
-                    }
-
-                    // Apply user-saved sample rate BEFORE streaming starts
-                    val savedRate = pendingSampleRate
-                    if (savedRate != newSource.getSampleRate()) {
-                        newSource.setSampleRate(savedRate)
-                    }
-
-                    source = newSource
-                    val engine = DspEngine(newSource)
-                    dspEngine = engine
-
-                    if (pendingFftSize > 0)      engine.setFftSize(pendingFftSize)
-                    if (pendingFftDecimation > 1) engine.setFftDecimation(pendingFftDecimation)
-                    if (pendingNoiseBlanker)      engine.setNoiseBlankerEnabled(true)
-                    if (pendingNoiseReducer)      engine.setNoiseReducerEnabled(true)
-                    val savedIfBw = pendingIfBandwidth
-                    if (savedIfBw > 0)            engine.setIfBandwidth(savedIfBw)
-                    val savedSinkRate = pendingAudioSinkRate
-                    if (savedSinkRate != DspEngine.DEFAULT_AUDIO_SINK_RATE) {
-                        engine.setAudioSinkRate(savedSinkRate)
-                    }
-
-                    engine.start()
-
-                    val sourceName = newSource.getSourceName()
-                    _connectionState.value = ConnectionState.Connected(sourceName)
-                    updateNotification("Connected: $sourceName")
-
-                    // Monitor IQ stream health — reconnect on persistent failures
-                    scope.launch {
-                        var consecutiveFailures = 0
-                        val MAX_RESTART_ATTEMPTS = 5
-                        val STABLE_STREAM_MS     = 10_000L
-                        var stabilityJob: Job?   = null
-
-                        newSource.statusFlow
-                            .filter { it.streamRestartRequired }
-                            .collect { _ ->
-                                stabilityJob?.cancel()
-                                stabilityJob = null
-
-                                consecutiveFailures++
-                                Log.w(TAG, "Stream restart requested (attempt $consecutiveFailures/$MAX_RESTART_ATTEMPTS)")
-                                DebugBus.setStatus(DebugBus.STAGE_IQ_STREAM, DebugBus.StageStatus.OK,
-                                    "Restarting stream (attempt $consecutiveFailures/$MAX_RESTART_ATTEMPTS)…")
-                                delay(500L * consecutiveFailures.coerceAtMost(5))
-
-                                // For USB sources delegate to RtlSdrDevice.restartStreaming();
-                                // for TCP sources a full reconnect is the only recovery path.
-                                val recovered = when (val src = source) {
-                                    is RtlSdrDeviceSource -> src.device.restartStreaming()
-                                    is RtlTcpSource -> {
-                                        // TCP has no stream-restart; close and reconnect
-                                        val host = src.host
-                                        val port = src.port
-                                        disconnectSource()
-                                        scope.launch { connectSource(RtlTcpSource(host, port)) }
-                                        return@collect
-                                    }
-                                    else -> false
-                                }
-
-                                if (!recovered) {
-                                    val msg = "Source no longer available"
-                                    Log.e(TAG, msg)
-                                    DebugBus.setError(DebugBus.STAGE_IQ_STREAM, msg)
-                                    disconnectSource()
-                                    _connectionState.value = ConnectionState.Error(msg)
-                                    return@collect
-                                }
-                                if (consecutiveFailures >= MAX_RESTART_ATTEMPTS) {
-                                    val msg = "Stream could not be recovered after $consecutiveFailures attempts"
-                                    Log.e(TAG, msg)
-                                    DebugBus.setError(DebugBus.STAGE_IQ_STREAM, msg)
-                                    disconnectSource()
-                                    _connectionState.value = ConnectionState.Error(msg)
-                                    return@collect
-                                }
-                                stabilityJob = scope.launch {
-                                    delay(STABLE_STREAM_MS)
-                                    Log.i(TAG, "Stream stable for ${STABLE_STREAM_MS}ms — resetting counter")
-                                    consecutiveFailures = 0
-                                }
-                            }
-                    }
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "Connection error", e)
-                    DebugBus.setError(DebugBus.STAGE_USB_OPEN, "Exception: ${e.javaClass.simpleName}: ${e.message}")
-                    _connectionState.value = ConnectionState.Error(e.message ?: "Unknown error")
+            val next = factory()
+            try {
+                check(next.open()) { "Failed to open ${next.getSourceName()}" }
+                // Like SDR++'s Airspy HF+ source, configure the selected device
+                // rate before starting either the receiver or its DSP clock.
+                // A new HF+ profile keeps the driver's preferred 768 kS/s;
+                // a saved profile supplies its own rate instead of an RTL rate.
+                val requestedRate = rateOverride ?: if (next.capabilities.floatIq)
+                    getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE)
+                        .getInt("device_${next.capabilities.id}_rate",next.getSampleRate())
+                    else pendingSampleRate
+                check(next.setSampleRate(next.capabilities.nearestRate(requestedRate))) {
+                    "Failed to configure ${next.getSourceName()} sample rate"
                 }
+                if (expected != generation.get()) { next.close(); return@launch }
+                selectedCapabilities = next.capabilities
+                source = next
+                val engine = DspEngine(next)
+                engine.setFmDeemphasis(androidx.preference.PreferenceManager.getDefaultSharedPreferences(this@RtlSdrService)
+                    .getString("pref_deemph_us","75")?.toIntOrNull() ?: 75)
+                dspEngine = engine
+                audioContent.attach(engine)
+                if (next.capabilities.floatIq) engine.setDemodMode(DemodMode.AM)
+                if (pendingFftSize > 0) engine.setFftSize(pendingFftSize)
+                engine.setFftDecimation(pendingFftDecimation)
+                engine.setNoiseBlankerEnabled(pendingNoiseBlanker)
+                engine.setNoiseReducerEnabled(pendingNoiseReducer)
+                engine.setListeningEnabled(true)
+                engine.setNoiseReductionStrength(pendingNrStrength)
+                engine.setIqNoiseBlankerThreshold(pendingIqNbThreshold)
+                engine.setListeningAudio(pendingListeningAudio)
+                if (pendingIfBandwidth > 0) engine.setIfBandwidth(pendingIfBandwidth)
+                engine.setAudioSinkRate(pendingAudioSinkRate)
+                engine.start()
+                if (expected != generation.get()) { disconnectNow(); return@launch }
+                _connectionState.value = ConnectionState.Connected(next.getSourceName())
+                updateNotification("Connected: ${next.getSourceName()}")
+                monitorJob = scope.launch {
+                    next.statusFlow.filter { it.streamRestartRequired || !it.connected }.collect { status ->
+                        control {
+                            if (source === next) {
+                                disconnectNow()
+                                if (status.error != null || status.streamRestartRequired)
+                                    _connectionState.value = ConnectionState.Error(status.error ?: "IQ stream stopped; reconnect the receiver")
+                            }
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                audioContent.attach(null)
+                dspEngine?.stop()
+                next.close()
+                source = null
+                dspEngine = null
+                _connectionState.value = ConnectionState.Error(error.message ?: "Connection failed")
+                Log.e(TAG, "Source connection failed", error)
             }
-        } finally {
-            connectMutex.unlock()
         }
     }
-
-    fun disconnectSource() {
+    private fun disconnectNow() {
+        finishCapture(false); finishCapture(true)
+        captureMonitor?.cancel(); captureMonitor=null
+        monitorJob?.cancel()
+        monitorJob = null
+        adsbReceiver.stop()
+        audioContent.attach(null)
         dspEngine?.stop()
         dspEngine = null
         source?.close()
@@ -249,21 +284,29 @@ class RtlSdrService : Service() {
         DebugBus.resetAll()
         updateNotification("Disconnected")
     }
-
-    /** Reconnect the same USB device (e.g. after a USB permission / re-attach). */
-    fun reconnect(usbDevice: UsbDevice) {
-        disconnectSource()
-        val usbManager = getSystemService(USB_SERVICE) as UsbManager
-        scope.launch { connectSource(RtlSdrDeviceSource(usbManager, usbDevice)) }
+    fun disconnectSource() {
+        generation.incrementAndGet()
+        controlScope.launch { disconnectNow() }
     }
+    suspend fun awaitControls() { withContext(controlDispatcher) { } }
 
-    /** Connect (or reconnect) to an rtl_tcp server. */
+    fun reconnect(usbDevice: UsbDevice, start: Boolean = true) {
+        val manager = getSystemService(USB_SERVICE) as UsbManager
+        val factory = { UsbSources.create(manager, usbDevice) }
+        selectedFactory = factory
+        receiverWanted = start
+        if (start) switchSource(factory) else disconnectSource()
+    }
     fun connectTcp(host: String, port: Int = DEFAULT_TCP_PORT) {
-        disconnectSource()
-        scope.launch { connectSource(RtlTcpSource(host, port)) }
+        val factory = { RtlTcpSource(host, port) }
+        selectedFactory = factory
+        switchSource(factory)
     }
-
-    // ── Delegated flows ───────────────────────────────────────────────────────
+    fun connectFile(path: String, rate: Int, frequency: Long, mode: DemodMode) {
+        val factory = { com.radiosport.ninegradio.source.FileIqSource(java.io.File(path), rate, frequency, mode) }
+        selectedFactory = factory
+        switchSource(factory)
+    }
 
     val spectrumFlow: Flow<FloatArray> = connectionState.flatMapLatest { state ->
         if (state is ConnectionState.Connected) dspEngine?.spectrumFlow ?: emptyFlow()
@@ -310,42 +353,55 @@ class RtlSdrService : Service() {
      * back to [source] directly — this matches prior behaviour and is safe because
      * the engine will apply the offset via [DspEngine.setDemodMode] on the next connect.
      */
-    fun setFrequency(hz: Long) {
-        val engine = dspEngine
-        if (engine != null) engine.setCarrierFrequency(hz)
-        else source?.setCenterFrequency(hz)
+    fun setFrequency(hz: Long, immediate: Boolean = false) {
+        tunes.trySend(Tune(hz, generation.get(), immediate))
     }
-    fun setSampleRate(rate: Int)   {
+    fun setSampleRate(rate: Int) {
         pendingSampleRate = rate
-        source?.setSampleRate(rate)
+        control { source?.let { active ->
+            val selected=active.capabilities.nearestRate(rate)
+            if(selected!=active.getSampleRate()) {
+                finishCapture(false); finishCapture(true)
+                // SDR++ configures HF+ on a stopped source. Reuse our existing
+                // close/open path so the old DSP and playback clock cannot
+                // consume blocks across a device-rate transition.
+                val factory=selectedFactory
+                if(active.capabilities.floatIq && factory!=null) switchSource(factory,selected)
+                else { adsbReceiver.stop(); active.setSampleRate(selected) }
+            }
+            updateAdsbReceiver()
+        } }
     }
-    fun setGain(idx: Int)          { source?.setGain(idx) }
-    fun setGainMode(mode: Int)     { source?.setGainMode(mode) }
-    fun setTunerAgc(on: Boolean)   { source?.setTunerAgcEnabled(on) }
-    fun setHardwareAgc(on: Boolean){ source?.setHardwareAgcEnabled(on) }
-    fun setBiasTee(on: Boolean)    { source?.setBiasTee(on) }
-    fun setDirectSampling(mode: Int){ source?.setDirectSampling(mode) }
-    fun setPpm(ppm: Int)           { source?.setPpmCorrection(ppm) }
-
-    fun setFftSize(size: Int) {
-        pendingFftSize = size
-        dspEngine?.setFftSize(size)
+    fun setGain(idx: Int) = control { source?.setGain(idx) }
+    fun setGainMode(mode: Int) = control { source?.setGainMode(mode) }
+    fun setTunerAgc(on: Boolean) = control { source?.setTunerAgcEnabled(on) }
+    fun setHardwareAgc(on: Boolean) = control { source?.setHardwareAgcEnabled(on) }
+    fun setBiasTee(on: Boolean) = control { source?.setBiasTee(on) }
+    fun setDirectSampling(mode: Int) = control { source?.setDirectSampling(mode) }
+    fun setPpm(ppm: Int) = control { source?.setPpmCorrection(ppm) }
+    fun setDemodMode(mode: DemodMode) = control {
+        if (capabilities.supportsMode(mode)) {
+            requestedMode=mode
+            dspEngine?.setDemodMode(mode)
+            updateAdsbReceiver()
+        }
     }
-    fun setFftDecimation(factor: Int) {
-        pendingFftDecimation = factor
-        dspEngine?.setFftDecimation(factor)
+    private fun updateAdsbReceiver() {
+        val active=source
+        if(requestedMode==DemodMode.ADSB && active!=null && active.isOpen() && capabilities.supportsMode(DemodMode.ADSB))
+            adsbReceiver.start(active)
+        else adsbReceiver.stop()
     }
-    fun setDemodMode(mode: DemodMode)     { dspEngine?.setDemodMode(mode) }
-    fun setSquelch(dbLevel: Float)        { dspEngine?.setSquelchLevel(dbLevel) }
-    fun setAudioVolume(vol: Float)        { dspEngine?.setVolume(vol) }
-    fun setDcBlock(enabled: Boolean)      { dspEngine?.setDcBlockEnabled(enabled) }
-    fun setFreqOffset(hz: Int)            { dspEngine?.setFreqOffset(hz) }
-    fun enableDualAprs(centreHz: Long)    { dspEngine?.enableDualAprs(centreHz) }
-    fun disableDualAprs()                 { dspEngine?.disableDualAprs() }
-    fun setIfBandwidth(hz: Int) {
-        pendingIfBandwidth = hz
-        dspEngine?.setIfBandwidth(hz)
-    }
+    fun setFftSize(size: Int) { pendingFftSize = size; control { dspEngine?.setFftSize(size) } }
+    fun setFftDecimation(factor: Int) { pendingFftDecimation = factor; control { dspEngine?.setFftDecimation(factor) } }
+    fun setSquelch(dbLevel: Float) { dspEngine?.setSquelchLevel(dbLevel) }
+    fun setAudioVolume(vol: Float) = control { dspEngine?.setVolume(vol) }
+    fun setFmDeemphasis(us: Int) = control { dspEngine?.setFmDeemphasis(us) }
+    fun setDcBlock(enabled: Boolean) { dspEngine?.setDcBlockEnabled(enabled) }
+    fun setFreqOffset(hz: Int) { dspEngine?.setFreqOffset(hz) }
+    fun enableDualAprs(centreHz: Long) { dspEngine?.enableDualAprs(centreHz) }
+    fun disableDualAprs() { dspEngine?.disableDualAprs() }
+    fun setIfBandwidth(hz: Int) { pendingIfBandwidth = hz; control { dspEngine?.setIfBandwidth(hz) } }
     fun getIfBandwidth(): Int = dspEngine?.getIfBandwidth() ?: pendingIfBandwidth
     fun setNoiseBlanker(enabled: Boolean) {
         pendingNoiseBlanker = enabled
@@ -357,15 +413,72 @@ class RtlSdrService : Service() {
     }
     fun setAudioSinkRate(rate: Int) {
         pendingAudioSinkRate = rate
-        dspEngine?.setAudioSinkRate(rate)
+        control { if(dspEngine?.getAudioSinkRate()!=rate) finishCapture(true); dspEngine?.setAudioSinkRate(rate) }
     }
     fun getAudioSinkRate(): Int    = dspEngine?.getAudioSinkRate() ?: pendingAudioSinkRate
     fun setExternalDecoderEnabled(enabled: Boolean) { dspEngine?.setExternalDecoderEnabled(enabled) }
     fun setExternalDecoderTarget(host: String, port: Int) { dspEngine?.setExternalDecoderTarget(host, port) }
-    fun startRecording(path: String)      { dspEngine?.startIqRecording(path) }
-    fun stopRecording()                   { dspEngine?.stopIqRecording() }
-    fun startAudioRecording(path: String) { dspEngine?.startAudioRecording(path) }
-    fun stopAudioRecording()              { dspEngine?.stopAudioRecording() }
+    private data class CaptureSession(val id:Long,val path:String,val started:Long,val limitMs:Long)
+    @Volatile private var iqSession:CaptureSession?=null
+    @Volatile private var audioSession:CaptureSession?=null
+    private var captureMonitor:Job?=null
+    private val capturePrefs by lazy { androidx.preference.PreferenceManager.getDefaultSharedPreferences(this) }
+    fun setRecordingSquelch(enabled:Boolean) {
+        capturePrefs.edit().putBoolean("pref_record_squelch",enabled).apply()
+        dspEngine?.setRecordingSquelch(enabled)
+    }
+    fun recordingRemainingMs(audio:Boolean):Long? {
+        val session=if(audio) audioSession else iqSession
+        return session?.takeIf { it.limitMs>0 }?.let { (it.limitMs-(SystemClock.elapsedRealtime()-it.started)).coerceAtLeast(0) }
+    }
+    private fun beginCapture(path:String,audio:Boolean) {
+        finishCapture(audio)
+        val engine=dspEngine ?: return
+        engine.setRecordingSquelch(capturePrefs.getBoolean("pref_record_squelch",false))
+        if(!audio) try {
+            com.radiosport.ninegradio.recording.IqRecordingInfo.write(java.io.File(path),engine.getDialFrequencyHz(),
+                source?.getCenterFrequency() ?: engine.getDialFrequencyHz(),source?.getSampleRate() ?: 48000,
+                requestedMode ?: DemodMode.AM,source?.capabilities?.floatIq==true)
+        } catch(error: Exception) {
+            Log.e(TAG,"IQ metadata could not be written",error)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(this,"无法保存 IQ 元数据，录制未开始",android.widget.Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        if(audio) engine.startAudioRecording(path) else engine.startIqRecording(path)
+        val running=if(audio) engine.statsFlow.value.isRecordingAudio else engine.statsFlow.value.isRecordingIq
+        if(!running) { if(!audio) com.radiosport.ninegradio.recording.IqRecordingInfo.metadataFile(java.io.File(path)).delete(); return }
+        val meta=com.radiosport.ninegradio.data.RecordingMeta(filePath=path,type=if(audio) "AUDIO" else "IQ",
+            frequencyHz=engine.getDialFrequencyHz(),sampleRate=if(audio) engine.getAudioSinkRate() else source?.getSampleRate() ?: 0,
+            demodMode=(requestedMode ?: DemodMode.AM).name,durationMs=0,fileSizeBytes=0)
+        val id=(application as RtlSdrApplication).database.recordingMetaDao().insertSession(meta)
+        val session=CaptureSession(id,path,SystemClock.elapsedRealtime(),capturePrefs.getString("pref_record_stop_seconds","0")?.toLongOrNull()?.coerceAtLeast(0)?.times(1000) ?: 0L)
+        if(audio) audioSession=session else iqSession=session
+        if(captureMonitor?.isActive!=true) captureMonitor=controlScope.launch {
+            while(iqSession!=null || audioSession!=null) {
+                delay(100)
+                for(isAudio in listOf(false,true)) {
+                    val active=(if(isAudio) audioSession else iqSession) ?: continue
+                    val stats=dspEngine?.statsFlow?.value
+                    val stillRecording=if(isAudio) stats?.isRecordingAudio==true else stats?.isRecordingIq==true
+                    if(!stillRecording || (active.limitMs>0 && SystemClock.elapsedRealtime()-active.started>=active.limitMs)) finishCapture(isAudio)
+                }
+            }
+        }
+    }
+    private fun finishCapture(audio:Boolean) {
+        val session=(if(audio) audioSession else iqSession) ?: return
+        if(audio) audioSession=null else iqSession=null
+        val engine=dspEngine
+        if(audio) engine?.stopAudioRecording() else engine?.stopIqRecording()
+        val duration=if(audio) engine?.audioRecordedDurationMs() else engine?.iqRecordedDurationMs()
+        (application as RtlSdrApplication).database.recordingMetaDao().finishSession(session.id,duration ?: 0L,java.io.File(session.path).length())
+    }
+    fun startRecording(path: String) = control { beginCapture(path,false) }
+    fun stopRecording() = control { finishCapture(false) }
+    fun startAudioRecording(path: String) = control { beginCapture(path,true) }
+    fun stopAudioRecording() = control { finishCapture(true) }
 
     // ── Legacy device accessor (null when using TCP source) ───────────────────
 

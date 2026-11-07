@@ -28,12 +28,21 @@ import java.util.*
 //  SETTINGS ACTIVITY
 // ═════════════════════════════════════════════════════════════════════════════
 
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : RadioThemedActivity() {
+    private val bookmarkSelection=registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if(result.resultCode==RESULT_OK) {
+            setResult(RESULT_OK,result.data)
+            finish()
+        }
+    }
+    fun openBookmarks() { bookmarkSelection.launch(Intent(this,BookmarkActivity::class.java)) }
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_NineGRadio_Controls)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
+        setSupportActionBar(findViewById(R.id.settingsToolbar))
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        title = "Settings"
+        title = "设置"
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .replace(R.id.settings_container, SettingsFragment())
@@ -47,16 +56,33 @@ class SettingsActivity : AppCompatActivity() {
 }
 
 class SettingsFragment : PreferenceFragmentCompat() {
+    override fun onViewCreated(view: android.view.View,savedInstanceState: Bundle?) {
+        super.onViewCreated(view,savedInstanceState)
+        listView.addOnChildAttachStateChangeListener(object: RecyclerView.OnChildAttachStateChangeListener {
+            override fun onChildViewAttachedToWindow(view: android.view.View) {
+                ControlColors.apply(view,ControlColors.Group.RADIO)
+                view.findViewById<TextView>(android.R.id.title)?.textSize=14f
+                view.findViewById<TextView>(android.R.id.summary)?.textSize=12f
+            }
+            override fun onChildViewDetachedFromWindow(view: android.view.View) {}
+        })
+    }
 
     // ─── Service binding (for live FFT / hardware propagation) ───────────────
 
     private var sdrService: com.radiosport.ninegradio.usb.RtlSdrService? = null
     private var serviceBound = false
+    private var receiverUiJob: Job? = null
 
     private val serviceConnection = object : android.content.ServiceConnection {
         override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
             sdrService = (binder as com.radiosport.ninegradio.usb.RtlSdrService.LocalBinder).getService()
             serviceBound = true
+            applyReceiverControls()
+            receiverUiJob?.cancel()
+            receiverUiJob = lifecycleScope.launch {
+                sdrService!!.connectionState.collectLatest { applyReceiverControls() }
+            }
             // Apply current preference values to the running engine immediately on connect
             applyAllPrefsToEngine(preferenceScreen.sharedPreferences ?: return)
         }
@@ -68,10 +94,48 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     // ─── Live preference listener ─────────────────────────────────────────────
 
+    private fun applyReceiverControls() {
+        val svc = sdrService ?: return
+        val caps = svc.capabilities
+        val rtl = caps.id == "rtl"
+        val hardware = caps.id != "file"
+        mapOf("pref_hardware_agc_default" to caps.hardwareAgc,
+            "pref_bias_tee_default" to caps.biasTee,
+            "pref_direct_sampling_default" to caps.directSampling,
+            "pref_auto_hf" to caps.directSampling,
+            "pref_tcxo_freq" to rtl,
+            "pref_tuner_agc_default" to rtl,
+            "pref_default_gain" to rtl,
+            "pref_squelch_default" to false,
+            "cat_v4" to (caps.directSampling || caps.biasTee),
+            "pref_ppm" to hardware).forEach { (key, visible) ->
+            findPreference<Preference>(key)?.isVisible = visible
+        }
+        // Receiver controls have one live source of truth in the main RF/Tune
+        // panels. Old "defaults" duplicated those controls and overwrote them.
+        findPreference<Preference>("cat_rf")?.isVisible = false
+        findPreference<Preference>("cat_v4")?.isVisible = false
+        findPreference<Preference>("cat_rf")?.title = svc.source?.getSourceName() ?: "Receiver"
+        findPreference<Preference>("pref_ppm")?.summary = if (caps.id == "airspyhf")
+            "User adjustment in addition to the receiver's factory calibration" else "Frequency offset compensation"
+        findPreference<ListPreference>("pref_sample_rate")?.apply {
+            entries = caps.sampleRates.map { "$it S/s" }.toTypedArray()
+            entryValues = caps.sampleRates.map { it.toString() }.toTypedArray()
+            isEnabled = hardware
+            value = svc.source?.getSampleRate()?.toString()
+        }
+        findPreference<ListPreference>("pref_default_demod")?.apply {
+            val modes = com.radiosport.ninegradio.dsp.DemodMode.values().filter { caps.supportsMode(it) }
+            entries = modes.map { it.displayName }.toTypedArray()
+            entryValues = modes.map { it.name }.toTypedArray()
+        }
+    }
+
     private val prefListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
         val svc = sdrService
         val activity = activity ?: return@OnSharedPreferenceChangeListener
         when (key) {
+            "pref_deemph_us" -> svc?.setFmDeemphasis(prefs.getString(key,"75")?.toIntOrNull() ?: 75)
             // ── FFT / Spectrum ─────────────────────────────────────────────
             "pref_fft_size" -> {
                 val size = prefs.getString(key, "2048")?.toIntOrNull() ?: 2048
@@ -255,19 +319,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
         if (rfPanelSinkRate != settingsSinkRate) {
             prefs.edit().putString("pref_audio_sink_rate", rfPanelSinkRate.toString()).apply()
         }
-        // PPM correction is a global device setting (not per-mode) so it is safe
-        // to restore here on every Settings-screen bind.  Merge the two stores:
-        // prefer "rtlsdr_prefs"/"ppm" (the RF-tab slider) if present, otherwise
-        // fall back to "pref_ppm" (the Settings SeekBarPreference).
-        val rfPanelPpm = if (rtlSdrPrefs.contains("ppm")) rtlSdrPrefs.getInt("ppm", 0) else null
-        val settingsPpm = if (prefs.contains("pref_ppm")) prefs.getInt("pref_ppm", 0) else null
-        val effectivePpm = rfPanelPpm ?: settingsPpm ?: 0
-        svc.setPpm(effectivePpm)
-        // Sync both stores so they stay in agreement going forward.
-        if (rfPanelPpm != effectivePpm)
-            rtlSdrPrefs.edit().putInt("ppm", effectivePpm).apply()
-        if (settingsPpm != effectivePpm)
-            prefs.edit().putInt("pref_ppm", effectivePpm).apply()
         // External decoder UDP pipe -- independent of per-mode snapshots, safe
         // to re-apply unconditionally on every connect (mirrors pref_dc_block).
         svc.setExternalDecoderTarget(
@@ -279,6 +330,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 ?.toIntOrNull() ?: com.radiosport.ninegradio.dsp.ExternalDecoderStream.DEFAULT_PORT
         )
         svc.setExternalDecoderEnabled(prefs.getBoolean("pref_external_decoder_enabled", false))
+        svc.setFmDeemphasis(prefs.getString("pref_deemph_us","75")?.toIntOrNull() ?: 75)
     }
 
     // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -294,6 +346,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
     }
 
     override fun onStop() {
+        receiverUiJob?.cancel()
         super.onStop()
         preferenceScreen.sharedPreferences?.unregisterOnSharedPreferenceChangeListener(prefListener)
         if (serviceBound) {
@@ -306,6 +359,38 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.preferences, rootKey)
+        fun compact(group:PreferenceGroup) {
+            for(i in 0 until group.preferenceCount) {
+                val item=group.getPreference(i); item.isIconSpaceReserved=false
+                if(item is PreferenceGroup) compact(item)
+            }
+        }
+        compact(preferenceScreen)
+        findPreference<Preference>("receiver_controls_hint")?.isVisible=false
+        findPreference<ListPreference>("pref_ui_theme")?.apply {
+            entries=UiThemes.presets.map { it.label }.toTypedArray()
+            entryValues=UiThemes.presets.map { it.id }.toTypedArray()
+            setOnPreferenceChangeListener { _,newValue ->
+                preferenceManager.sharedPreferences?.edit()?.putString("pref_ui_theme",newValue.toString())?.apply()
+                requireActivity().recreate(); true
+            }
+        }
+        findPreference<Preference>("pref_modules")?.setOnPreferenceClickListener {
+            ModulePreferences(requireContext()).showEditor(requireContext()) { }; true
+        }
+        findPreference<Preference>("pref_bookmarks")?.setOnPreferenceClickListener {
+            (requireActivity() as SettingsActivity).openBookmarks(); true
+        }
+        mapOf("pref_diagnostics" to DebugPanelActivity::class.java).forEach { (key,cls) ->
+            findPreference<Preference>(key)?.setOnPreferenceClickListener { startActivity(Intent(requireContext(),cls)); true }
+        }
+        findPreference<Preference>("pref_device_info")?.setOnPreferenceClickListener {
+            val svc=sdrService
+            val caps=svc?.capabilities
+            androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle("设备信息")
+                .setMessage("${svc?.source?.getSourceName() ?: "未连接接收机"}\n\n采样率：${caps?.sampleRates?.joinToString { "$it S/s" } ?: "—"}\nIQ：${if(caps?.floatIq==true) "Float32" else "Unsigned 8-bit"}\n版本：${BuildConfig.VERSION_NAME}")
+                .setPositiveButton("关闭",null).show(); true
+        }
 
         // ── Populate list entries that aren't backed by arrays.xml ──────────
         findPreference<ListPreference>("pref_sample_rate")?.apply {
@@ -475,8 +560,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
             // versionName / versionCode declaration in app/build.gradle, ensuring this
             // display always matches the Android system version and the release APK name.
             summary = "9GRadio v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})\n" +
-                    "Supports: RTL2832U + R828D\n" +
-                    "TCXO | Direct Sampling | Bias Tee\n" +
+                    "Supports: Airspy HF+ Discovery / RTL-SDR\n" +
+                    "USB / rtl_tcp / IQ playback\n" +
                     "© ${java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)} Open Source"
         }
     }
@@ -490,7 +575,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
 //  RECORDING ACTIVITY
 // ═════════════════════════════════════════════════════════════════════════════
 
-class RecordingActivity : AppCompatActivity() {
+class RecordingActivity : RadioThemedActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private lateinit var adapter: RecordingAdapter
@@ -509,6 +594,7 @@ class RecordingActivity : AppCompatActivity() {
             onShare = { meta -> shareRecording(meta) },
             onDelete = { meta ->
                 File(meta.filePath).delete()
+                com.radiosport.ninegradio.recording.IqRecordingInfo.metadataFile(File(meta.filePath)).delete()
                 lifecycleScope.launch {
                     (application as com.radiosport.ninegradio.RtlSdrApplication)
                         .database.recordingMetaDao().delete(meta)
@@ -547,14 +633,24 @@ class RecordingActivity : AppCompatActivity() {
 
     private fun shareRecording(meta: RecordingMeta) {
         val file = File(meta.filePath)
-        if (!file.exists()) { Toast.makeText(this, "File not found", Toast.LENGTH_SHORT).show(); return }
+        if (!file.exists()) { Toast.makeText(this, "文件不存在", Toast.LENGTH_SHORT).show(); return }
         val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val metadata=com.radiosport.ninegradio.recording.IqRecordingInfo.metadataFile(file)
+        if(meta.type=="IQ" && metadata.exists()) {
+            val extra=FileProvider.getUriForFile(this,"$packageName.fileprovider",metadata)
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type="application/octet-stream"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM,arrayListOf(uri,extra))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            },"分享 ${file.name}"))
+            return
+        }
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
                 type = if (meta.type == "AUDIO") "audio/wav" else "application/octet-stream"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }, "Share ${file.name}"
+            }, "分享 ${file.name}"
         ))
     }
 }
@@ -601,7 +697,7 @@ class RecordingAdapter(
 //  SPECTRUM FULL-SCREEN ACTIVITY
 // ═════════════════════════════════════════════════════════════════════════════
 
-class SpectrumActivity : AppCompatActivity() {
+class SpectrumActivity : RadioThemedActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -654,7 +750,7 @@ class SpectrumActivity : AppCompatActivity() {
 //  ACARS ACTIVITY  — complete VHF aircraft datalink monitor
 // ═════════════════════════════════════════════════════════════════════════════
 
-class AcarsActivity : AppCompatActivity() {
+class AcarsActivity : RadioThemedActivity() {
 
     companion object {
         private val CHANNELS = listOf(
@@ -959,7 +1055,7 @@ class AcarsActivity : AppCompatActivity() {
 
     private fun showDetail(msg: com.radiosport.ninegradio.dsp.AcarsDecoder.AcarsMessage) {
         val labelDesc = com.radiosport.ninegradio.dsp.AcarsDecoder.LABEL_DESCRIPTIONS[msg.label] ?: "Unknown label"
-        android.app.AlertDialog.Builder(this)
+        androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("${msg.registration}  [${msg.label}]")
             .setMessage(formatMessageFull(msg))
             .setPositiveButton("Close", null)
@@ -1049,7 +1145,7 @@ class AcarsMessageAdapter(context: android.content.Context) :
 //  color markers, mode tag, import/export JSON, spectrum integration
 // ═════════════════════════════════════════════════════════════════════════════
 
-class BookmarkActivity : AppCompatActivity() {
+class BookmarkActivity : RadioThemedActivity() {
 
     companion object {
         const val EXTRA_FREQ_HZ = "extra_freq_hz"

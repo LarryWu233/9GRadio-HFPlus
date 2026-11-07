@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
 
-class MemoryActivity : AppCompatActivity() {
+class MemoryActivity : RadioThemedActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private lateinit var adapter: MemoryChannelAdapter

@@ -55,7 +55,7 @@ class UsbDeviceManager(private val context: Context) {
                     intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
 
                 device ?: return
-                if (!RtlSdrDevice.isSupported(device)) return
+                if (!com.radiosport.ninegradio.source.UsbSources.isSupported(device)) return
 
                 when (intent.action) {
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
@@ -104,7 +104,7 @@ class UsbDeviceManager(private val context: Context) {
      * Returns all currently connected RTL-SDR devices.
      */
     fun getConnectedDevices(): List<UsbDevice> =
-        usbManager.deviceList.values.filter { RtlSdrDevice.isSupported(it) }
+        usbManager.deviceList.values.filter { com.radiosport.ninegradio.source.UsbSources.isSupported(it) }
 
     /**
      * Returns the first connected RTL-SDR device, or null.
