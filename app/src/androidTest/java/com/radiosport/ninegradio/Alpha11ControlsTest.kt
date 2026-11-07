@@ -10,7 +10,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.android.material.tabs.TabLayout
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.radiosport.ninegradio.ui.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -58,8 +58,8 @@ class Alpha11ControlsTest {
                     }
                     Thread.sleep(700)
                     scenario.onActivity { a ->
-                        val level=a.findViewById<SwitchMaterial>(R.id.switchAudioLeveling)
-                        val notch=a.findViewById<SwitchMaterial>(R.id.switchAudioNotch)
+                        val level=a.findViewById<MaterialSwitch>(R.id.switchAudioLeveling)
+                        val notch=a.findViewById<MaterialSwitch>(R.id.switchAudioNotch)
                         if(level.isChecked) level.performClick()
                         level.performClick()
                         assertTrue(model.listeningAudio.value.leveling)

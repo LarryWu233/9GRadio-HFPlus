@@ -7,7 +7,7 @@
             android:layout_height="wrap_content" android:text="飞机：0" android:textColor="?attr/radioAccent" android:textSize="15sp"/>
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:text="雷达" android:textColor="?attr/radioSecondary" android:textSize="12sp"/>
-        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/btnAdsbPanelMap"
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/btnAdsbPanelMap"
             android:layout_width="wrap_content" android:layout_height="48dp" android:text="地图" android:checked="true"
             android:textSize="12sp" android:layout_marginHorizontal="6dp"/>
         <Button android:id="@+id/btnAdsbPanelFull" style="@style/RadioCompactButton" android:layout_width="64dp"

@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.view.Gravity
 import android.widget.*
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 
 /** Receiver instrument panel. Direction/range stay unknown without a direction-finding source. */
 class RdfControls(context: Context): LinearLayout(context) {
@@ -35,7 +35,7 @@ class RdfControls(context: Context): LinearLayout(context) {
         addView(compass,LayoutParams(-1,dp(280)))
         row(card("输入电平",level),card("接收状态",state))
         addView(frequency.apply { textSize=16f; typeface=android.graphics.Typeface.MONOSPACE; setTextColor(0xffdbe5eb.toInt()) })
-        addView(SwitchMaterial(context).apply {
+        addView(MaterialSwitch(context).apply {
             text="实时电平"; isChecked=true
             setOnCheckedChangeListener { _,on -> live=on }
         },LayoutParams(-1,dp(48)))

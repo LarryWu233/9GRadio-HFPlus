@@ -6,7 +6,7 @@
 <item name="radioElevated">#192935</item>
 <item name="radioText">#FFFFFF</item>
 <item name="radioSecondary">#B7CDD9</item>
-<item name="radioMuted">#71838E</item>
+<item name="radioMuted">#758792</item>
 <item name="radioAccent">#FFB56B</item>
 <item name="radioSlider">#75AAA9</item>
 <item name="radioOutline">#304957</item>
@@ -23,7 +23,7 @@
 <item name="radioSecondary">#BCDDE3</item>
 <item name="radioMuted">#83AEBB</item>
 <item name="radioAccent">#79E1DC</item>
-<item name="radioSlider">#2D8A9E</item>
+<item name="radioSlider">#83C8D0</item>
 <item name="radioOutline">#39677D</item>
 <item name="radioSelected">#235B70</item>
 <item name="radioLink">#5CBDB9</item>
@@ -66,7 +66,7 @@
 <item name="radioElevated">#253140</item>
 <item name="radioText">#C9D1D9</item>
 <item name="radioSecondary">#A7B4C2</item>
-<item name="radioMuted">#768695</item>
+<item name="radioMuted">#7A8A99</item>
 <item name="radioAccent">#83BCFF</item>
 <item name="radioSlider">#79A8AD</item>
 <item name="radioOutline">#344455</item>

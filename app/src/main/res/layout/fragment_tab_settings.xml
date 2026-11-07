@@ -31,7 +31,7 @@
                 android:text="反转微调滚轮与频率数位的方向"
                 android:textColor="?attr/radioMuted" android:textSize="10sp"/>
         </LinearLayout>
-        <Switch android:id="@+id/switchReverseTuning"
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchReverseTuning"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:checked="false"/>
     </LinearLayout>
@@ -47,7 +47,7 @@
                 android:text="Allow all RTL-SDR frequencies (enable for Blog v4)"
                 android:textColor="?attr/radioMuted" android:textSize="10sp"/>
         </LinearLayout>
-        <Switch android:id="@+id/switchOutOfBound"
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchOutOfBound"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:checked="false"/>
     </LinearLayout>

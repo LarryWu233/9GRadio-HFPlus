@@ -1,0 +1,82 @@
+<resources>
+    <!-- Views implementation of the shared Material 3 design roles. -->
+    <dimen name="radio_space_xs">4dp</dimen>
+    <dimen name="radio_space_sm">8dp</dimen>
+    <dimen name="radio_space_md">12dp</dimen>
+    <dimen name="radio_space_lg">16dp</dimen>
+    <dimen name="radio_space_xl">24dp</dimen>
+    <dimen name="radio_space_2xl">32dp</dimen>
+    <dimen name="radio_corner_small">8dp</dimen>
+    <dimen name="radio_corner_medium">12dp</dimen>
+    <dimen name="radio_corner_large">16dp</dimen>
+    <dimen name="radio_corner_dialog">28dp</dimen>
+    <dimen name="radio_corner_button">24dp</dimen>
+    <dimen name="radio_touch_target">48dp</dimen>
+    <dimen name="radio_slider_track">8dp</dimen>
+    <dimen name="radio_slider_handle_width">4dp</dimen>
+    <dimen name="radio_slider_handle_height">28dp</dimen>
+    <style name="ShapeAppearance.Radio.Small" parent="ShapeAppearance.Material3.Corner.Small">
+        <item name="cornerSize">@dimen/radio_corner_small</item>
+    </style>
+    <style name="ShapeAppearance.Radio.Medium" parent="ShapeAppearance.Material3.Corner.Medium">
+        <item name="cornerSize">@dimen/radio_corner_medium</item>
+    </style>
+    <style name="ShapeAppearance.Radio.Large" parent="ShapeAppearance.Material3.Corner.Large">
+        <item name="cornerSize">@dimen/radio_corner_large</item>
+    </style>
+    <style name="TextAppearance.Radio.Section" parent="TextAppearance.Material3.TitleSmall">
+        <item name="android:textColor">?attr/colorPrimary</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0.01</item>
+    </style>
+    <style name="TextAppearance.Radio.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+    </style>
+    <style name="TextAppearance.Radio.Caption" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+    <style name="RadioMaterialSwitch" parent="Widget.Material3.CompoundButton.MaterialSwitch">
+        <item name="android:minHeight">@dimen/radio_touch_target</item>
+        <item name="android:textAppearance">@style/TextAppearance.Radio.Body</item>
+        <item name="thumbTint">@color/radio_switch_thumb</item>
+        <item name="trackTint">@color/radio_switch_track</item>
+        <item name="trackDecorationTint">@color/radio_switch_outline</item>
+    </style>
+    <style name="RadioMaterialButton" parent="Widget.Material3.Button.TonalButton">
+        <item name="android:minHeight">@dimen/radio_touch_target</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:insetTop">4dp</item>
+        <item name="android:insetBottom">4dp</item>
+        <item name="cornerRadius">@dimen/radio_corner_button</item>
+        <item name="android:textColor">?attr/colorOnSecondaryContainer</item>
+        <item name="backgroundTint">?attr/colorSecondaryContainer</item>
+    </style>
+    <style name="RadioSeekBar" parent="Widget.AppCompat.SeekBar">
+        <item name="android:minHeight">@dimen/radio_touch_target</item>
+        <item name="android:maxHeight">@dimen/radio_touch_target</item>
+        <item name="android:progressDrawable">@drawable/radio_seekbar_track</item>
+        <item name="android:thumb">@drawable/radio_seekbar_thumb</item>
+        <item name="android:thumbOffset">2dp</item>
+        <item name="android:splitTrack">false</item>
+        <item name="android:thumbTint">@color/radio_slider_thumb</item>
+        <item name="android:progressTint">@color/radio_slider_active</item>
+        <item name="android:progressBackgroundTint">@color/radio_slider_inactive</item>
+    </style>
+    <style name="RadioPreferenceItem" parent="Preference.Material">
+        <item name="android:layout">@layout/radio_preference_row</item>
+    </style>
+    <style name="RadioPreferenceCategory" parent="Preference.Category.Material">
+        <item name="android:layout">@layout/radio_preference_category</item>
+    </style>
+    <style name="RadioPreferenceSwitch" parent="Preference.SwitchPreferenceCompat.Material">
+        <item name="android:layout">@layout/radio_preference_row</item>
+        <item name="widgetLayout">@layout/radio_preference_switch</item>
+    </style>
+    <style name="RadioPreferenceList" parent="Preference.DialogPreference.Material">
+        <item name="android:layout">@layout/radio_preference_row</item>
+    </style>
+    <style name="RadioPreferenceSeekBar" parent="Preference.SeekBarPreference.Material">
+        <item name="android:background">@drawable/radio_settings_surface</item>
+    </style>
+</resources>

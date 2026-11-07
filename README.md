@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.22.0-hfplus-alpha22` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.23.0-hfplus-alpha23` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha23 applies Material 3 principles to the existing **Kotlin/XML Views** stack, using the already-pinned Material Components 1.12.0. It adds shared dark colour/shape/spacing/type roles, MaterialSwitch, consistent sliders/buttons and Preference rows. Tune's rate control uses a Material Slider with a grip and an AndroidX spring return; release stops tuning immediately. Seven themes, fine/Step wheels and existing features remain. **No Compose migration.** See the [design system and stack audit](docs/ui/material3-views.md) and [alpha23 validation](docs/validation/2026-11-08-alpha23.md).
 
 Alpha22 moves the recording-page expand/restore action to the right of its section heading and removes the coloured backgrounds around the playback controls. See [alpha22 validation](docs/validation/2026-11-08-alpha22.md).
 
@@ -68,7 +70,7 @@ APK output: `app/build/outputs/apk/debug/`. Device scripts accept `--adb`, or fi
 
 Distributed under [GNU GPL v3](LICENSE), retaining upstream copyrights and bundled component licences. Exact sources, pinned revisions and modifications are documented in [third-party reuse](docs/third-party-reuse.md), [audio decoder provenance](docs/third-party-audio-content.md), [recording/player provenance](docs/third-party-recording-playback.md), [DSEG licensing](docs/third-party-DSEG.md) and bundled licence files.
 
-Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for creating and publishing the application that made this project possible. Thanks also to Airspy, libusb, SDR++, WDSP, readsb, Robot36, multimon-ng, aptdec, GNU Radio, BlurView, AndroidX Media3, MapLibre, EiBi, OurAirports, DSEG and the other upstream contributors credited in the source and licence records.
+Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for creating and publishing the application that made this project possible. Thanks also to Airspy, libusb, SDR++, WDSP, readsb, Robot36, multimon-ng, aptdec, GNU Radio, BlurView, AndroidX Media3, Material Components for Android, MapLibre, EiBi, OurAirports, DSEG and the other upstream contributors credited in the source and licence records.
 
 ---
 
@@ -76,7 +78,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.22.0-hfplus-alpha22` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.23.0-hfplus-alpha23` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha23 在现有 **Kotlin/XML Views** 上采用 Material 3 原则，复用已固定的 Material Components 1.12.0：统一深色语义色、圆角、间距、排版、MaterialSwitch、滑条、按钮和 Preference 设置行。Tune 快速调频改为带握柄的 Material Slider，使用 AndroidX 弹簧回中；松手立即停止调频。保留七套主题、精调／Step 轮及现有功能，**没有迁移至 Compose**。详见[设计规范与技术栈检查](docs/ui/material3-views.md)和 [alpha23 验证](docs/validation/2026-11-08-alpha23.md)。
 
 Alpha22 将录音页的展开／还原移到“录制”标题行右侧，取消播放控制图标的彩色底框。详见 [alpha22 验证](docs/validation/2026-11-08-alpha22.md)。
 

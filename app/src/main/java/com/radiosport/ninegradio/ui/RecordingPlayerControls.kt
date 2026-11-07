@@ -34,7 +34,7 @@ class RecordingPlayerControls(private val activity:ComponentActivity,private val
     private fun dp(n:Int)=(n*d).toInt()
     private val root=LinearLayout(activity).apply {
         orientation=LinearLayout.VERTICAL;setPadding(dp(10),dp(8),dp(10),dp(8))
-        background=GradientDrawable().apply { cornerRadius=dp(20).toFloat();setColor(UiThemes.color(activity,R.attr.radioElevated));setStroke(dp(1).coerceAtLeast(1),UiThemes.color(activity,R.attr.radioOutline)) }
+        background=GradientDrawable().apply { cornerRadius=activity.resources.getDimension(R.dimen.radio_corner_large);setColor(UiThemes.color(activity,R.attr.radioElevated));setStroke(dp(1).coerceAtLeast(1),UiThemes.color(activity,R.attr.radioOutline)) }
     }
     private fun text(size:Float)=TextView(activity).apply { textSize=size;setTextColor(UiThemes.color(activity,R.attr.radioText));gravity=Gravity.CENTER_VERTICAL }
     private val title=text(12f).apply { text="录音播放器";maxLines=1;ellipsize=TextUtils.TruncateAt.MIDDLE }

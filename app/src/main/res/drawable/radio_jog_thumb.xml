@@ -1,0 +1,14 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="32dp" android:height="36dp">
+        <shape><solid android:color="?attr/colorPrimary"/><corners android:radius="12dp"/></shape>
+    </item>
+    <item android:width="2dp" android:height="10dp" android:gravity="center" android:left="0dp" android:right="10dp">
+        <shape><solid android:color="?attr/colorOnPrimary"/><corners android:radius="1dp"/></shape>
+    </item>
+    <item android:width="2dp" android:height="10dp" android:gravity="center">
+        <shape><solid android:color="?attr/colorOnPrimary"/><corners android:radius="1dp"/></shape>
+    </item>
+    <item android:width="2dp" android:height="10dp" android:gravity="center" android:left="10dp" android:right="0dp">
+        <shape><solid android:color="?attr/colorOnPrimary"/><corners android:radius="1dp"/></shape>
+    </item>
+</layer-list>

@@ -17,7 +17,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.radiosport.ninegradio.data.RegionalReception as Plans
@@ -91,7 +91,7 @@ class RegionalReceptionController(private val activity: AppCompatActivity,
             }
         }
         content.addView(spinner)
-        content.addView(SwitchMaterial(activity).apply {
+        content.addView(MaterialSwitch(activity).apply {
             text = "进入数据 / 航空模式时自动应用推荐"
             isChecked = prefs.getBoolean("auto_apply", false)
             setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("auto_apply", checked).apply() }

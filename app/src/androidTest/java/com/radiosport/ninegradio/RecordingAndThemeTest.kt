@@ -123,6 +123,12 @@ class RecordingAndThemeTest {
                     }
                     assertSame("Settings must keep the same DSP",engine,svc!!.dspEngine)
                     waitFor("Timed stop of both recordings") { !engine.statsFlow.value.isRecordingIq && !engine.statsFlow.value.isRecordingAudio }
+                    // Audio capture may stop before its worker has finalized the container.
+                    waitFor("Final metadata") { runBlocking {
+                        val metas=(context.applicationContext as RtlSdrApplication).database.recordingMetaDao().getAll().first().filter { it.filePath in listOf(iq.path,wav.path) }
+                        metas.size==2 && metas.all { it.durationMs in 100..1900 && it.fileSizeBytes==File(it.filePath).length() }
+                    } }
+                    assertNull("Audio recorder must finalize without error",engine.audioRecordingError())
                     assertTrue("Receiver remains running",svc!!.source?.isOpen()==true)
                     assertTrue(iq.length()>0)
                     assertTrue(wav.length()>44)
@@ -130,10 +136,6 @@ class RecordingAndThemeTest {
                     assertEquals("RIFF",String(wav.readBytes().copyOfRange(0,4)))
                     assertEquals(wav.length()-8,header.getInt(4).toLong())
                     assertEquals(wav.length()-44,header.getInt(40).toLong())
-                    waitFor("Final metadata") { runBlocking {
-                        val metas=(context.applicationContext as RtlSdrApplication).database.recordingMetaDao().getAll().first().filter { it.filePath in listOf(iq.path,wav.path) }
-                        metas.size==2 && metas.all { it.durationMs in 100..1900 && it.fileSizeBytes==File(it.filePath).length() }
-                    } }
                     inst.runOnMainSync {
                         androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).filterIsInstance<SettingsActivity>().forEach { it.finish() }
                     }

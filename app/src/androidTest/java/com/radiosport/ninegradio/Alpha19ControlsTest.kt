@@ -11,7 +11,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.ui.MainActivity
 import com.radiosport.ninegradio.ui.MainViewModel
@@ -47,7 +47,7 @@ class Alpha19ControlsTest {
                     for(device in listOf("rtl","airspyhf")) prefs.edit()
                         .putLong("device_${device}_mode_WFM_freq",87_800_000)
                         .putLong("device_${device}_mode_WFM_STEREO_freq",87_800_000).commit()
-                    val toggle=activity.findViewById<SwitchMaterial>(R.id.switchModeStationMemory)
+                    val toggle=activity.findViewById<MaterialSwitch>(R.id.switchModeStationMemory)
                     assertNotNull(toggle); assertTrue(toggle.isChecked)
                     toggle.performClick()
                     assertFalse(model.modeStationMemory.value)
@@ -87,7 +87,7 @@ class Alpha19ControlsTest {
                     val pager=activity.findViewById<androidx.viewpager2.widget.ViewPager2>(R.id.controlViewPager)
                     pager.setCurrentItem((pager.adapter as com.radiosport.ninegradio.ui.ControlsPagerAdapter)
                         .positionOf(com.radiosport.ninegradio.ui.ControlsPagerAdapter.TAB_MODE),false)
-                    val toggle=activity.findViewById<SwitchMaterial>(R.id.switchModeStationMemory)
+                    val toggle=activity.findViewById<MaterialSwitch>(R.id.switchModeStationMemory)
                     assertFalse(toggle.isChecked)
                     toggle.performClick()
                     assertTrue(model.modeStationMemory.value)

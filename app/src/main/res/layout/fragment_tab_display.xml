@@ -1,14 +1,14 @@
 <?xml version='1.0' encoding='utf-8'?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:scrollbars="vertical">
-  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="10dp">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/radio_space_lg">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/compact_section_card" android:padding="8dp" android:layout_marginBottom="8dp">
       <TextView android:layout_width="match_parent" android:layout_height="28dp" android:text="显示范围" android:textColor="?attr/radioSecondary" android:textSize="12sp" android:layout_marginBottom="6dp" android:gravity="center_vertical" />
       <FrameLayout android:id="@+id/inlineDisplayLevels" android:layout_width="match_parent" android:layout_height="wrap_content" />
       <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="缩放" android:textColor="#99BBCC" android:textSize="12sp" />
-      <com.google.android.material.slider.Slider android:id="@+id/sliderPlotZoom" android:layout_width="match_parent" android:layout_height="44dp" android:valueFrom="0" android:valueTo="11" android:value="0" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:thumbRadius="7dp" app:trackHeight="3dp" />
+      <com.google.android.material.slider.Slider android:id="@+id/sliderPlotZoom" android:layout_width="match_parent" android:layout_height="44dp" android:valueFrom="0" android:valueTo="11" android:value="0" app:thumbRadius="7dp" app:trackHeight="3dp" />
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
         <TextView android:layout_width="96dp" android:layout_height="wrap_content" android:text="@string/spectrum_height" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
-        <com.google.android.material.slider.Slider android:id="@+id/sliderSpecWfRatio" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="0.2" android:valueTo="0.8" android:value="0.4" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
+        <com.google.android.material.slider.Slider android:id="@+id/sliderSpecWfRatio" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="0.2" android:valueTo="0.8" android:value="0.4" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
         <TextView android:id="@+id/tvSpecWfRatioValue" android:layout_width="40dp" android:layout_height="wrap_content" android:text="40%" android:textColor="?attr/radioLink" android:textSize="12sp" android:gravity="end" android:fontFamily="monospace" />
       </LinearLayout>
     </LinearLayout>
@@ -20,17 +20,17 @@
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
         <TextView android:layout_width="96dp" android:layout_height="wrap_content" android:text="填充不透明度" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
-        <com.google.android.material.slider.Slider android:id="@+id/sliderFillOpacity" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="0.0" android:valueTo="1.0" android:value="0.73" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
+        <com.google.android.material.slider.Slider android:id="@+id/sliderFillOpacity" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="0.0" android:valueTo="1.0" android:value="0.73" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
         <TextView android:id="@+id/tvFillOpacityValue" android:layout_width="40dp" android:layout_height="wrap_content" android:text="73%" android:textColor="?attr/radioLink" android:textSize="12sp" android:gravity="end" android:fontFamily="monospace" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
         <TextView android:layout_width="96dp" android:layout_height="wrap_content" android:text="电平下限" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
-        <com.google.android.material.slider.Slider android:id="@+id/sliderSpecFloor" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="-200.0" android:valueTo="-10.0" android:value="-120.0" android:stepSize="1.0" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
+        <com.google.android.material.slider.Slider android:id="@+id/sliderSpecFloor" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="-200.0" android:valueTo="-10.0" android:value="-120.0" android:stepSize="1.0" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
         <TextView android:id="@+id/tvSpecFloorValue" android:layout_width="48dp" android:layout_height="wrap_content" android:text="-120" android:textColor="?attr/radioLink" android:textSize="12sp" android:gravity="end" android:fontFamily="monospace" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
         <TextView android:layout_width="96dp" android:layout_height="wrap_content" android:text="电平上限" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
-        <com.google.android.material.slider.Slider android:id="@+id/sliderSpecCeiling" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="-100.0" android:valueTo="50.0" android:value="0.0" android:stepSize="1.0" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
+        <com.google.android.material.slider.Slider android:id="@+id/sliderSpecCeiling" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="-100.0" android:valueTo="50.0" android:value="0.0" android:stepSize="1.0" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
         <TextView android:id="@+id/tvSpecCeilingValue" android:layout_width="48dp" android:layout_height="wrap_content" android:text="0" android:textColor="?attr/radioLink" android:textSize="12sp" android:gravity="end" android:fontFamily="monospace" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
@@ -38,7 +38,7 @@
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="自动电平范围" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="自动跟随信号电平" android:textColor="?attr/radioMuted" android:textSize="10sp" />
         </LinearLayout>
-        <Switch android:id="@+id/switchAutoRange" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchAutoRange" android:layout_width="wrap_content" android:layout_height="wrap_content" />
       </LinearLayout>
       <Button android:id="@+id/btnResetDbRange" style="@style/RadioPanelAction" android:layout_width="match_parent" android:layout_height="44dp" android:layout_marginTop="4dp" android:text="重置电平范围" android:textSize="12sp" app:strokeColor="#3300CCFF" />
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
@@ -46,18 +46,18 @@
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="噪声底线" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="绿色虚线显示估计噪声底" android:textColor="?attr/radioMuted" android:textSize="10sp" />
         </LinearLayout>
-        <Switch android:id="@+id/switchNoiseFloor" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchNoiseFloor" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="峰值保持" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="红线显示峰值轨迹" android:textColor="?attr/radioMuted" android:textSize="10sp" />
         </LinearLayout>
-        <Switch android:id="@+id/switchPeakHold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" />
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchPeakHold" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
         <TextView android:layout_width="96dp" android:layout_height="wrap_content" android:text="峰值衰减" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
-        <com.google.android.material.slider.Slider android:id="@+id/sliderPeakDecay" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="1.0" android:valueTo="20.0" android:value="2.0" android:stepSize="1.0" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
+        <com.google.android.material.slider.Slider android:id="@+id/sliderPeakDecay" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="1.0" android:valueTo="20.0" android:value="2.0" android:stepSize="1.0" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
         <TextView android:id="@+id/tvPeakDecayValue" android:layout_width="40dp" android:layout_height="wrap_content" android:text="2" android:textColor="?attr/radioLink" android:textSize="12sp" android:gravity="end" android:fontFamily="monospace" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
@@ -65,14 +65,14 @@
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="峰值标注" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="标注最强的三个信号峰值" android:textColor="?attr/radioMuted" android:textSize="10sp" />
         </LinearLayout>
-        <Switch android:id="@+id/switchPeakAnnotations" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchPeakAnnotations" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="长按十字光标" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
           <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="查看频率与 dBFS" android:textColor="?attr/radioMuted" android:textSize="10sp" />
         </LinearLayout>
-        <Switch android:id="@+id/switchCrosshair" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+        <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchCrosshair" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
       </LinearLayout>
     </LinearLayout>
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/compact_section_card" android:padding="8dp" android:layout_marginBottom="8dp">
@@ -83,12 +83,12 @@
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
         <TextView android:layout_width="96dp" android:layout_height="wrap_content" android:text="亮度" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
-        <com.google.android.material.slider.Slider android:id="@+id/sliderWfBrightness" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="-0.5" android:valueTo="0.5" android:value="0.0" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
+        <com.google.android.material.slider.Slider android:id="@+id/sliderWfBrightness" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="-0.5" android:valueTo="0.5" android:value="0.0" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
         <TextView android:id="@+id/tvWfBrightnessValue" android:layout_width="40dp" android:layout_height="wrap_content" android:text="0" android:textColor="?attr/radioLink" android:textSize="12sp" android:gravity="end" android:fontFamily="monospace" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
         <TextView android:layout_width="96dp" android:layout_height="wrap_content" android:text="对比度" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
-        <com.google.android.material.slider.Slider android:id="@+id/sliderWfContrast" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="0.2" android:valueTo="3.0" android:value="1.0" app:thumbColor="?attr/radioSlider" app:trackColorActive="?attr/radioSlider" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
+        <com.google.android.material.slider.Slider android:id="@+id/sliderWfContrast" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:valueFrom="0.2" android:valueTo="3.0" android:value="1.0" app:trackColorInactive="?attr/radioOutline" app:thumbRadius="7dp" app:trackHeight="3dp" />
         <TextView android:id="@+id/tvWfContrastValue" android:layout_width="40dp" android:layout_height="wrap_content" android:text="1.0×" android:textColor="?attr/radioLink" android:textSize="12sp" android:gravity="end" android:fontFamily="monospace" />
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
@@ -97,7 +97,7 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="自动对比度" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="自动跟随信号动态范围" android:textColor="?attr/radioMuted" android:textSize="10sp" />
           </LinearLayout>
-          <Switch android:id="@+id/switchAutoStretch" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+          <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchAutoStretch" android:layout_width="wrap_content" android:layout_height="wrap_content" />
         </LinearLayout>
         <View android:layout_width="1dp" android:layout_height="32dp" android:background="#22FFFFFF" android:layout_marginHorizontal="8dp" />
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
@@ -105,7 +105,7 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="⏸ 暂停" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="暂停瀑布图更新" android:textColor="?attr/radioMuted" android:textSize="10sp" />
           </LinearLayout>
-          <Switch android:id="@+id/switchWfPause" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+          <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchWfPause" android:layout_width="wrap_content" android:layout_height="wrap_content" />
         </LinearLayout>
       </LinearLayout>
       <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="6dp">
@@ -114,7 +114,7 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="时间刻度" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="右侧显示经过时间" android:textColor="?attr/radioMuted" android:textSize="10sp" />
           </LinearLayout>
-          <Switch android:id="@+id/switchTimeRuler" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+          <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchTimeRuler" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
         </LinearLayout>
         <View android:layout_width="1dp" android:layout_height="32dp" android:background="#22FFFFFF" android:layout_marginHorizontal="8dp" />
         <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
@@ -122,7 +122,7 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="中心频率标记" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="虚线标记当前接收频率" android:textColor="?attr/radioMuted" android:textSize="10sp" />
           </LinearLayout>
-          <Switch android:id="@+id/switchCentreMarker" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
+          <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchCentreMarker" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" />
         </LinearLayout>
       </LinearLayout>
     </LinearLayout>

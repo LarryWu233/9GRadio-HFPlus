@@ -46,7 +46,7 @@ class MapSceneTest {
                     val adapter=MainActivity::class.java.getDeclaredField("pagerAdapter").apply { isAccessible=true }.get(activity) as ControlsPagerAdapter
                     activity.findViewById<com.google.android.material.tabs.TabLayout>(R.id.controlTabLayout)
                         .getTabAt(adapter.positionOf(if(protocol=="ADSB") ControlsPagerAdapter.TAB_ADSB else ControlsPagerAdapter.TAB_APRS))!!.select()
-                    activity.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(if(protocol=="ADSB") R.id.btnAdsbPanelMap else R.id.btnAprsMap).isChecked=true
+                    activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(if(protocol=="ADSB") R.id.btnAdsbPanelMap else R.id.btnAprsMap).isChecked=true
                 }
                 Thread.sleep(600)
                 RadioTargets.aircraft.value=listOf(RadioTarget("SAMPLE-AIRCRAFT","[样本] 飞机",35.0,105.0,"位置图层测试",now))

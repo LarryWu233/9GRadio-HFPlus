@@ -1,6 +1,6 @@
-<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#2238BDDC">
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="?attr/colorControlHighlight">
     <item><shape android:shape="rectangle">
-        <solid android:color="#18232D"/><stroke android:width="1dp" android:color="#344653"/>
-        <corners android:radius="6dp"/>
+        <solid android:color="?attr/colorSurfaceContainerLow"/><stroke android:width="1dp" android:color="?attr/colorOutlineVariant"/>
+        <corners android:radius="@dimen/radio_corner_large"/>
     </shape></item>
 </ripple>

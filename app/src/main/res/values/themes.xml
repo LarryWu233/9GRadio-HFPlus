@@ -3,10 +3,10 @@
     <style name="Theme.NineGRadio" parent="Theme.NineGRadio.Base"/>
     <style name="Theme.NineGRadio.Controls" parent="Theme.NineGRadio">
         <item name="colorAccent">?attr/radioAccent</item>
-        <item name="colorSecondary">?attr/radioAccent</item>
+        <item name="colorSecondary">?attr/radioSlider</item>
         <item name="colorControlActivated">?attr/radioAccent</item>
     </style>
-    <style name="Theme.NineGRadio.Base" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.NineGRadio.Base" parent="Theme.Material3.Dark.NoActionBar">
 <item name="radioMain">#071018</item>
 <item name="radioSurface">#0D1822</item>
 <item name="radioCard">#12202B</item>
@@ -20,10 +20,10 @@
 <item name="radioSelected">#263D43</item>
 <item name="radioLink">#68BDDF</item>
 
-        <item name="colorPrimary">?attr/radioSlider</item>
+        <item name="colorPrimary">?attr/radioAccent</item>
         <item name="colorPrimaryDark">?attr/radioSurface</item>
         <item name="colorAccent">?attr/radioAccent</item>
-        <item name="colorSecondary">?attr/radioAccent</item>
+        <item name="colorSecondary">?attr/radioSlider</item>
         <item name="android:windowBackground">?attr/radioMain</item>
         <item name="android:statusBarColor">?attr/radioMain</item>
         <item name="android:navigationBarColor">?attr/radioMain</item>
@@ -34,9 +34,38 @@
         <item name="android:colorBackground">?attr/radioMain</item>
         <item name="android:textColor">?attr/radioText</item>
         <item name="android:textColorSecondary">?attr/radioSecondary</item>
-        <item name="colorSurface">?attr/radioSurface</item>
+        <item name="colorSurface">?attr/radioMain</item>
         <item name="colorOnSurface">?attr/radioText</item>
-        <item name="colorError">@color/textError</item>
+        <item name="colorError">@color/radio_error</item>
+        <item name="colorOnError">@color/radio_on_error</item>
+        <item name="colorErrorContainer">@color/radio_error_container</item>
+        <item name="colorOnErrorContainer">@color/radio_on_error_container</item>
+
+        <!-- Semantic M3 roles adapt to each existing dark preset. -->
+        <item name="colorOnPrimary">?attr/radioMain</item>
+        <item name="colorPrimaryContainer">?attr/radioSelected</item>
+        <item name="colorOnPrimaryContainer">?attr/radioText</item>
+        <item name="colorOnSecondary">?attr/radioMain</item>
+        <item name="colorSecondaryContainer">?attr/radioSelected</item>
+        <item name="colorOnSecondaryContainer">?attr/radioText</item>
+        <item name="colorTertiary">?attr/radioLink</item>
+        <item name="colorOnTertiary">?attr/radioMain</item>
+        <item name="colorSurfaceVariant">?attr/radioSelected</item>
+        <item name="colorOnSurfaceVariant">?attr/radioSecondary</item>
+        <item name="colorSurfaceContainerLowest">?attr/radioMain</item>
+        <item name="colorSurfaceContainerLow">?attr/radioSurface</item>
+        <item name="colorSurfaceContainer">?attr/radioCard</item>
+        <item name="colorSurfaceContainerHigh">?attr/radioElevated</item>
+        <item name="colorSurfaceContainerHighest">?attr/radioSelected</item>
+        <item name="colorOutline">?attr/radioMuted</item>
+        <item name="colorOutlineVariant">?attr/radioOutline</item>
+        <item name="materialSwitchStyle">@style/RadioMaterialSwitch</item>
+        <item name="seekBarStyle">@style/RadioSeekBar</item>
+        <item name="android:seekBarStyle">@style/RadioSeekBar</item>
+        <item name="materialButtonStyle">@style/RadioMaterialButton</item>
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.Radio.Small</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Radio.Medium</item>
+        <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.Radio.Large</item>
 
         <!-- Action bar handled by Toolbar in layout, not window decor -->
         <item name="windowActionBar">false</item>
@@ -64,39 +93,58 @@
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
 
-    <style name="NineGRadioChip" parent="Widget.MaterialComponents.Chip.Choice">
+    <style name="NineGRadioChip" parent="Widget.Material3.Chip.Filter">
         <item name="android:textColor">?attr/radioLink</item>
         <item name="chipBackgroundColor">?attr/radioSelected</item>
         <item name="chipStrokeColor">?attr/radioSlider</item>
         <item name="chipStrokeWidth">1dp</item>
-        <item name="chipCornerRadius">4dp</item>
+        <item name="chipCornerRadius">@dimen/radio_corner_small</item>
         <item name="chipMinHeight">30dp</item>
         <item name="android:textSize">12sp</item>
         <item name="checkedIconVisible">false</item>
     </style>
 
-    <style name="NineGRadioSlider" parent="Widget.MaterialComponents.Slider">
-        <item name="thumbColor">?attr/radioSlider</item>
-        <item name="trackColorActive">?attr/radioSlider</item>
-        <item name="trackColorInactive">?attr/radioOutline</item>
-        <item name="haloColor">#1A00CCFF</item>
+    <style name="NineGRadioSlider" parent="Widget.Material3.Slider">
+        <item name="thumbColor">@color/radio_slider_thumb</item>
+        <item name="trackColorActive">@color/radio_slider_active</item>
+        <item name="trackColorInactive">@color/radio_slider_inactive</item>
+        <item name="trackHeight">@dimen/radio_slider_track</item>
+        <item name="thumbWidth">@dimen/radio_slider_handle_width</item>
+        <item name="thumbHeight">@dimen/radio_slider_handle_height</item>
+        <item name="thumbTrackGapSize">4dp</item>
+        <item name="trackStopIndicatorSize">2dp</item>
     </style>
 
     <!-- Dialog style -->
-    <style name="NineGRadioDialog" parent="Theme.MaterialComponents.DayNight.Dialog">
+    <style name="NineGRadioDialog" parent="Theme.Material3.Dark.Dialog.Alert">
+        <item name="colorOnPrimary">?attr/radioMain</item>
+        <item name="colorPrimaryContainer">?attr/radioSelected</item>
+        <item name="colorOnPrimaryContainer">?attr/radioText</item>
+        <item name="colorSecondary">?attr/radioSlider</item>
+        <item name="colorOnSecondary">?attr/radioMain</item>
+        <item name="colorSecondaryContainer">?attr/radioSelected</item>
+        <item name="colorOnSecondaryContainer">?attr/radioText</item>
+        <item name="colorOnSurfaceVariant">?attr/radioSecondary</item>
+        <item name="colorSurfaceContainerLow">?attr/radioSurface</item>
+        <item name="colorSurfaceContainer">?attr/radioCard</item>
+        <item name="colorSurfaceContainerHigh">?attr/radioElevated</item>
+        <item name="colorSurfaceContainerHighest">?attr/radioSelected</item>
+        <item name="colorOutline">?attr/radioMuted</item>
+        <item name="colorOutlineVariant">?attr/radioOutline</item>
+        <item name="materialSwitchStyle">@style/RadioMaterialSwitch</item>
         <item name="android:colorBackground">?attr/radioCard</item>
         <item name="android:textColorPrimary">?attr/radioText</item>
         <item name="android:textColorSecondary">?attr/radioSecondary</item>
         <item name="colorAccent">?attr/radioAccent</item>
         <item name="android:windowBackground">?attr/radioCard</item>
-        <item name="colorPrimary">?attr/radioSlider</item>
+        <item name="colorPrimary">?attr/radioAccent</item>
         <item name="android:textColor">?attr/radioText</item>
         <item name="colorSurface">?attr/radioCard</item>
         <item name="colorOnSurface">?attr/radioText</item>
     </style>
 
     <!-- TextInputLayout style -->
-    <style name="NineGRadioTextInput" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+    <style name="NineGRadioTextInput" parent="Widget.Material3.TextInputLayout.OutlinedBox">
         <item name="boxStrokeColor">?attr/radioSlider</item>
         <item name="hintTextColor">?attr/radioLink</item>
         <item name="android:textColor">?attr/radioText</item>
@@ -104,10 +152,13 @@
 
     <!-- Preferences style -->
     <style name="NineGRadioPreference" parent="PreferenceThemeOverlay.v14.Material">
-        <item name="android:background">?attr/radioMain</item>
         <item name="android:textColor">?attr/radioText</item>
         <item name="android:textColorSecondary">?attr/radioSecondary</item>
-        <item name="preferenceStyle">@style/NineGRadioPreferenceItem</item>
+        <item name="preferenceStyle">@style/RadioPreferenceItem</item>
+        <item name="preferenceCategoryStyle">@style/RadioPreferenceCategory</item>
+        <item name="switchPreferenceCompatStyle">@style/RadioPreferenceSwitch</item>
+        <item name="dialogPreferenceStyle">@style/RadioPreferenceList</item>
+        <item name="seekBarPreferenceStyle">@style/RadioPreferenceSeekBar</item>
     </style>
 
     <style name="NineGRadioPreferenceItem" parent="Preference.Material">

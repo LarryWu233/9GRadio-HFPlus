@@ -58,10 +58,12 @@ class SettingsActivity : RadioThemedActivity() {
 class SettingsFragment : PreferenceFragmentCompat() {
     override fun onViewCreated(view: android.view.View,savedInstanceState: Bundle?) {
         super.onViewCreated(view,savedInstanceState)
+        RadioPreferenceStyling.apply(this)
         listView.addOnChildAttachStateChangeListener(object: RecyclerView.OnChildAttachStateChangeListener {
             override fun onChildViewAttachedToWindow(view: android.view.View) {
                 ControlColors.apply(view,ControlColors.Group.RADIO)
-                view.findViewById<TextView>(android.R.id.title)?.textSize=14f
+                view.findViewById<TextView>(android.R.id.title)?.textSize=if(view is TextView) 14f else 16f
+                if(view is TextView) view.setTextColor(UiThemes.color(view.context,R.attr.radioAccent))
                 view.findViewById<TextView>(android.R.id.summary)?.textSize=12f
             }
             override fun onChildViewDetachedFromWindow(view: android.view.View) {}

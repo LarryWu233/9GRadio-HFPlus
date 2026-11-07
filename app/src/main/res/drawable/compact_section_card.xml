@@ -1,5 +1,5 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <solid android:color="?attr/radioSurface"/>
-    <corners android:radius="6dp"/>
-    <stroke android:width="0.5dp" android:color="#263F4E"/>
+    <corners android:radius="@dimen/radio_corner_medium"/>
+    <stroke android:width="0.5dp" android:color="?attr/colorOutlineVariant"/>
 </shape>

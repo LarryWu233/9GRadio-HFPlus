@@ -6,7 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.tabs.TabLayout
 import com.radiosport.ninegradio.dsp.*
 import com.radiosport.ninegradio.ui.*
@@ -55,11 +55,11 @@ class AnalogNoisePolicyUiTest {
                         scenario.onActivity { a ->
                             assertEquals(mode,model.demodMode.value)
                             for(id in listOf(R.id.switchNoiseBlanker,R.id.switchNoiseReducer)) {
-                                val control=a.findViewById<Switch>(id)
+                                val control=a.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(id)
                                 assertFalse(mode.name,control.isEnabled); assertFalse(mode.name,control.isChecked)
                             }
                             for(id in listOf(R.id.switchAudioLeveling,R.id.switchAudioNotch)) {
-                                val control=a.findViewById<SwitchMaterial>(id)
+                                val control=a.findViewById<MaterialSwitch>(id)
                                 assertFalse(mode.name,control.isEnabled); assertFalse(mode.name,control.isChecked)
                             }
                             assertEquals(View.VISIBLE,a.findViewById<View>(R.id.tvNoiseProcessingState).visibility)
@@ -71,12 +71,12 @@ class AnalogNoisePolicyUiTest {
                     Thread.sleep(400)
                     scenario.onActivity { a ->
                         for(id in listOf(R.id.switchNoiseBlanker,R.id.switchNoiseReducer)) {
-                            val control=a.findViewById<Switch>(id)
+                            val control=a.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(id)
                             assertTrue(control.isEnabled); assertTrue(control.isChecked)
                         }
                         assertEquals(9f,model.iqNbThreshold.value,0f)
-                        assertTrue(a.findViewById<SwitchMaterial>(R.id.switchAudioNotch).isChecked)
-                        assertTrue(a.findViewById<SwitchMaterial>(R.id.switchAudioLeveling).isChecked)
+                        assertTrue(a.findViewById<MaterialSwitch>(R.id.switchAudioNotch).isChecked)
+                        assertTrue(a.findViewById<MaterialSwitch>(R.id.switchAudioLeveling).isChecked)
                         capture(adapter.getViewAt(ControlsPagerAdapter.TAB_RF)!!,"alpha12-analog-noise-controls.png")
                     }
                 } finally {

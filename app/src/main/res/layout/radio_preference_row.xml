@@ -1,0 +1,17 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="64dp"
+    android:orientation="horizontal" android:gravity="center_vertical" android:baselineAligned="false"
+    android:paddingHorizontal="@dimen/radio_space_lg" android:paddingVertical="@dimen/radio_space_md"
+    android:background="@drawable/radio_settings_surface" android:descendantFocusability="blocksDescendants">
+    <FrameLayout android:id="@+id/icon_frame" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone">
+        <ImageView android:id="@android:id/icon" android:layout_width="24dp" android:layout_height="24dp" android:layout_marginEnd="@dimen/radio_space_lg"/>
+    </FrameLayout>
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+        <TextView android:id="@android:id/title" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodyLarge" android:textColor="?attr/colorOnSurface" android:singleLine="false"/>
+        <TextView android:id="@android:id/summary" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp"
+            android:textAppearance="@style/TextAppearance.Radio.Caption" android:visibility="gone"/>
+    </LinearLayout>
+    <LinearLayout android:id="@android:id/widget_frame" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:orientation="vertical" android:gravity="center_vertical" android:paddingStart="@dimen/radio_space_md"/>
+</LinearLayout>

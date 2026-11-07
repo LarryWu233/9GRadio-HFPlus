@@ -1,4 +1,4 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <solid android:color="?attr/radioSurface"/>
-    <corners android:topLeftRadius="24dp" android:topRightRadius="24dp"/>
+    <corners android:topLeftRadius="@dimen/radio_corner_dialog" android:topRightRadius="@dimen/radio_corner_dialog"/>
 </shape>

@@ -8,7 +8,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.preference.PreferenceManager
 import com.google.android.material.slider.Slider
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.radiosport.ninegradio.R
 
 /** One inline editor for both plots; preferences remain the shared source of truth. */
@@ -19,7 +19,7 @@ class DisplayLevelControls(context: Context,private val waterfall: WaterfallView
     private var syncing=false
     private var low=-120; private var high=0
     private val selector=SegmentedSelectorView(context).apply { id=R.id.levelTargetSelector }
-    private val auto=SwitchMaterial(context).apply { id=R.id.switchInlineAutoLevels; text="自动 dB 范围"; textSize=12f }
+    private val auto=MaterialSwitch(context).apply { id=R.id.switchInlineAutoLevels; text="自动 dB 范围"; textSize=12f }
     private val lowSlider=Slider(context).apply { id=R.id.sliderInlineMinLevel; contentDescription="电平下限" }
     private val highSlider=Slider(context).apply { id=R.id.sliderInlineMaxLevel; contentDescription="电平上限" }
     private val lowText=TextView(context)

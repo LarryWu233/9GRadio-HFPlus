@@ -18,6 +18,9 @@ class RecordingSettingsActivity:RadioThemedActivity() {
     }
 }
 class RecordingSettingsFragment:PreferenceFragmentCompat() {
+    override fun onViewCreated(view:android.view.View,state:Bundle?) {
+        super.onViewCreated(view,state);RadioPreferenceStyling.apply(this)
+    }
     override fun onCreatePreferences(state:Bundle?,rootKey:String?) {
         val context=requireContext();preferenceScreen=preferenceManager.createPreferenceScreen(context)
         val available=AudioRecordingProfile.supportedFormats()

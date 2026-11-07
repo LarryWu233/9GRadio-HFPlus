@@ -106,8 +106,8 @@ class ScannerActivity : RadioThemedActivity() {
         val tvNoiseFloor     = findViewById<TextView>(R.id.tvScanNoiseFloor)
         val tvRate           = findViewById<TextView>(R.id.tvScanRate)
         val listHits         = findViewById<ListView>(R.id.listScanHits)
-        val switchDirection  = findViewById<Switch>(R.id.switchScanDirection)
-        val switchAdaptive   = findViewById<Switch>(R.id.switchScanAdaptive)
+        val switchDirection  = findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchScanDirection)
+        val switchAdaptive   = findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchScanAdaptive)
 
         // Pre-fill from current ViewModel state
         etStartFreq.setText("%.4f".format(viewModel.centerFreqHz.value / 1e6))

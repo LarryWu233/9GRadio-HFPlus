@@ -50,3 +50,11 @@ Google Oboe、SDR++ Android AAudio 音频模块本轮仅阅读。实收证据指
 - 广播 FM 补充测试实际发现通用 WDSP 插值参数会加重相位杂声，因此正式版本分开选择算法，而不将 AM 的参数直接套在 FM 上。此处复用的是 SDR++ 已有 IQ 幅度抑制，不是新写 FM 修复算法；原头文件与许可随源码提供。
 - 按用户更新的要求，只有 AM/FM/WFM/WFM Stereo/NFM/USB/LSB/DSB 使用降噪处理。数字模式与 CW/CWR/RAW 完整旁路 IQ NB、音频 NR、陷波和响度补偿；界面关闭并禁用相应控件，模拟模式选择仍被记忆。CW 属于音调信号，此次也保留原样。未接入任何神经网络组件。
 - 删除接收链路中的单声道及左右声道音频 NB 调用，避免同一脉冲又在音频端置零。`AudioDsp.NoiseBlanker` 仅保留给旧诊断代码，不参与接收。
+
+
+## alpha23：现有 Views 上的 Material 3
+
+- 复用已经依赖的 **Material Components for Android 1.12.0** 的 Material 3 Dark 主题、MaterialSwitch、Slider、按钮和文本输入样式；Apache-2.0，依赖版本不变。官方源码与对应文档：[material-components-android 1.12.0](https://github.com/material-components/material-components-android/tree/1.12.0)。
+- 回中动画使用该依赖链已有的 **AndroidX DynamicAnimation 1.0.0** `SpringAnimation`，Apache-2.0。没有自行实现弹簧积分器；原 `TuningMath.rate` 与硬件命令调度不改。
+- AndroidX Preference 继续负责保存、依赖与监听，新布局和开关 widget 只调整显示。没有引入 Compose 或更换 DSP／驱动。
+- 用户指定的 [hamen/material-3-skill](https://github.com/hamen/material-3-skill) 为设计参考，MIT；未将其 Compose 示例作为应用实现。映射、所读内容摘要与验证边界见 [Views 设计规范](ui/material3-views.md)。

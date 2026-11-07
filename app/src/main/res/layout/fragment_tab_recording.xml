@@ -1,31 +1,31 @@
 <?xml version='1.0' encoding='utf-8'?>
 <LinearLayout android:orientation="vertical" xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
-  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="8dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:paddingBottom="12dp">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="8dp" android:paddingStart="@dimen/radio_space_lg" android:paddingEnd="@dimen/radio_space_lg" android:paddingBottom="12dp">
     <LinearLayout android:layout_width="match_parent" android:layout_height="40dp" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="4dp">
-      <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="录制" android:textColor="#FF4444" android:textSize="12sp" />
-      <Button android:id="@id/recordingPlaybackExpand" android:layout_width="64dp" android:layout_height="40dp" android:padding="0dp" android:minWidth="0dp" android:minHeight="0dp" android:singleLine="true" android:text="展开" android:textSize="12sp" android:textAllCaps="false" android:textColor="?attr/radioAccent" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="展开录音页" />
+      <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="录制" android:textColor="#FF4444" android:textSize="14sp" />
+      <Button android:id="@id/recordingPlaybackExpand" android:layout_width="64dp" android:layout_height="40dp" android:padding="0dp" android:minWidth="0dp" android:minHeight="0dp" android:singleLine="true" android:text="展开" android:textSize="14sp" android:textAllCaps="false" android:textColor="?attr/radioAccent" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="展开录音页" />
     </LinearLayout>
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
-      <Button android:id="@+id/btnRecordIq" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="录制 IQ" android:backgroundTint="?attr/radioElevated" android:textColor="#FF4444" android:layout_marginEnd="8dp" style="@style/RadioRecordingAction" android:textSize="12sp" />
-      <Button android:id="@+id/btnRecordAudio" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="录制声音" android:backgroundTint="?attr/radioElevated" android:textColor="#FF4444" style="@style/RadioRecordingAction" android:textSize="12sp" />
+      <Button android:id="@+id/btnRecordIq" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="录制 IQ" android:backgroundTint="?attr/radioElevated" android:textColor="#FF4444" android:layout_marginEnd="8dp" style="@style/RadioRecordingAction" android:textSize="14sp" />
+      <Button android:id="@+id/btnRecordAudio" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="录制声音" android:backgroundTint="?attr/radioElevated" android:textColor="#FF4444" style="@style/RadioRecordingAction" android:textSize="14sp" />
     </LinearLayout>
     <FrameLayout android:id="@+id/recordingPlayerHost" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"/>
     <View android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/radioOutline" android:layout_marginVertical="8dp" />
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
-      <TextView android:layout_width="120dp" android:layout_height="wrap_content" android:text="自动停止录制" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
+      <TextView android:layout_width="120dp" android:layout_height="wrap_content" android:text="自动停止录制" android:textColor="?attr/radioSecondary" android:textSize="14sp" />
       <Spinner android:id="@+id/spinnerRecordStop" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:backgroundTint="#FF4444" />
     </LinearLayout>
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="8dp">
       <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="按静噪门限录制" android:textColor="?attr/radioSecondary" android:textSize="12sp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="按静噪门限录制" android:textColor="?attr/radioSecondary" android:textSize="14sp" />
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="仅在信号达到静噪门限时录制" android:textColor="?attr/radioMuted" android:textSize="10sp" android:visibility="gone" />
       </LinearLayout>
-      <Switch android:id="@+id/switchSquelchRecord" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" />
+      <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/switchSquelchRecord" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="false" />
     </LinearLayout>
     <LinearLayout android:id="@+id/containerRecordingsTabList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
       <View android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/radioOutline" android:layout_marginVertical="8dp" />
       <TextView android:id="@+id/tvRecordingState" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="?attr/radioSecondary" android:textSize="11sp" android:visibility="gone" android:paddingBottom="6dp"/>
-      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="录制文件" android:textColor="#FF4444" android:textSize="12sp" android:layout_marginBottom="6dp" />
+      <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="录制文件" android:textColor="#FF4444" android:textSize="14sp" android:layout_marginBottom="6dp" />
       <androidx.recyclerview.widget.RecyclerView android:id="@+id/recyclerRecordingsTab" android:layout_width="match_parent" android:layout_height="260dp" android:nestedScrollingEnabled="false" android:clipToPadding="false" />
     </LinearLayout>
   </LinearLayout>

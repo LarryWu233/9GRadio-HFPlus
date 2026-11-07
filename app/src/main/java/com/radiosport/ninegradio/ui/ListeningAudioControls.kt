@@ -5,7 +5,7 @@ import android.graphics.Color
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.android.material.slider.Slider
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.radiosport.ninegradio.R
 import com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings
 import com.radiosport.ninegradio.dsp.DemodMode
@@ -16,8 +16,8 @@ class ListeningAudioControls(context: Context, initial: Settings, private val ch
     private var config=initial
     private var syncing=false
     private var notchAllowed=true
-    val leveling=SwitchMaterial(context).apply { id=R.id.switchAudioLeveling; text="响度补偿（AGC）" }
-    val notch=SwitchMaterial(context).apply { id=R.id.switchAudioNotch; text="自动陷波（抑制啸叫）" }
+    val leveling=MaterialSwitch(context).apply { id=R.id.switchAudioLeveling; text="响度补偿（AGC）" }
+    val notch=MaterialSwitch(context).apply { id=R.id.switchAudioNotch; text="自动陷波（抑制啸叫）" }
     private val limitLabel=TextView(context)
     val limit=Slider(context).apply { id=R.id.sliderAudioLevelLimit; valueFrom=3f; valueTo=18f; stepSize=3f; contentDescription="补偿上限" }
     private val speedLabel=TextView(context)
@@ -27,7 +27,7 @@ class ListeningAudioControls(context: Context, initial: Settings, private val ch
         val gap=(8*resources.displayMetrics.density).toInt()
         setPadding(0,gap,0,gap)
         for(view in listOf(leveling,limitLabel,limit,notch,speedLabel,speed)) {
-            if(view is TextView) { view.setTextColor(Color.rgb(180,205,218)); view.textSize=13f }
+            if(view is TextView) { view.setTextColor(UiThemes.color(context,R.attr.radioSecondary)); view.textSize=14f }
             addView(view,LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.WRAP_CONTENT))
         }
         leveling.setOnCheckedChangeListener { _,value -> if(!syncing) submit(config.copy(leveling=value)) }

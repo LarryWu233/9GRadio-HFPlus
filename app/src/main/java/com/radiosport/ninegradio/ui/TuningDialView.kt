@@ -110,7 +110,7 @@ class TuningDialView @JvmOverloads constructor(
     private val readoutPaint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface) }
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioMain)
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface)
     }
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -118,13 +118,13 @@ class TuningDialView @JvmOverloads constructor(
     }
     private val trackRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 4f
-        color = 0xFF1A3A4A.toInt()
+        strokeWidth = resources.displayMetrics.density
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioOutline)
     }
     private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2f
-        color = 0xFF334455.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioMuted)
     }
     private val majorTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -133,7 +133,7 @@ class TuningDialView @JvmOverloads constructor(
     }
     private val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = 0xFFFF4444.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.MONOSPACE
@@ -143,19 +143,14 @@ class TuningDialView @JvmOverloads constructor(
     private val stepLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.MONOSPACE
         textAlign = Paint.Align.CENTER
-        color = 0xFF00CCFF.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
         isFakeBoldText = true
     }
     private val fineLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.MONOSPACE
         textAlign = Paint.Align.CENTER
-        color = 0xFFFFAA00.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
         isFakeBoldText = true
-    }
-    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        maskFilter = BlurMaskFilter(20f, BlurMaskFilter.Blur.NORMAL)
-        color = 0x4400CCFF
     }
     private val edgeFadePaint = Paint().apply {
         style = Paint.Style.FILL
@@ -163,7 +158,7 @@ class TuningDialView @JvmOverloads constructor(
     private val centrePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 3f
-        color = 0xFFFF4444.toInt()
+        color = UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent)
         alpha = 200
     }
 
@@ -247,7 +242,7 @@ class TuningDialView @JvmOverloads constructor(
         computeStep()
         outlineProvider=object:android.view.ViewOutlineProvider() {
             override fun getOutline(view:android.view.View,outline:android.graphics.Outline) {
-                outline.setRoundRect(0,0,view.width,view.height,18*resources.displayMetrics.density)
+                outline.setRoundRect(0,0,view.width,view.height,resources.getDimension(com.radiosport.ninegradio.R.dimen.radio_corner_large))
             }
         }
         clipToOutline=true
@@ -311,7 +306,7 @@ class TuningDialView @JvmOverloads constructor(
         trackBottom = h * 0.74f
         trackW = trackRight - trackLeft
         trackH = trackBottom - trackTop
-        trackRadius=minOf(trackH/2,18*resources.displayMetrics.density)
+        trackRadius=minOf(trackH/2,resources.getDimension(com.radiosport.ninegradio.R.dimen.radio_corner_large))
         roundedTrack.reset()
         roundedTrack.addRoundRect(trackLeft,trackTop,trackRight,trackBottom,trackRadius,trackRadius,Path.Direction.CW)
 
@@ -323,9 +318,9 @@ class TuningDialView @JvmOverloads constructor(
             0f, trackTop, 0f, trackBottom,
             intArrayOf(
                 UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),
-                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioElevated),
                 UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioCard),
-                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioMain)
+                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),
+                UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface)
             ),
             floatArrayOf(0f, 0.32f, 0.7f, 1f),
             Shader.TileMode.CLAMP
@@ -341,9 +336,9 @@ class TuningDialView @JvmOverloads constructor(
         pointerPath.lineTo(cx + size * 0.6f, trackTop - size * 1.4f)
         pointerPath.close()
         leftFadePaint.shader = LinearGradient(trackLeft, 0f, trackLeft + trackW * 0.18f, 0f,
-            0xFF0D1117.toInt(), 0x000D1117, Shader.TileMode.CLAMP)
+            UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface), androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),0), Shader.TileMode.CLAMP)
         rightFadePaint.shader = LinearGradient(trackRight - trackW * 0.18f, 0f, trackRight, 0f,
-            0x000D1117, 0xFF0D1117.toInt(), Shader.TileMode.CLAMP)
+            androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface),0), UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface), Shader.TileMode.CLAMP)
     }
 
     // ── Draw ──────────────────────────────────────────────────────────────────
@@ -353,12 +348,6 @@ class TuningDialView @JvmOverloads constructor(
 
         // Background
         canvas.drawRect(0f, 0f, w, h, bgPaint)
-
-        // Glow shadow behind the drum
-        canvas.drawRoundRect(
-            trackLeft - 6f, trackTop - 6f, trackRight + 6f, trackBottom + 6f,
-            trackRadius+3f, trackRadius+3f, shadowPaint
-        )
 
         // Drum body
         canvas.drawRoundRect(

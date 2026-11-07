@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.tabs.TabLayout
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.ui.*
@@ -33,7 +33,7 @@ class DigitalPanelUiTest {
                 } }
                 Thread.sleep(3200)
                 scenario.onActivity { a ->
-                    val map=a.findViewById<SwitchMaterial>(R.id.btnAdsbPanelMap)
+                    val map=a.findViewById<MaterialSwitch>(R.id.btnAdsbPanelMap)
                     map.isChecked=true
                     a.findViewById<Button>(R.id.btnAdsbPanelFull).performClick()
                 }
@@ -50,7 +50,7 @@ class DigitalPanelUiTest {
                     assertTrue("Handle stroke must stay below frequency: top=${arrow[1]}, height=${handle.height}, frequencyBottom=${frequency[1]+f.height}",arrow[1]+handle.height/2-4*a.resources.displayMetrics.density>=frequency[1]+f.height-1)
                 }
                 screenshot("alpha14-inline-map-expanded.png")
-                scenario.onActivity { it.findViewById<SwitchMaterial>(R.id.btnAdsbPanelMap).isChecked=false }
+                scenario.onActivity { it.findViewById<MaterialSwitch>(R.id.btnAdsbPanelMap).isChecked=false }
                 Thread.sleep(500)
                 scenario.onActivity { a ->
                     assertEquals(View.VISIBLE,a.findViewById<View>(R.id.adsbPanelRadar).visibility)

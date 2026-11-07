@@ -52,7 +52,7 @@ class DigitalReceiverLifecycleTest {
                 }
                 Thread.sleep(500)
                 scenario.onActivity { a ->
-                    val toggle=a.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.btnAdsbPanelMap)
+                    val toggle=a.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.btnAdsbPanelMap)
                     toggle.isChecked=true
                     assertEquals(View.VISIBLE,a.findViewById<View>(R.id.adsbMapHost).visibility)
                     assertEquals(View.GONE,a.findViewById<View>(R.id.adsbPanelRadar).visibility)
@@ -65,7 +65,7 @@ class DigitalReceiverLifecycleTest {
                     val freq=a.findViewById<View>(R.id.frequencyView); freq.getLocationOnScreen(f)
                     assertTrue("Expanded sheet starts directly below frequency",kotlin.math.abs(f[1]+freq.height-y[1])<=4)
                     assertTrue(a.findViewById<View>(R.id.frequencyView).isShown)
-                    val toggle=a.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.btnAdsbPanelMap)
+                    val toggle=a.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.btnAdsbPanelMap)
                     toggle.isChecked=false
                     assertEquals(View.VISIBLE,a.findViewById<View>(R.id.adsbPanelRadar).visibility)
                     assertEquals(View.GONE,a.findViewById<View>(R.id.adsbMapHost).visibility)

@@ -1,7 +1,7 @@
 <resources>
-    <style name="RadioPanelAction" parent="Widget.MaterialComponents.Button.TextButton">
-        <item name="android:textSize">12sp</item>
-        <item name="android:textColor">#B8D0DB</item>
+    <style name="RadioPanelAction" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">?attr/radioText</item>
         <item name="android:textAllCaps">false</item>
         <item name="android:minWidth">0dp</item>
         <item name="android:minHeight">0dp</item>
@@ -11,7 +11,7 @@
         <item name="backgroundTint">?attr/radioElevated</item>
         <item name="strokeColor">?attr/radioOutline</item>
         <item name="strokeWidth">0.5dp</item>
-        <item name="cornerRadius">4dp</item>
+        <item name="cornerRadius">@dimen/radio_corner_button</item>
     </style>
     <style name="RadioRecordingAction" parent="RadioPanelAction">
         <item name="android:textColor">#FF757B</item>

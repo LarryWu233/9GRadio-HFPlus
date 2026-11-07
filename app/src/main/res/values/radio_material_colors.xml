@@ -1,0 +1,6 @@
+<resources>
+    <color name="radio_error">#FFB4AB</color>
+    <color name="radio_on_error">#690005</color>
+    <color name="radio_error_container">#93000A</color>
+    <color name="radio_on_error_container">#FFDAD6</color>
+</resources>

@@ -3,11 +3,10 @@ package com.radiosport.ninegradio.ui
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.Spinner
-import android.widget.Switch
 import android.widget.TextView
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.slider.Slider
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.radiosport.ninegradio.R
 
 /**
@@ -29,23 +28,23 @@ class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
     val tuningDial:      TuningDialView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.tuningDial)
     val chipGroupStep:   ChipGroup?        get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.chipGroupStep)
     val chipGroupBands:  ChipGroup?        get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.chipGroupBands)
-    val switchFineTune:  SwitchMaterial?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.switchFineTune)
-    val switchSnap:      SwitchMaterial?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.switchSnapChannel)
+    val switchFineTune:  MaterialSwitch?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.switchFineTune)
+    val switchSnap:      MaterialSwitch?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.switchSnapChannel)
 
     // ── RF tab ────────────────────────────────────────────────────────────────
     val sliderGain:            Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.sliderGain)
     val tvGainValue:           TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.tvGainValue)
-    val switchTunerAgc:        Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchTunerAgc)
-    val switchHardwareAgc:     Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchHardwareAgc)
+    val switchTunerAgc:        MaterialSwitch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchTunerAgc)
+    val switchHardwareAgc:     MaterialSwitch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchHardwareAgc)
     val sliderSquelch:         Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.sliderSquelch)
     val tvSquelchValue:        TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.tvSquelchValue)
     val sliderVolume:          Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.sliderVolume)
     val tvVolumeValue:         TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.tvVolumeValue)
     val sliderIfBandwidth:     Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.sliderIfBandwidth)
     val tvIfBandwidthValue:    TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById(R.id.tvIfBandwidthValue)
-    val switchNoiseBlanker:    Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchNoiseBlanker)
-    val switchNoiseReducer:    Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchNoiseReducer)
-    val switchBiasTee:         Switch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchBiasTee)
+    val switchNoiseBlanker:    MaterialSwitch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchNoiseBlanker)
+    val switchNoiseReducer:    MaterialSwitch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchNoiseReducer)
+    val switchBiasTee:         MaterialSwitch?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.switchBiasTee)
     val spinnerDirectSampling: Spinner?    get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.spinnerDirectSampling)
     val sliderPpm:                 Slider?     get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.sliderPpm)
     val tvPpmValue:                TextView?   get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById(R.id.tvPpmValue)
@@ -62,7 +61,7 @@ class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
     val spinnerDecimation: Spinner?  get() = displayView()?.findViewById(R.id.spinnerDecimation)
     val spinnerTheme:      Spinner?  get() = displayView()?.findViewById(R.id.spinnerTheme)
     val spinnerPalette:    Spinner?  get() = displayView()?.findViewById(R.id.spinnerPalette)
-    val switchPeakHold:    Switch?   get() = displayView()?.findViewById(R.id.switchPeakHold)
+    val switchPeakHold:    MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchPeakHold)
     val sliderSpecWfRatio: Slider?   get() = displayView()?.findViewById(R.id.sliderSpecWfRatio)
     val tvSpecWfRatioValue:android.widget.TextView? get() = displayView()?.findViewById(R.id.tvSpecWfRatioValue)
 
@@ -74,22 +73,22 @@ class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
     val tvSpecFloorValue:    android.widget.TextView? get() = displayView()?.findViewById(R.id.tvSpecFloorValue)
     val sliderSpecCeiling:   Slider?   get() = displayView()?.findViewById(R.id.sliderSpecCeiling)
     val tvSpecCeilingValue:  android.widget.TextView? get() = displayView()?.findViewById(R.id.tvSpecCeilingValue)
-    val switchAutoRange:     Switch?   get() = displayView()?.findViewById(R.id.switchAutoRange)
+    val switchAutoRange:     MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchAutoRange)
     val btnResetDbRange:     android.widget.Button? get() = displayView()?.findViewById(R.id.btnResetDbRange)
-    val switchNoiseFloor:    Switch?   get() = displayView()?.findViewById(R.id.switchNoiseFloor)
+    val switchNoiseFloor:    MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchNoiseFloor)
     val sliderPeakDecay:     Slider?   get() = displayView()?.findViewById(R.id.sliderPeakDecay)
     val tvPeakDecayValue:    android.widget.TextView? get() = displayView()?.findViewById(R.id.tvPeakDecayValue)
-    val switchPeakAnnotations: Switch? get() = displayView()?.findViewById(R.id.switchPeakAnnotations)
-    val switchCrosshair:     Switch?   get() = displayView()?.findViewById(R.id.switchCrosshair)
+    val switchPeakAnnotations: MaterialSwitch? get() = displayView()?.findViewById(R.id.switchPeakAnnotations)
+    val switchCrosshair:     MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchCrosshair)
     // Waterfall
     val sliderWfBrightness:  Slider?   get() = displayView()?.findViewById(R.id.sliderWfBrightness)
     val tvWfBrightnessValue: android.widget.TextView? get() = displayView()?.findViewById(R.id.tvWfBrightnessValue)
     val sliderWfContrast:    Slider?   get() = displayView()?.findViewById(R.id.sliderWfContrast)
     val tvWfContrastValue:   android.widget.TextView? get() = displayView()?.findViewById(R.id.tvWfContrastValue)
-    val switchAutoStretch:   Switch?   get() = displayView()?.findViewById(R.id.switchAutoStretch)
-    val switchWfPause:       Switch?   get() = displayView()?.findViewById(R.id.switchWfPause)
-    val switchTimeRuler:     Switch?   get() = displayView()?.findViewById(R.id.switchTimeRuler)
-    val switchCentreMarker:  Switch?   get() = displayView()?.findViewById(R.id.switchCentreMarker)
+    val switchAutoStretch:   MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchAutoStretch)
+    val switchWfPause:       MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchWfPause)
+    val switchTimeRuler:     MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchTimeRuler)
+    val switchCentreMarker:  MaterialSwitch?   get() = displayView()?.findViewById(R.id.switchCentreMarker)
     // FFT
     val spinnerFrameAvg:     Spinner?  get() = displayView()?.findViewById(R.id.spinnerFrameAvg)
 
@@ -101,8 +100,8 @@ class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
     val recyclerRecordingsTab: androidx.recyclerview.widget.RecyclerView? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById(R.id.recyclerRecordingsTab)
 
     // ── Settings tab ──────────────────────────────────────────────────────────
-    val switchReverseTuning: Switch?  get() = adapter.getViewAt(ControlsPagerAdapter.TAB_SETTINGS)?.findViewById(R.id.switchReverseTuning)
-    val switchOutOfBound:    Switch?  get() = adapter.getViewAt(ControlsPagerAdapter.TAB_SETTINGS)?.findViewById(R.id.switchOutOfBound)
+    val switchReverseTuning: MaterialSwitch?  get() = adapter.getViewAt(ControlsPagerAdapter.TAB_SETTINGS)?.findViewById(R.id.switchReverseTuning)
+    val switchOutOfBound:    MaterialSwitch?  get() = adapter.getViewAt(ControlsPagerAdapter.TAB_SETTINGS)?.findViewById(R.id.switchOutOfBound)
     val btnOpenSettings:     android.widget.Button? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_SETTINGS)?.findViewById(R.id.btnOpenSettings)
     val btnDeviceInfo:       android.widget.Button? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_SETTINGS)?.findViewById(R.id.btnDeviceInfo)
     val btnScanner:          android.widget.Button? get() = adapter.getViewAt(ControlsPagerAdapter.TAB_SETTINGS)?.findViewById(R.id.btnScanner)
@@ -168,9 +167,9 @@ class ControlsTabManager(private val adapter: ControlsPagerAdapter) {
     val etScanTabSquelch:      android.widget.EditText? get() = scanView()?.findViewById(R.id.etScanTabSquelch)
     val etScanTabDwell:        android.widget.EditText? get() = scanView()?.findViewById(R.id.etScanTabDwell)
     val spinnerScanTabMode:    Spinner?  get() = scanView()?.findViewById(R.id.spinnerScanTabMode)
-    val switchScanTabDirection: Switch?  get() = scanView()?.findViewById(R.id.switchScanTabDirection)
-    val switchScanTabAdaptive:  Switch?  get() = scanView()?.findViewById(R.id.switchScanTabAdaptive)
-    val switchScanTabHoldOnSignal: Switch? get() = scanView()?.findViewById(R.id.switchScanTabHoldOnSignal)
+    val switchScanTabDirection: MaterialSwitch?  get() = scanView()?.findViewById(R.id.switchScanTabDirection)
+    val switchScanTabAdaptive:  MaterialSwitch?  get() = scanView()?.findViewById(R.id.switchScanTabAdaptive)
+    val switchScanTabHoldOnSignal: MaterialSwitch? get() = scanView()?.findViewById(R.id.switchScanTabHoldOnSignal)
     val btnScanTabStartStop:   android.widget.Button? get() = scanView()?.findViewById(R.id.btnScanTabStartStop)
     val btnScanTabReset:       android.widget.Button? get() = scanView()?.findViewById(R.id.btnScanTabReset)
     val spinnerScanTabMemorySlot: Spinner? get() = scanView()?.findViewById(R.id.spinnerScanTabMemorySlot)

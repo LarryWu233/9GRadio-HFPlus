@@ -16,7 +16,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.radiosport.ninegradio.R
 import com.radiosport.ninegradio.content.*
 import com.radiosport.ninegradio.dsp.DemodMode
@@ -50,7 +50,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     }
     private fun button(value: String, click: () -> Unit)=MaterialButton(activity).apply {
         text=value; textSize=12f; isAllCaps=false; minWidth=0; minimumWidth=0; insetTop=0; insetBottom=0
-        cornerRadius=dp(4); setPadding(dp(5),0,dp(5),0)
+        cornerRadius=activity.resources.getDimensionPixelSize(R.dimen.radio_corner_button); setPadding(dp(5),0,dp(5),0)
         backgroundTintList=android.content.res.ColorStateList.valueOf(UiThemes.color(context,R.attr.radioSurface))
         strokeColor=android.content.res.ColorStateList.valueOf(UiThemes.color(context,R.attr.radioOutline)); strokeWidth=dp(1).coerceAtLeast(1)
         setTextColor(UiThemes.color(context,R.attr.radioAccent)); setOnClickListener { click() }
@@ -59,7 +59,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
         views.forEach { addView(it,LinearLayout.LayoutParams(0,dp(44),1f)) }
     }
-    private fun column()=LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(10),dp(6),dp(10),dp(10)) }
+    private fun column()=LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(16),dp(8),dp(16),dp(16)) }
     fun setup() {
         if(activity.isFinishing || activity.isDestroyed) return
         if((15..18).any { pager.getViewAt(it)==null }) { activity.window.decorView.postDelayed({setup()},60); return }
@@ -167,7 +167,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     fun csvResult(uri: Uri?) { if(uri!=null) eibi?.import(uri) }
     private inner class AudioPanel(val kind: AudioContentKind) {
         val root=column()
-        val microphone=SwitchMaterial(activity).apply { contentDescription="软件内 / 麦克风"; gravity=Gravity.CENTER }
+        val microphone=MaterialSwitch(activity).apply { contentDescription="软件内 / 麦克风"; gravity=Gravity.CENTER }
         var ignore=false
         val status=label("未启动")
         val details=label("",11f)
@@ -298,8 +298,8 @@ class ContentModuleController(private val activity: MainActivity, private val pa
                 dialog.dismiss(); filter()
             }.setNegativeButton("取消",null).show()
         }
-        val frequency=SwitchMaterial(activity).apply { text="当前频率"; textSize=12f }
-        val now=SwitchMaterial(activity).apply { text="当前 UTC"; textSize=12f; isChecked=true }
+        val frequency=MaterialSwitch(activity).apply { text="当前频率"; textSize=12f }
+        val now=MaterialSwitch(activity).apply { text="当前 UTC"; textSize=12f; isChecked=true }
         var timeOverride: ZonedDateTime?=null
         val time=button("UTC") { val current=timeOverride ?: ZonedDateTime.now(ZoneOffset.UTC)
             android.app.DatePickerDialog(activity,{ _,y,m,d -> android.app.TimePickerDialog(activity,{ _,h,min ->

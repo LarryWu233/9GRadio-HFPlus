@@ -9,7 +9,7 @@
       <TextView android:id="@+id/tvRecSize" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="12.5 MB" android:textColor="#FFAA00" android:textSize="10sp" android:fontFamily="monospace" android:singleLine="true" android:ellipsize="end" />
     </LinearLayout>
   </LinearLayout>
-  <ImageButton android:id="@+id/btnRecPlay" android:layout_width="40dp" android:layout_height="40dp" android:src="@android:drawable/ic_media_play" android:background="?selectableItemBackgroundBorderless" android:tint="#44FF88" android:layout_marginStart="4dp" android:padding="9dp" android:contentDescription="播放" />
+  <ImageButton android:id="@+id/btnRecPlay" android:layout_width="40dp" android:layout_height="40dp" android:src="@android:drawable/ic_media_play" android:background="?selectableItemBackgroundBorderless" android:tint="?attr/radioAccent" android:layout_marginStart="4dp" android:padding="9dp" android:contentDescription="播放" />
   <ImageButton android:id="@+id/btnRecShare" android:layout_width="40dp" android:layout_height="40dp" android:src="@android:drawable/ic_menu_share" android:background="?selectableItemBackgroundBorderless" android:tint="?attr/radioLink" android:layout_marginStart="4dp" android:padding="9dp" android:contentDescription="分享" />
   <ImageButton android:id="@+id/btnRecDelete" android:layout_width="40dp" android:layout_height="40dp" android:src="@android:drawable/ic_menu_delete" android:background="?selectableItemBackgroundBorderless" android:tint="#FF4444" android:layout_marginStart="4dp" android:padding="9dp" android:contentDescription="删除" />
 </LinearLayout>

@@ -1,0 +1,5 @@
+<TextView xmlns:android="http://schemas.android.com/apk/res/android" android:id="@android:id/title"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp"
+    android:paddingStart="@dimen/radio_space_lg" android:paddingEnd="@dimen/radio_space_lg"
+    android:paddingTop="@dimen/radio_space_lg" android:paddingBottom="@dimen/radio_space_sm"
+    android:textAppearance="@style/TextAppearance.Radio.Section" android:gravity="bottom" android:accessibilityHeading="true"/>

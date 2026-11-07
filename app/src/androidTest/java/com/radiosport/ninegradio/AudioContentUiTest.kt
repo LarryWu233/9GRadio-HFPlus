@@ -13,7 +13,7 @@ import com.radiosport.ninegradio.content.*
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.ui.*
 import com.radiosport.ninegradio.usb.RtlSdrService
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -41,7 +41,7 @@ class AudioContentUiTest {
                     val adapter=field<ControlsPagerAdapter>(a,"pagerAdapter")
                     for(i in 15..18) assertNotNull(adapter.getViewAt(i))
                     val panel=adapter.getViewAt(16)!!
-                    assertEquals(1,views(panel).filterIsInstance<SwitchMaterial>().size)
+                    assertEquals(1,views(panel).filterIsInstance<MaterialSwitch>().size)
                     assertTrue(views(panel).filterIsInstance<TextView>().any { it.text=="软件内" })
                     assertTrue(views(panel).filterIsInstance<TextView>().any { it.text=="麦克风" })
                     assertEquals(1,views(panel).filterIsInstance<RadioDataTable>().size)
@@ -64,7 +64,7 @@ class AudioContentUiTest {
                 var expectedIndex=0
                 scenario.onActivity { a ->
                     val page=field<ControlsPagerAdapter>(a,"pagerAdapter").getViewAt(18)!!
-                    views(page).filterIsInstance<SwitchMaterial>().first { it.text=="当前 UTC" }.isChecked=false
+                    views(page).filterIsInstance<MaterialSwitch>().first { it.text=="当前 UTC" }.isChecked=false
                     views(page).filterIsInstance<EditText>().single().setText("CHN")
                     table=views(page).filterIsInstance<RadioDataTable>().single()
                 }
@@ -127,7 +127,7 @@ class AudioContentUiTest {
                     before=vm.centerFreqHz.value
                     controller.select(15)
                     val panel=field<ControlsPagerAdapter>(a,"pagerAdapter").getViewAt(15)!!
-                    views(panel).filterIsInstance<SwitchMaterial>().single().isChecked=true
+                    views(panel).filterIsInstance<MaterialSwitch>().single().isChecked=true
                     views(panel).filterIsInstance<Button>().first { it.text=="开始" }.performClick()
                     receiver=field<RtlSdrService>(a,"sdrService").audioContent
                 }

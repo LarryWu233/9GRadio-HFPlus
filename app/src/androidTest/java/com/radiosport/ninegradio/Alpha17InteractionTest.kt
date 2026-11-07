@@ -128,7 +128,7 @@ class Alpha17InteractionTest {
                 }
                 Thread.sleep(800)
                 main.onActivity { a ->
-                    a.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.btnAdsbPanelMap).isChecked=true
+                    a.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.btnAdsbPanelMap).isChecked=true
                     a.findViewById<View>(R.id.btnAdsbPanelFull).performClick()
                 }
                 Thread.sleep(1800)

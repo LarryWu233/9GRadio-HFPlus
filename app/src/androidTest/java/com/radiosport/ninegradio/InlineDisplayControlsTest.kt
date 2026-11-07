@@ -13,7 +13,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.android.material.slider.Slider
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.tabs.TabLayout
 import com.radiosport.ninegradio.ui.*
 import org.junit.Assert.*
@@ -49,7 +49,7 @@ class InlineDisplayControlsTest {
                         val matches=ArrayList<View>(); selector.findViewsWithText(matches,label,View.FIND_VIEWS_WITH_TEXT)
                         matches.single().performClick()
                     }
-                    val auto=activity.findViewById<SwitchMaterial>(R.id.switchInlineAutoLevels)
+                    val auto=activity.findViewById<MaterialSwitch>(R.id.switchInlineAutoLevels)
                     val low=activity.findViewById<Slider>(R.id.sliderInlineMinLevel)
                     fun setLow(fraction: Float) {
                         assertTrue(low.isEnabled)

@@ -1055,7 +1055,7 @@ class MainActivity : RadioThemedActivity() {
         val groups=modeChipGroups()
         if(groups.size!=2) return
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_MODE)
-            ?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchModeStationMemory)?.apply {
+            ?.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchModeStationMemory)?.apply {
                 setOnCheckedChangeListener(null)
                 isChecked = viewModel.modeStationMemory.value
                 setOnCheckedChangeListener { _, enabled ->
@@ -1396,7 +1396,7 @@ class MainActivity : RadioThemedActivity() {
                 override fun onNothingSelected(p:AdapterView<*>?) {}
             }
         }
-        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById<Switch>(R.id.switchSquelchRecord)?.apply {
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RECORDING)?.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchSquelchRecord)?.apply {
             isChecked=recordingPrefs.getBoolean("pref_record_squelch",false)
             setOnCheckedChangeListener { _,enabled -> sdrService?.setRecordingSquelch(enabled) ?: recordingPrefs.edit().putBoolean("pref_record_squelch",enabled).apply().let { } }
         }
@@ -1794,46 +1794,22 @@ class MainActivity : RadioThemedActivity() {
         }
     }
 
-    /** Highlights the selected sample-rate chip; reusable from setup and from syncTabControls(). */
-    private fun updateSampleRateChips(selectedIdx: Int) {
-        val chips = ctrlViews.layoutSampleRateChips ?: return
-        for (i in 0 until chips.childCount) {
-            val btn = chips.getChildAt(i) as? android.widget.TextView ?: continue
-            val sel = (i == selectedIdx)
-            btn.setTextColor(if (sel) 0xFF0D1117.toInt() else 0xFF00CCFF.toInt())
-            btn.background = if (sel) {
-                android.graphics.drawable.GradientDrawable().apply {
-                    setColor(0xFF00CCFF.toInt()); cornerRadius = 20f * resources.displayMetrics.density
-                }
-            } else {
-                android.graphics.drawable.GradientDrawable().apply {
-                    setColor(0x00000000); cornerRadius = 20f * resources.displayMetrics.density
-                    setStroke((1f * resources.displayMetrics.density).toInt(), 0x5500CCFF.toInt())
-                }
-            }
+    private fun styleRateChoice(button:android.widget.TextView,selected:Boolean) {
+        button.setTextColor(UiThemes.color(this,if(selected) R.attr.radioMain else R.attr.radioAccent))
+        button.background=android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius=resources.getDimension(R.dimen.radio_corner_button)
+            setColor(UiThemes.color(this@MainActivity,if(selected) R.attr.radioAccent else R.attr.radioSurface))
+            if(!selected) setStroke(resources.displayMetrics.density.toInt().coerceAtLeast(1),UiThemes.color(this@MainActivity,R.attr.radioOutline))
         }
+        button.isSelected=selected
     }
-
-    /** Highlights the selected audio-sink-rate chip; reusable from setup and from syncTabControls(). */
-    private fun updateAudioSinkChips(selectedIdx: Int) {
-        val row = ctrlViews.layoutAudioSinkRateChips ?: return
-        for (i in 0 until row.childCount) {
-            val btn = row.getChildAt(i) as? android.widget.TextView ?: continue
-            val sel = (i == selectedIdx)
-            btn.setTextColor(if (sel) 0xFF0D1117.toInt() else 0xFF00CCFF.toInt())
-            btn.background = if (sel) {
-                android.graphics.drawable.GradientDrawable().apply {
-                    setColor(0xFF00CCFF.toInt())
-                    cornerRadius = 20f * resources.displayMetrics.density
-                }
-            } else {
-                android.graphics.drawable.GradientDrawable().apply {
-                    setColor(0x00000000)
-                    cornerRadius = 20f * resources.displayMetrics.density
-                    setStroke((1f * resources.displayMetrics.density).toInt(), 0x5500CCFF.toInt())
-                }
-            }
-        }
+    private fun updateSampleRateChips(selectedIdx:Int) {
+        val row=ctrlViews.layoutSampleRateChips ?: return
+        for(i in 0 until row.childCount) (row.getChildAt(i) as? android.widget.TextView)?.let { styleRateChoice(it,i==selectedIdx) }
+    }
+    private fun updateAudioSinkChips(selectedIdx:Int) {
+        val row=ctrlViews.layoutAudioSinkRateChips ?: return
+        for(i in 0 until row.childCount) (row.getChildAt(i) as? android.widget.TextView)?.let { styleRateChoice(it,i==selectedIdx) }
     }
 
     /**
@@ -1973,7 +1949,7 @@ class MainActivity : RadioThemedActivity() {
                 }
 
                 // Helper: sync a Switch without re-firing the listener
-                fun syncSwitch(sw: android.widget.Switch?, checked: Boolean,
+                fun syncSwitch(sw: android.widget.CompoundButton?, checked: Boolean,
                                listener: android.widget.CompoundButton.OnCheckedChangeListener) {
                     sw?.setOnCheckedChangeListener(null)
                     sw?.isChecked = checked
@@ -2416,16 +2392,16 @@ class MainActivity : RadioThemedActivity() {
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<Button>(R.id.btnRegionalRecommendations)
             ?.setOnClickListener { regionalReception.show() }
 
-        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchAutoDemod)?.apply {
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchAutoDemod)?.apply {
             isChecked = viewModel.autoDemod.value
             setOnCheckedChangeListener { _, checked -> viewModel.setAutoDemod(checked) }
         }
         lifecycleScope.launch { viewModel.autoDemod.collect { enabled ->
-            pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchAutoDemod)?.isChecked = enabled
+            pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchAutoDemod)?.isChecked = enabled
         } }
         lifecycleScope.launch { viewModel.modeStationMemory.collect { enabled ->
             pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_MODE)
-                ?.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switchModeStationMemory)
+                ?.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switchModeStationMemory)
                 ?.isChecked = enabled
         } }
         // Sync dial with current frequency and mode
@@ -3376,7 +3352,7 @@ class MainActivity : RadioThemedActivity() {
     private fun styleRecordingAction(button: android.widget.Button?,recording: Boolean) {
         button ?: return
         if(button.compoundDrawablesRelative[0]==null) button.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_record_radio,0,0,0)
-        button.backgroundTintList=android.content.res.ColorStateList.valueOf(if(recording) 0xff502a33.toInt() else 0xff2d202a.toInt())
+        button.backgroundTintList=android.content.res.ColorStateList.valueOf(androidx.core.graphics.ColorUtils.blendARGB(UiThemes.color(this,R.attr.radioSurface),0xffff757b.toInt(),if(recording) 0.24f else 0.08f))
         button.setTextColor(if(recording) 0xffffa0a5.toInt() else 0xffff757b.toInt())
     }
     private var lastReceiverModel: String?=null
@@ -3701,7 +3677,7 @@ class MainActivity : RadioThemedActivity() {
             layoutParams = android.widget.LinearLayout.LayoutParams(
                 0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val switchSource = android.widget.Switch(this).apply {
+        val switchSource = com.google.android.material.materialswitch.MaterialSwitch(this).apply {
             isChecked = isDriverMode
             textOff = "USB"
             textOn  = "Driver"
@@ -4042,7 +4018,7 @@ class MainActivity : RadioThemedActivity() {
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_APRS)?.let { page ->
             val host=page.findViewById<android.widget.FrameLayout>(R.id.aprsMapHost)
             aprsMapPanel=RadioMapPanel(this,"APRS",true).also { host.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
-            page.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.btnAprsMap).setOnCheckedChangeListener { _,on ->
+            page.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.btnAprsMap).setOnCheckedChangeListener { _,on ->
                 host.isVisible=on; updateDigitalVisualization(); resizePagerToCurrentPage()
             }
             page.findViewById<Button>(R.id.btnAprsPanelFull).setOnClickListener { setPanelFullscreen(!panelFullscreen) }
@@ -4103,7 +4079,7 @@ class MainActivity : RadioThemedActivity() {
         }
         val mapHost=page.findViewById<android.widget.FrameLayout>(R.id.adsbMapHost)
         adsbMapPanel=RadioMapPanel(this,"ADSB",true).also { mapHost.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
-        val mapSwitch=page.findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.btnAdsbPanelMap)
+        val mapSwitch=page.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.btnAdsbPanelMap)
         adsbMapSelected=getSharedPreferences("radio_map",MODE_PRIVATE).getBoolean("adsb_show_map",true)
         mapSwitch.isChecked=adsbMapSelected
         mapSwitch.setOnCheckedChangeListener { _,on ->
