@@ -164,6 +164,10 @@
             android:layout_height="match_parent" android:gravity="center" android:paddingHorizontal="10dp"
             android:text="拖动调谐 ▾" android:textColor="?attr/radioLink" android:textSize="12sp"
             android:clickable="true" android:focusable="true"/>
+        <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btnQuickBookmark"
+            android:layout_width="40dp" android:layout_height="match_parent" android:padding="8dp"
+            android:src="@drawable/ic_bookmark_outline" android:tint="?attr/radioLink"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="收藏当前频率"/>
         </LinearLayout>
 
         <!-- Spectrum view -->

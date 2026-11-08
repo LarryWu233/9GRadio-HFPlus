@@ -1,0 +1,15 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
+    android:paddingHorizontal="24dp" android:paddingTop="8dp" android:paddingBottom="8dp">
+    <com.google.android.material.textfield.TextInputLayout style="@style/NineGRadioTextInput"
+        android:id="@+id/quickBookmarkNameInput" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="备注名称">
+        <com.google.android.material.textfield.TextInputEditText android:id="@+id/etQuickBookmarkName"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textCapSentences" android:maxLines="2"/>
+    </com.google.android.material.textfield.TextInputLayout>
+    <com.google.android.material.textfield.TextInputLayout style="@style/NineGRadioTextInput"
+        android:id="@+id/quickBookmarkFrequencyInput" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="12dp" android:hint="频率 · MHz">
+        <com.google.android.material.textfield.TextInputEditText android:id="@+id/etQuickBookmarkFrequency"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="numberDecimal" android:fontFamily="monospace" android:singleLine="true"/>
+    </com.google.android.material.textfield.TextInputLayout>
+</LinearLayout>

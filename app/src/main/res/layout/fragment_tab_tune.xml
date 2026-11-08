@@ -145,6 +145,10 @@
         android:layout_height="48dp" android:gravity="center_vertical" android:text="频段预设  ›"
         android:textSize="14sp" android:textColor="?attr/radioSecondary" android:background="?attr/selectableItemBackground"
         android:clickable="true" android:focusable="true"/>
+    <TextView android:id="@+id/btnMyBookmarks" android:layout_width="match_parent"
+        android:layout_height="48dp" android:gravity="center_vertical" android:text="我的收藏  ›"
+        android:textSize="14sp" android:textColor="?attr/radioSecondary" android:background="?attr/selectableItemBackground"
+        android:clickable="true" android:focusable="true"/>
     <com.google.android.material.chip.ChipGroup android:id="@+id/chipGroupBands"
         android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone"/>
 

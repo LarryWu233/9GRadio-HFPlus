@@ -22,27 +22,35 @@ class RecordingSettingsFragment:PreferenceFragmentCompat() {
         super.onViewCreated(view,state);RadioPreferenceStyling.apply(this)
     }
     override fun onCreatePreferences(state:Bundle?,rootKey:String?) {
-        val context=requireContext();preferenceScreen=preferenceManager.createPreferenceScreen(context)
+        preferenceScreen=preferenceManager.createPreferenceScreen(requireContext())
+        RecordingPreferenceControls.add(preferenceScreen)
+    }
+}
+
+/** Same keys and persistence whether embedded in Settings or opened directly. */
+object RecordingPreferenceControls {
+    fun add(group:PreferenceGroup) {
+        val context=group.context
         val available=AudioRecordingProfile.supportedFormats()
         val format=ListPreference(context).apply {
-            key="pref_record_audio_format";title="声音格式";dialogTitle="声音格式"
+            order=-40;key="pref_record_audio_format";title="声音格式";dialogTitle="声音格式"
             entries=available.map { it.label }.toTypedArray();entryValues=available.map { it.name }.toTypedArray()
             setDefaultValue(available.firstOrNull { it==AudioRecordingFormat.AAC }?.name ?: "WAV")
             summaryProvider=ListPreference.SimpleSummaryProvider.getInstance();isIconSpaceReserved=false
-        };preferenceScreen.addPreference(format)
+        };group.addPreference(format)
         if(format.value !in available.map { it.name }) format.value=AudioRecordingProfile.read(context).format.name
         val depth=ListPreference(context).apply {
-            key="pref_record_audio_depth";title="PCM 位深";dialogTitle="PCM 位深"
+            order=-30;key="pref_record_audio_depth";title="PCM 位深";dialogTitle="PCM 位深"
             entries=arrayOf("16-bit PCM","24-bit PCM","32-bit float");entryValues=arrayOf("16","24","32");setDefaultValue("16")
             summaryProvider=ListPreference.SimpleSummaryProvider.getInstance();isIconSpaceReserved=false
-        };preferenceScreen.addPreference(depth)
+        };group.addPreference(depth)
         val bitrate=ListPreference(context).apply {
-            key="pref_record_audio_bitrate";title="目标码率";dialogTitle="目标码率"
+            order=-20;key="pref_record_audio_bitrate";title="目标码率";dialogTitle="目标码率"
             entries=AudioRecordingProfile.BIT_RATES.map { "${it/1000} kb/s" }.toTypedArray()
             entryValues=AudioRecordingProfile.BIT_RATES.map { it.toString() }.toTypedArray();setDefaultValue("128000")
             summaryProvider=ListPreference.SimpleSummaryProvider.getInstance();isIconSpaceReserved=false
-        };preferenceScreen.addPreference(bitrate)
-        val info=Preference(context).apply { title="录制参数";isSelectable=false;isIconSpaceReserved=false };preferenceScreen.addPreference(info)
+        };group.addPreference(bitrate)
+        val info=Preference(context).apply { order=-10;title="录制参数";isSelectable=false;isIconSpaceReserved=false };group.addPreference(info)
         fun refresh(selected:String) {
             val wave=selected=="WAV";depth.isVisible=wave;bitrate.isVisible=!wave
             val rate=context.getSharedPreferences("rtlsdr_prefs",android.content.Context.MODE_PRIVATE).getInt("audioSinkRate",48000)

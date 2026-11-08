@@ -361,6 +361,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.preferences, rootKey)
+        findPreference<PreferenceCategory>("cat_recording")?.let { RecordingPreferenceControls.add(it) }
         fun compact(group:PreferenceGroup) {
             for(i in 0 until group.preferenceCount) {
                 val item=group.getPreference(i); item.isIconSpaceReserved=false
@@ -368,9 +369,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
             }
         }
         compact(preferenceScreen)
-        findPreference<Preference>("pref_recording_files")?.setOnPreferenceClickListener {
-            startActivity(Intent(requireContext(),RecordingSettingsActivity::class.java));true
-        }
         findPreference<Preference>("receiver_controls_hint")?.isVisible=false
         findPreference<ListPreference>("pref_ui_theme")?.apply {
             entries=UiThemes.presets.map { it.label }.toTypedArray()
@@ -1213,7 +1211,7 @@ class BookmarkActivity : RadioThemedActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_bookmark)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        title = "Bookmarks"
+        title = "我的收藏"
 
         recycler            = findViewById(R.id.recyclerBookmarks)
         tvEmpty             = findViewById(R.id.tvEmpty)
@@ -1262,11 +1260,11 @@ class BookmarkActivity : RadioThemedActivity() {
         btnFilterFavorites.setOnClickListener {
             filterFavoritesOnly = !filterFavoritesOnly
             btnFilterFavorites.setImageResource(
-                if (filterFavoritesOnly) R.drawable.ic_star_filled else R.drawable.ic_star_outline
+                if (filterFavoritesOnly) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark_outline
             )
             btnFilterFavorites.setColorFilter(
-                if (filterFavoritesOnly) android.graphics.Color.parseColor("#FFAA00")
-                else android.graphics.Color.parseColor("#88FFFFFF")
+                if (filterFavoritesOnly) UiThemes.color(this,R.attr.radioAccent)
+                else UiThemes.color(this,R.attr.radioSecondary)
             )
             resubscribe()
         }
@@ -1640,9 +1638,9 @@ private class BookmarkAdapter(
             h.tvNotes.visibility = View.GONE
         }
 
-        // Favorite star
+        // Bookmark marker
         h.btnFav.setImageResource(
-            if (bm.favorite) R.drawable.ic_star_filled else R.drawable.ic_star_outline
+            if (bm.favorite) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark_outline
         )
         h.btnFav.setOnClickListener { onFav(bm) }
 

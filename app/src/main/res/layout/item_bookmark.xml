@@ -46,10 +46,10 @@
                 android:id="@+id/btnFavorite"
                 android:layout_width="32dp"
                 android:layout_height="32dp"
-                android:src="@drawable/ic_star_outline"
+                android:src="@drawable/ic_bookmark_outline"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="#FFAA00"
-                android:contentDescription="Toggle favorite"/>
+                android:tint="?attr/radioAccent"
+                android:contentDescription="标记收藏"/>
         </LinearLayout>
 
         <!-- Frequency -->

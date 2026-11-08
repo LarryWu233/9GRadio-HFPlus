@@ -28,7 +28,7 @@
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
-                android:hint="Search bookmarks…"
+                android:hint="搜索收藏…"
                 android:textColorHint="?attr/radioMuted"
                 android:textColor="?attr/radioText"
                 android:textSize="14sp"
@@ -44,10 +44,10 @@
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:layout_marginStart="6dp"
-                android:src="@drawable/ic_star_outline"
+                android:src="@drawable/ic_bookmark_outline"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:tint="?attr/radioSecondary"
-                android:contentDescription="Show favorites only"/>
+                android:contentDescription="仅显示已标记收藏"/>
 
             <!-- Sort/options menu -->
             <ImageButton
@@ -94,7 +94,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:text="No bookmarks.\nTap ★ in the main screen to save a frequency."
+        android:text="暂无收藏。\n可在首页书签按钮保存频率。"
         android:textColor="?attr/radioMuted"
         android:textSize="14sp"
         android:gravity="center"
@@ -110,6 +110,6 @@
         android:layout_margin="16dp"
         android:src="@drawable/ic_add"
         app:backgroundTint="?attr/radioLink"
-        android:contentDescription="Add bookmark"/>
+        android:contentDescription="添加收藏"/>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

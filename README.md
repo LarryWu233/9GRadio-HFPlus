@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.25.0-hfplus-alpha25` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.26.0-hfplus-alpha26` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha26 adds a quick bookmark editor beside graph tuning and a searchable My Bookmarks picker below band presets, reusing the existing store. Recording format/depth/bitrate live directly in Settings → Recording. It fixes initial category emphasis and secondary-screen cutout insets, animates the panel's full-height expansion using the native Material settle, and simplifies the display icon. See [alpha26 validation](docs/validation/2026-11-08-alpha26.md).
 
 Alpha25 fixes the scrolling status-bar colour change, makes segmented-control end caps follow half the actual height, removes the panel-top gradient, and lowers the blur tint opacity by about 5 percentage points. See [alpha25 validation](docs/validation/2026-11-08-alpha25.md).
 
@@ -82,7 +84,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.25.0-hfplus-alpha25` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.26.0-hfplus-alpha26` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha26 增加首页快捷收藏及 Tune 频段预设下方的“我的收藏”，复用原收藏库；录音格式／位深／码率直接放在“设置 → 录制”。修正分类标题初次强调色及二级页面刘海避让，使用 Material 原生动画展开到频率区下方，并精简显示图标。详见 [alpha26 验证](docs/validation/2026-11-08-alpha26.md)。
 
 Alpha25 固定滚动时的状态栏颜色；分段选项圆角按实际高度的一半计算，移除菜单顶部渐变，并将模糊色调遮罩的不透明度降低约 5 个百分点。详见 [alpha25 验证](docs/validation/2026-11-08-alpha25.md)。
 

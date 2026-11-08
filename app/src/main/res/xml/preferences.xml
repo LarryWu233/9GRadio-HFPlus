@@ -6,17 +6,16 @@
         android:summary="@string/receiver_controls_location_hint" android:selectable="false" />
 
     <!-- ─── RF / Tuner ─────────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="界面与工具">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="界面与工具">
         <ListPreference android:key="pref_ui_theme" android:title="界面配色" android:defaultValue="classic" app:useSimpleSummaryProvider="true"/>
         <Preference android:key="pref_modules" android:title="菜单模块" android:summary="排序与显示"/>
-        <Preference android:key="pref_recording_files" android:title="录制文件" android:summary="声音格式、位深与码率"/>
         <SwitchPreferenceCompat android:key="pref_reverse_tuning" android:title="反向调谐" android:defaultValue="false"/>
         <Preference android:key="pref_device_info" android:title="设备信息"/>
-        <Preference android:key="pref_bookmarks" android:title="收藏"/>
+        <Preference android:key="pref_bookmarks" android:title="收藏" android:icon="@drawable/ic_bookmark_outline"/>
         <Preference android:key="pref_diagnostics" android:title="诊断面板"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
-    <PreferenceCategory android:title="射频与接收机" android:key="cat_rf">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="射频与接收机" android:key="cat_rf">
 
         <ListPreference
             android:key="pref_sample_rate"
@@ -72,10 +71,10 @@
             app:min="0"
             android:max="120"
             app:showSeekBarValue="true"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── 9GRadio Hardware Specific ──────────────────────────────────── -->
-    <PreferenceCategory android:title="接收机硬件功能" android:key="cat_v4">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="接收机硬件功能" android:key="cat_v4">
 
         <SwitchPreferenceCompat
             android:key="pref_bias_tee_default"
@@ -103,10 +102,10 @@
             android:summary="V4 TCXO 为 28800000 Hz，请按实际硬件设置"
             android:defaultValue="28800000"
             android:inputType="number"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── Display ───────────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="频谱与瀑布" android:key="cat_display">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="频谱与瀑布" android:key="cat_display">
 
         <ListPreference
             android:key="pref_fft_size"
@@ -277,10 +276,10 @@
             android:title="瀑布中心标记"
             android:summary="在硬件中心频率处显示虚线"
             android:defaultValue="true"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── Audio ─────────────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="声音控制" android:key="cat_audio">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="声音控制" android:key="cat_audio">
 
         <ListPreference
             android:key="pref_audio_output"
@@ -335,10 +334,10 @@
             android:summary="移除 IQ 直流偏置；出现音频伪影时可关闭"
             android:defaultValue="true"/>
 
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── External Decoder ──────────────────────────────────────────── -->
-    <PreferenceCategory android:title="外部解码器" android:key="cat_external_decoder">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="外部解码器" android:key="cat_external_decoder">
 
         <SwitchPreferenceCompat
             android:key="pref_external_decoder_enabled"
@@ -359,10 +358,10 @@
             android:defaultValue="7355"
             android:inputType="number"/>
 
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── Recording ─────────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="录制" android:key="cat_recording">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="录制" android:key="cat_recording">
 
         <ListPreference
             android:key="pref_iq_format"
@@ -397,10 +396,10 @@
             android:key="pref_clear_recordings"
             android:title="清空录制文件"
             android:summary="删除本应用保存的全部 IQ 与音频录制"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── Scanner ───────────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="扫描默认值" android:key="cat_scanner">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="扫描默认值" android:key="cat_scanner">
 
         <SeekBarPreference
             android:key="pref_scan_dwell_ms"
@@ -428,10 +427,10 @@
             app:min="20"
             android:max="120"
             app:showSeekBarValue="true"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── Data / Backup ─────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="数据与备份" android:key="cat_data">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="数据与备份" android:key="cat_data">
 
         <Preference
             android:key="pref_export_settings"
@@ -452,10 +451,10 @@
             android:key="pref_import_memory"
             android:title="导入收藏频道"
             android:summary="从 JSON/CSV 导入收藏频道"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── About ─────────────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="关于" android:key="cat_about">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="关于" android:key="cat_about">
 
         <Preference
             android:key="pref_about"
@@ -478,10 +477,10 @@
             android:title="息屏时保持接收"
             android:summary="息屏后保持信号处理运行"
             android:defaultValue="false"/>
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
     <!-- ─── APRS ──────────────────────────────────────────────────────── -->
-    <PreferenceCategory android:title="APRS" android:key="cat_aprs">
+    <com.radiosport.ninegradio.ui.RadioPreferenceCategory android:title="APRS" android:key="cat_aprs">
 
         <SwitchPreferenceCompat
             android:key="pref_aprs_auto_display"
@@ -489,6 +488,6 @@
             android:summary="收到 APRS 数据包时自动显示 5 秒"
             android:defaultValue="false"/>
 
-    </PreferenceCategory>
+    </com.radiosport.ninegradio.ui.RadioPreferenceCategory>
 
 </PreferenceScreen>

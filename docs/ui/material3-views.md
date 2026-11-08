@@ -73,3 +73,13 @@ Material 3 Views 主题与控件已经包含在项目现有依赖中，无需升
 共享分段选择器在加入 MaterialButtonToggleGroup 前使用 `RelativeCornerSize(0.5f)`，由组件保留最外两端圆角、处理内部分段连接；不在 44 dp 高的控件上沿用 24 dp 固定圆角。取消子按钮装饰投影，避免外侧微小折线及阴影。布局和单选逻辑仍由 Material 控件负责。[分组实现](https://github.com/material-components/material-components-android/blob/1.12.0/lib/java/com/google/android/material/button/MaterialButtonToggleGroup.java)。
 
 控制面板不再绘制顶部额外 12 dp 渐变覆盖层。BlurView 的模糊半径保持 12，色调遮罩 alpha 由 184/255 调至 171/255：不透明度约 72.2% → 67.1%，即透出背景增加约 5.1 个百分点。保留上方圆角裁切及清晰的前景控件。
+
+## Alpha26 收藏、设置与展开
+
+首页调谐手势入口旁使用书签图标，弹出同主题的简洁名称／MHz 频率编辑框；不调谐即可保存。Tune“我的收藏”与“频段预设”共用相同入口行和列表选择形式，支持按名称、备注或频率搜索，当前接收源不支持的频率置灰。新入口直接复用现有 `bookmarks` 表，收藏管理页仍保留分组、标记、导入导出。书签空心／实心图标替代星形，沿用原标记数据与主题色。
+
+声音格式、PCM 位深、目标码率及参数信息直接嵌入设置“录制”分类，使用原偏好 key 与动态显隐；保留旧独立页作为内部兼容入口。分类标题在 Preference 的最终 bind 后设置强调色，保证首次显示及回收重绑一致。
+
+二级 Activity 在统一基类里按 systemBars 与 displayCutout 添加内容留白；主接收页继续使用自己已有的频谱和面板 inset 规则。展开到频率数字下方时，在一次布局完成后的 pre-draw 中，先让 Material BottomSheetBehavior 进入原生 settling，再改变内容尺寸；避免 expandedOffset 的新布局先跳到终点。未另写面板动画引擎。[所用 MDC 1.12 实现](https://github.com/material-components/material-components-android/blob/1.12.0/lib/java/com/google/android/material/bottomsheet/BottomSheetBehavior.java)。
+
+频谱／瀑布菜单图标保留波形和下方两条横线。

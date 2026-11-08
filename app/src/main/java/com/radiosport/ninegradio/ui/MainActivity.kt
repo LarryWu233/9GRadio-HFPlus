@@ -15,6 +15,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.doOnPreDraw
 import androidx.core.view.isVisible
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -2453,6 +2454,12 @@ class MainActivity : RadioThemedActivity() {
     }
 
     private fun setupBandPresetChips() {
+        binding.btnQuickBookmark.setOnClickListener { bookmarkCurrentFrequency() }
+        pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<View>(R.id.btnMyBookmarks)?.setOnClickListener {
+            BookmarkQuickControls.showPicker(this,viewModel) { hz ->
+                if(viewModel.setFrequency(hz)) { viewModel.finishTuning();syncFrequencyDisplay() }
+            }
+        }
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_TUNE)?.findViewById<View>(R.id.btnBandPresets)?.setOnClickListener {
             BandPresetPicker.show(this, viewModel.capabilities.value, viewModel.centerFreqHz.value) { preset, hz ->
                 if (!viewModel.autoDemod.value) runCatching { viewModel.setDemodMode(DemodMode.valueOf(preset.defaultMode)) }
@@ -2529,18 +2536,26 @@ class MainActivity : RadioThemedActivity() {
     private var aprsMapPanel: RadioMapPanel?=null
     private var adsbMapSelected=true
 
+    private var animatePanelResize=false
     private fun setPanelFullscreen(full: Boolean) {
-        panelFullscreen=full
-        findViewById<Button>(R.id.recordingPlaybackExpand)?.apply {
-            text=if(full) "还原" else "展开"
-            contentDescription=if(full) "还原录音页" else "展开录音页"
+        // Start the native settle before content changes request another layout.
+        binding.root.doOnPreDraw {
+            panelFullscreen=full
+            animatePanelResize=true
+            positionControlsPanel?.invoke()
+            animatePanelResize=false
+            if(BottomSheetBehavior.from(binding.controlsBottomSheet).state==BottomSheetBehavior.STATE_COLLAPSED)
+                BottomSheetBehavior.from(binding.controlsBottomSheet).state=BottomSheetBehavior.STATE_EXPANDED
+            findViewById<Button>(R.id.recordingPlaybackExpand)?.apply {
+                text=if(full) "还原" else "展开"
+                contentDescription=if(full) "还原录音页" else "展开录音页"
+            }
+            binding.controlsScrollView.scrollTo(0,0)
+            if(::pagerAdapter.isInitialized && pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_RECORDING)
+                binding.controlViewPager.post { resizePagerToCurrentPage() }
+            for(id in listOf(R.id.btnAdsbPanelFull,R.id.btnAprsPanelFull)) findViewById<Button>(id)?.text=if(full) "还原" else "展开"
         }
-        positionControlsPanel?.invoke()
-        BottomSheetBehavior.from(binding.controlsBottomSheet).state=BottomSheetBehavior.STATE_EXPANDED
-        binding.controlsScrollView.scrollTo(0,0)
-        if(::pagerAdapter.isInitialized && pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_RECORDING)
-            binding.controlViewPager.post { resizePagerToCurrentPage() }
-        for(id in listOf(R.id.btnAdsbPanelFull,R.id.btnAprsPanelFull)) findViewById<Button>(id)?.text=if(full) "还原" else "展开"
+        binding.root.invalidate()
     }
     private fun setupBottomSheet() {
         binding.controlsBottomSheet.clipToOutline = true
@@ -2576,7 +2591,10 @@ class MainActivity : RadioThemedActivity() {
             val rootY=IntArray(2); val frequencyY=IntArray(2)
             binding.root.getLocationInWindow(rootY); binding.frequencyView.getLocationInWindow(frequencyY)
             val offset=if(panelFullscreen) frequencyY[1]-rootY[1]+binding.frequencyView.height else normal
-            if (behavior.expandedOffset != offset) behavior.expandedOffset = offset
+            if (behavior.expandedOffset != offset) {
+                behavior.expandedOffset = offset
+                if(animatePanelResize) behavior.state=BottomSheetBehavior.STATE_EXPANDED
+            }
             binding.controlsScrollView.setPadding(0, 0, 0, offset + navBarHeightPx)
             val visualHeight=if(panelFullscreen) (h-offset-binding.controlsHeader.height-(150*resources.displayMetrics.density).toInt()-navBarHeightPx).coerceAtLeast((220*resources.displayMetrics.density).toInt()) else (260*resources.displayMetrics.density).toInt()
             for(id in listOf(R.id.adsbVisualization,R.id.aprsMapHost)) findViewById<View>(id)?.let { visual ->
@@ -3927,22 +3945,7 @@ class MainActivity : RadioThemedActivity() {
     }
 
     private fun bookmarkCurrentFrequency() {
-        val hz = viewModel.centerFreqHz.value
-        val input = EditText(this).apply {
-            hint = "Bookmark label"
-            setText("${"%.3f".format(hz / 1e6)} MHz")
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Add Bookmark")
-            .setView(input)
-            .setPositiveButton("Add") { _, _ ->
-                val label = input.text.toString().ifBlank { "${"%.3f".format(hz / 1e6)} MHz" }
-                val mode = viewModel.demodMode.value.name
-                viewModel.addBookmark(hz, label, demodMode = mode)
-                showSnackbar("Bookmark added: $label")
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        BookmarkQuickControls.showEditor(this,viewModel)
     }
 
     private fun getIqFilePath(): String {

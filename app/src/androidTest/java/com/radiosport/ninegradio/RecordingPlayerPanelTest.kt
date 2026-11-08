@@ -121,7 +121,13 @@ class RecordingPlayerPanelTest {
                         assertTrue("Long hold repeats seek",player!!.controller!!.currentPosition in 12000..30000)
                         a.findViewById<View>(R.id.recordingPlaybackExpand).performClick()
                     }
-                    Thread.sleep(700)
+                    val panelTops=mutableListOf<Int>()
+                    repeat(40) {
+                        scenario.onActivity { a -> panelTops.add(a.findViewById<View>(R.id.controlsBottomSheet).top) }
+                        Thread.sleep(16)
+                    }
+                    if(android.provider.Settings.Global.getFloat(context.contentResolver,android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f)>0f)
+                        assertTrue("Fullscreen uses intermediate panel positions",panelTops.distinct().size>2)
                     scenario.onActivity { a ->
                         val sheet=a.findViewById<View>(R.id.controlsBottomSheet);val freq=a.findViewById<View>(R.id.frequencyView)
                         val sr=Rect();val fr=Rect();sheet.getGlobalVisibleRect(sr);freq.getGlobalVisibleRect(fr)

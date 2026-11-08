@@ -33,6 +33,23 @@ open class RadioThemedActivity:AppCompatActivity() {
         setTheme(preset.style)
         super.onCreate(state)
     }
+    override fun onContentChanged() {
+        super.onContentChanged()
+        if(this is MainActivity) return // Main owns its spectrum/panel insets.
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window,false)
+        window.statusBarColor=android.graphics.Color.TRANSPARENT
+        window.navigationBarColor=android.graphics.Color.TRANSPARENT
+        if(android.os.Build.VERSION.SDK_INT>=29) window.isStatusBarContrastEnforced=false
+        androidx.core.view.WindowCompat.getInsetsController(window,window.decorView).isAppearanceLightStatusBars=false
+        val root=findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) ?: return
+        val left=root.paddingLeft;val top=root.paddingTop;val right=root.paddingRight;val bottom=root.paddingBottom
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { view,insets ->
+            val bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            view.setPadding(left+bars.left,top+bars.top,right+bars.right,bottom+bars.bottom)
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(root)
+    }
     override fun onResume() {
         super.onResume()
         if(appliedTheme!=UiThemes.current(this).id) recreate()

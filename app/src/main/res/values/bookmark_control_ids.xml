@@ -1,0 +1,4 @@
+<resources>
+    <item name="etBookmarkPickerSearch" type="id"/>
+    <item name="bookmarkPickerList" type="id"/>
+</resources>
