@@ -18,7 +18,7 @@ Android 13 arm64: **35 of 36 combined cases pass in 167.266 seconds**. Passing c
 
 Static APK checks pass for all 24 libraries: 16 arm64/x86_64 ELF files meet 16 KB alignment and eight 32-bit ELF files meet their 4 KB requirement. `zipalign -c -P 16 4` passes. The artifact privacy scan finds no development Windows paths, private device endpoint, private-key headers or GitHub token patterns. The actual device uses 4 KB pages.
 
-The device runner now stops its explicitly selected application on a whole-run timeout, rather than leaving instrumentation receiving after its adb client exits. The normal execution path is in use for the current RF run; the timeout branch has syntax/review coverage, not a claimed injected device-timeout pass.
+The device runner requests a stop of its explicitly selected application on a whole-run timeout, rather than leaving instrumentation receiving after its adb client exits. Disconnected-device stop failures are reported as unconfirmed, and client cleanup stays bounded. Two host mock fault simulations pass for confirmed and unconfirmed stop paths. The normal execution path is in use for the current RF run; those mocks are not a claimed injected device-timeout pass.
 
 HF+ USB/SSB 30-minute reception is the final active nightly test. Its result and the nightly stop record are added after it finishes. No merge is authorized by this document.
 

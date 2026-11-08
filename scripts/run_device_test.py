@@ -39,13 +39,17 @@ with destination.open('wb') as log:
         # A timed-out adb client does not stop Android instrumentation. Stop only
         # the explicitly selected application, so it cannot keep receiving or
         # competing with the next run after this runner has reported failure.
-        subprocess.run(adb+['shell','am','force-stop',args.package],capture_output=True,timeout=15)
+        stopped=False
+        try:
+            stopped=subprocess.run(adb+['shell','am','force-stop',args.package],capture_output=True,timeout=15).returncode==0
+        except (subprocess.TimeoutExpired,OSError):
+            pass  # A disconnected device needs a later ownership check.
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
-        raise SystemExit('Android test timed out; selected application was stopped')
+        raise SystemExit('Android test timed out; '+('selected application stopped' if stopped else 'device stop unconfirmed'))
 data=destination.read_text(encoding='utf-8',errors='replace')
 print(data)
 if 'OK (' not in data or 'FAILURES!!!' in data or 'INSTRUMENTATION_FAILED' in data:
