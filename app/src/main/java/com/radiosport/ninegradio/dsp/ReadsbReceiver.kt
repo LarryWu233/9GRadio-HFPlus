@@ -82,6 +82,7 @@ class ReadsbReceiver(private val context: Context) {
                         output.write(block.bytes)
                         samples.addAndGet(block.sampleCount.toLong())
                     }
+                    output.flush();output.close()
                 } catch(cancel: CancellationException) { throw cancel }
                 catch(error: Exception) { if(isActive) { _status.value=_status.value.copy(running=false,error="IQ 输入中断：${error.message}"); child.destroy() } }
             }

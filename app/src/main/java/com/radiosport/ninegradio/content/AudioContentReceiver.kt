@@ -62,6 +62,14 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
         if (mutable.value.running) mutable.value = mutable.value.copy(running = false, status = reason)
     }
     fun stopMicrophone() { if(session?.config?.input == ContentInput.MICROPHONE) stop("麦克风已暂停") }
+    /** Software-file EOF: drain decoder input before detaching the receiver. */
+    fun finishSoftwareInput() {
+        val current=synchronized(this) {
+            session?.takeIf { it.config.input==ContentInput.SOFTWARE }?.also { it.eof=true }
+        } ?: return
+        current.worker?.join(5000)
+        if(current.worker?.isAlive==true) stop("解码结束处理超时，已停止")
+    }
     @Synchronized fun clearText() { mutable.value = mutable.value.copy(text = "") }
     fun files() = output.listFiles()?.filter { it.extension in listOf("png", "txt") }?.sortedByDescending { it.lastModified() }.orEmpty()
     fun saveCurrent(): File? {

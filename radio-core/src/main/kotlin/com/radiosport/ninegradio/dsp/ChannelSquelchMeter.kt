@@ -25,6 +25,9 @@ class ChannelSquelchMeter {
     private var averagePower = Double.NaN
     var reading = Reading()
         private set
+    fun reset() {
+        configuration=null;previousSequence=-1;previousNanos=0;averagePower=Double.NaN;reading=Reading()
+    }
 
     fun update(spectrum: FloatArray, sequence: Long, config: Configuration, nowNanos: Long): Reading {
         if (configuration != config) {

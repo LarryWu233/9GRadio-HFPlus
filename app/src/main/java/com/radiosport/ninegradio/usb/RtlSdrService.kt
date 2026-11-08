@@ -259,11 +259,16 @@ class RtlSdrService : Service() {
                 _connectionState.value = ConnectionState.Connected(next.getSourceName())
                 updateNotification("Connected: ${next.getSourceName()}")
                 monitorJob = scope.launch {
-                    combine(next.statusFlow,engine.failure) { status,failure ->
-                        if(failure!=null) status.copy(error=failure,streamRestartRequired=true) else status
+                    combine(next.statusFlow,engine.failure,engine.inputComplete) { status,failure,complete ->
+                        when {
+                            failure!=null -> status.copy(error=failure,streamRestartRequired=true)
+                            complete -> status.copy(connected=false)
+                            else -> status
+                        }
                     }.filter { it.streamRestartRequired || !it.connected }.collect { status ->
                         control {
                             if (source === next) {
+                                if(engine.inputComplete.value) audioContent.finishSoftwareInput()
                                 disconnectNow()
                                 if (status.error != null || status.streamRestartRequired)
                                     _connectionState.value = ConnectionState.Error(status.error ?: "IQ stream stopped; reconnect the receiver")
@@ -498,8 +503,9 @@ class RtlSdrService : Service() {
         if(audio) engine?.stopAudioRecording() else engine?.stopIqRecording()
         val duration=if(audio) engine?.audioRecordedDurationMs() else engine?.iqRecordedDurationMs()
         (application as RtlSdrApplication).database.recordingMetaDao().finishSession(session.id,duration ?: 0L,java.io.File(session.path).length())
-        if(audio && engine?.audioRecordingError()!=null) android.os.Handler(android.os.Looper.getMainLooper()).post {
-            android.widget.Toast.makeText(this,"录制已停止：${engine.audioRecordingError()}",android.widget.Toast.LENGTH_LONG).show()
+        val failure=if(audio) engine?.audioRecordingError() else engine?.iqRecordingError()
+        if(failure!=null) android.os.Handler(android.os.Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(this,"录制已停止：$failure",android.widget.Toast.LENGTH_LONG).show()
         }
     }
     fun startRecording(path: String) = control { beginCapture(path,false) }

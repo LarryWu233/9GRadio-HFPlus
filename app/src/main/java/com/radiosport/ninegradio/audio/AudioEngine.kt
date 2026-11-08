@@ -8,7 +8,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicInteger
 
-class AudioEngine(private val sampleRate: Int = 48_000) {
+class AudioEngine(override val sampleRate: Int = 48_000) : com.radiosport.ninegradio.pipeline.AudioOutput {
 
     companion object {
         private const val TAG = "AudioEngine"
@@ -30,25 +30,25 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
 
     @Volatile private var audioTrack: AudioTrack? = null
     @Volatile private var stopping = false
-    @Volatile private var pcmRecorder: AudioFileRecorder? = null
+    @Volatile private var epoch=0L
+    override fun configureEpoch(epoch:Long) = synchronized(trackLock) { this.epoch=epoch }
     private val writeFails = AtomicInteger(0)
     private var prefilling=true
     private var primedFrames=0
-    @Volatile var underruns=0
+    @Volatile override var underruns=0
         private set
     @Volatile var writtenFramesTotal=0L
         private set
 
     // Platform clock observation only; called by the diagnostic test, not
     // from the signal-processing loop. Keep lifetime protection on the track.
-    fun playbackClock(): Map<String,Long> = synchronized(trackLock) {
-        val track=audioTrack ?: return@synchronized emptyMap()
+    override fun playbackClock(): com.radiosport.ninegradio.pipeline.PlaybackClock = synchronized(trackLock) {
+        val track=audioTrack ?: return@synchronized com.radiosport.ninegradio.pipeline.PlaybackClock()
         val timestamp=AudioTimestamp()
         val valid=track.getTimestamp(timestamp)
-        mapOf("writtenFrames" to writtenFramesTotal,
-            "playbackHeadFrames" to (track.playbackHeadPosition.toLong() and 0xffffffffL),
-            "timestampFrames" to if(valid) timestamp.framePosition else -1L,
-            "timestampNanos" to if(valid) timestamp.nanoTime else -1L)
+        com.radiosport.ninegradio.pipeline.PlaybackClock(writtenFramesTotal,
+            track.playbackHeadPosition.toLong() and 0xffffffffL,
+            if(valid) timestamp.framePosition else -1L, if(valid) timestamp.nanoTime else -1L)
     }
 
     // ─── Thread-safety ──────────────────────────────────────────────────────
@@ -62,15 +62,14 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
     // native object is never released while a write() holds a reference to it.
     private val trackLock = Any()
 
-    val isRecording: Boolean get() = pcmRecorder?.isRecording == true
 
-    fun start() {
+    override fun start() {
         stopping = false
         synchronized(trackLock) { if(audioTrack?.state==AudioTrack.STATE_INITIALIZED) return }
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, CHANNEL_CONFIG, AUDIO_FORMAT)
         // Hardware buffer and fixed-duration PCM queue absorb scheduler and USB jitter.
-        // Playback starts after 80 ms of audio is primed, below the 160 ms buffer floor.
-        val targetMs   = 160 // scheduling headroom; the duration based PCM queue handles USB bursts
+        // Playback starts after 80 ms of audio is primed, below the 120 ms buffer floor.
+        val targetMs   = 120 // scheduling headroom; the duration based PCM queue handles USB bursts
         val targetBytes = sampleRate * targetMs / 1000 * 4 * 2
         val bufSize = minBuf.coerceAtLeast(targetBytes)
 
@@ -109,7 +108,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
             DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_PLAY, "—")
             DebugBus.setError(DebugBus.STAGE_AUDIO_TRACK, reason)
             track.release()
-            return
+            throw IllegalStateException(reason)
         }
 
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_INIT,
@@ -155,12 +154,12 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
     }
 
     /** Unblock a pending platform write without releasing its native pointer. */
-    fun interruptWrites() {
+    override fun interruptWrites() {
         stopping = true
         runCatching { audioTrack?.stop() }
     }
 
-    fun stop() {
+    override fun stop() {
         interruptWrites()
         // Synchronized with write(): ensures no write() call is mid-flight
         // inside AudioTrack.native_write_float() on the DSP coroutine when we
@@ -188,10 +187,14 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         }
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_PLAY, "STOPPED")
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_LAST_WRITE, "—")
-        stopRecording()
     }
 
-    fun write(samples: FloatArray, recordingAllowed: () -> Boolean = { true }) {
+    override fun write(block: com.radiosport.ninegradio.pipeline.AudioBlock) {
+        require(block.sampleRate==sampleRate && block.channels==2)
+        synchronized(trackLock) { if(block.epoch==epoch) write(block.samples) }
+    }
+
+    fun write(samples: FloatArray) {
         if (stopping) return
         // Hold trackLock for the duration of the write so a concurrent stop()
         // cannot release the native AudioTrack out from under this call.
@@ -237,6 +240,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
                     Log.w(TAG, "AudioTrack.write() threw IllegalStateException (track released)", e)
                     DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_LAST_WRITE,
                         "FAIL: released mid-write")
+                    if(!stopping) throw e
                     return
                 }
                 if (n <= 0) {
@@ -259,6 +263,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
                             "write() ERROR_DEAD_OBJECT — AudioTrack dead (fails=$totalFails)")
                     }
                     Log.w(TAG, "AudioTrack.write() returned $n ($failStr), fails=$totalFails")
+                    if(!stopping) throw IllegalStateException("AudioTrack write failed: $n")
                     break
                 }
                 written += n
@@ -276,39 +281,26 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
                     "OK ($written samples)")
             }
         }
-        if(recordingAllowed()) pcmRecorder?.writeSamples(samples)
     }
 
-    fun setVolume(vol: Float) {
+    override fun setVolume(vol: Float) {
         synchronized(trackLock) {
             audioTrack?.setVolume(vol.coerceIn(0f, AudioTrack.getMaxVolume()))
         }
     }
-    fun clearPendingAudio() {
+    override fun clearPendingAudio() {
         synchronized(trackLock) {
             audioTrack?.let { track ->
-                runCatching { track.pause(); track.flush(); prefilling=true; primedFrames=0 }
+                runCatching { track.pause(); track.flush(); prefilling=true; primedFrames=0;writtenFramesTotal=0 }
+            }
+        }
+    }
+    override fun finishInput() {
+        synchronized(trackLock) {
+            if(!stopping && prefilling && primedFrames>0) {
+                audioTrack?.play();prefilling=false
             }
         }
     }
 
-    @Volatile var recordingError:String?=null
-        private set
-    @Synchronized fun startRecording(filePath:String,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile=
-        com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(filePath)) {
-        stopRecording();lastRecordedDurationMs=0;recordingError=null
-        val recorder=AudioFileRecorder(filePath,sampleRate,2,profile)
-        try { recorder.start();pcmRecorder=recorder }
-        catch(error:Exception) { recordingError=error.message ?: "无法开始录制";pcmRecorder=null }
-    }
-    @Synchronized fun stopRecording() {
-        pcmRecorder?.let { recorder ->
-            runCatching { recorder.stop() }.onFailure { recordingError=it.message ?: "录制未能完成" }
-            lastRecordedDurationMs=recorder.capturedDurationMs()
-            recordingError=recorder.error ?: recordingError
-        }
-        pcmRecorder=null
-    }
-    private var lastRecordedDurationMs=0L
-    @Synchronized fun recordingDurationMs()=pcmRecorder?.capturedDurationMs() ?: lastRecordedDurationMs
 }

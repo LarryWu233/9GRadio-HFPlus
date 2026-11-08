@@ -20,7 +20,9 @@ import kotlinx.coroutines.flow.*
  *                                 ↓
  *                         Protocol Decoders (APRS, RDS …)
  */
-class DspEngine(private val device: IqSource) {
+class DspEngine(private val device: IqSource,
+    private val outputFactory: com.radiosport.ninegradio.pipeline.AudioOutputFactory =
+        com.radiosport.ninegradio.pipeline.AudioOutputFactory { AudioEngine(it) }) {
     @Volatile private var tuningCorrectionHz = 0L
 
     // Centre frequency used for dual-APRS NCO calculation.
@@ -377,7 +379,7 @@ class DspEngine(private val device: IqSource) {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Current demodulator
-    @Volatile private var demodulator: Demodulator = NfmDemodulator()
+    @Volatile private var demodulator: Demodulator = NfmDemodulator(AndroidDemodPrimitives)
     @Volatile private var demodMode = DemodMode.NFM
 
     // ─── IF Filter / Protocol Bandwidth ──────────────────────────────────────
@@ -403,10 +405,11 @@ class DspEngine(private val device: IqSource) {
     // atomically from any thread without holding a lock (start/stop are guarded
     // by the DSP coroutine's sequential execution model).
     @Volatile private var audioSinkRate: Int = DEFAULT_AUDIO_SINK_RATE
-    @Volatile private var audioEngine = AudioEngine(DEFAULT_AUDIO_SINK_RATE)
+    @Volatile private var audioEngine: com.radiosport.ninegradio.pipeline.AudioOutput = outputFactory.create(DEFAULT_AUDIO_SINK_RATE)
+    private val soundCapture = com.radiosport.ninegradio.audio.SoundCapture()
 
     // IQ recorder
-    private val iqRecorder = IqRecorder()
+    private val iqRecorder = com.radiosport.ninegradio.recording.AsyncIqRecorder()
 
     // RDS decoder (active in WFM/WFM_STEREO mode) — reconstructed with the
     // actual WFM IF rate the first time a WFM block is processed, then reused.
@@ -452,7 +455,12 @@ class DspEngine(private val device: IqSource) {
     // Receives 48 kHz raw FM-discriminated audio (same path as APRS — no AGC/LPF/limiter).
     // Identifies the protocol from sync words and — when the DSD-Neo native library
     // is present (libdsd_neo.so in jniLibs/) — decodes voice frames via DigitalVoiceJni.
-    val digitalVoiceDecoder = DigitalVoiceDecoder()
+    private val voiceStage=DigitalVoiceStage(scope,::decoderFailed)
+    private fun decoderFailed(epoch:Long,error:Exception) {
+        if(!session.snapshot.closed && epoch==session.snapshot.epoch)
+            _failure.value="数字语音处理停止（${error.javaClass.simpleName}）"
+    }
+    val digitalVoiceDecoder get()=voiceStage.decoder
 
     /**
      * Pipes raw 48 kHz FM-discriminator audio (the same pre-vocoder signal
@@ -502,7 +510,7 @@ class DspEngine(private val device: IqSource) {
      *  the demod mode flips between SSB and non-SSB (see setDemodMode()). */
     @Volatile private var dialFreqHz: Long = 0L
     @Volatile private var cwCenterOffsetHz = 0L
-    private val cwChannelizer=CwChannelizer()
+    private val cwChannelizer=CwChannelizer(AndroidDemodPrimitives)
     private fun isCw()=demodMode==DemodMode.CW || demodMode==DemodMode.CWR
     private fun cwWidth()=(ifBandwidthHz.takeIf { it>0 } ?: demodMode.defaultBwHz).coerceAtLeast(100)
 
@@ -740,7 +748,23 @@ class DspEngine(private val device: IqSource) {
     private fun receiverConfiguration() = com.radiosport.ninegradio.pipeline.ReceiverConfiguration(
         demodMode.name, device.getSampleRate(), ifBandwidthHz, audioSinkRate)
     private val session = com.radiosport.ninegradio.pipeline.PipelineSession(receiverConfiguration())
-    private fun configurationChanged() { session.configure(receiverConfiguration()) }
+    private val measurement=com.radiosport.ninegradio.pipeline.SignalAnalyzer()
+    private val display=com.radiosport.ninegradio.pipeline.SpectrumBranch(fftEngine,scope) { frame ->
+        if(!session.snapshot.closed && frame.metadata.sampleRate==device.getSampleRate()
+            && frame.metadata.centerHz==device.getCenterFrequency()) {
+            _spectrumFlow.tryEmit(frame.bins)
+            DebugBus.tick(DebugBus.STAGE_FFT_ENGINE)
+        }
+    }
+    private fun configurationChanged() {
+        val old=session.snapshot.epoch
+        if(session.configure(receiverConfiguration()).epoch!=old) {
+            audioEngine.configureEpoch(session.snapshot.epoch)
+            voiceStage.configure(session.snapshot.epoch)
+            pcmPacketizer.reset(); audioFramePosition=0; packetFramePosition=0
+            while(audioWriteChannel.tryReceive().isSuccess) { }
+        }
+    }
 
     // ─── Decoupled audio output ───────────────────────────────────────────────
     // processIqBlock() must never block the IQ collection coroutine waiting on
@@ -765,7 +789,6 @@ class DspEngine(private val device: IqSource) {
     private val _squelchReading=MutableStateFlow(ChannelSquelchMeter.Reading())
     val squelchReading: StateFlow<ChannelSquelchMeter.Reading> = _squelchReading.asStateFlow()
     @Volatile private var recordingSquelch=ListeningSquelch(false)
-    private val recordingGateGeneration=java.util.concurrent.atomic.AtomicLong()
     @Volatile private var recordBySquelch=false
     @Volatile var recordingGateOpen=true
         private set
@@ -773,27 +796,39 @@ class DspEngine(private val device: IqSource) {
         if(recordBySquelch!=enabled) {
             recordingSquelch=ListeningSquelch(false)
             recordingGateOpen=!enabled
-            recordingGateGeneration.incrementAndGet()
             recordBySquelch=enabled
         }
     }
     fun iqRecordedDurationMs()=iqRecorder.capturedDurationMs()
-    fun audioRecordedDurationMs()=audioEngine.recordingDurationMs()
-    fun audioRecordingError()=audioEngine.recordingError
-    fun isAudioRecording()=audioEngine.isRecording
-    private data class PlaybackBlock(val samples:FloatArray,val recordAllowed:Boolean,val generation:Long,val epoch:Long)
+    fun iqRecordingError()=iqRecorder.error
+    fun audioRecordedDurationMs()=soundCapture.durationMs()
+    fun audioRecordingError()=soundCapture.error
+    fun isAudioRecording()=soundCapture.isRecording
     private val listeningAudio=ListeningAudioProcessor()
     fun setListeningAudio(settings: ListeningAudioProcessor.Settings) { listeningAudio.settings=settings }
-    private val audioWriteChannel = Channel<PlaybackBlock>(
-        capacity = 32, // 32 x fixed 20 ms packets = 640 ms, regardless of USB block size
+    private val audioWriteChannel = Channel<com.radiosport.ninegradio.pipeline.AudioBlock>(
+        capacity = 6, // 120 ms queue + 120 ms platform buffer, independent of IQ block size
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
         onUndeliveredElement = {
-            DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, "PCM_QUEUE_DROPS", audioQueueDrops.incrementAndGet().toString())
+            if(!session.snapshot.closed) DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, "PCM_QUEUE_DROPS", audioQueueDrops.incrementAndGet().toString())
         }
     )
     private var audioWriterJob: Job? = null
+    @Volatile private var audioFramePosition=0L
+    private var packetFramePosition=0L
+    fun getPlaybackQueueDrops()=audioQueueDrops.get()
+    fun getListeningFrameCount()=audioFramePosition
     @Synchronized private fun enqueueAudio(samples: FloatArray) {
-        pcmPacketizer.append(samples) { audioWriteChannel.trySend(PlaybackBlock(it,recordingGateOpen,recordingGateGeneration.get(),session.snapshot.epoch)) }
+        if(session.snapshot.closed) return
+        val epoch=session.snapshot.epoch
+        val block=com.radiosport.ninegradio.pipeline.AudioBlock(samples,audioSinkRate,2,epoch,audioFramePosition)
+        audioFramePosition+=block.frameCount
+        soundCapture.offer(block,recordingGateOpen)
+        pcmPacketizer.append(samples) {
+            val packet=com.radiosport.ninegradio.pipeline.AudioBlock(it,audioSinkRate,2,epoch,packetFramePosition)
+            packetFramePosition+=packet.frameCount
+            audioWriteChannel.trySend(packet)
+        }
     }
 
     // ─── Digital voice audio output ───────────────────────────────────────────
@@ -1039,6 +1074,7 @@ class DspEngine(private val device: IqSource) {
         check(!session.snapshot.closed) { "Closed DSP sessions cannot be restarted" }
         if (!started.compareAndSet(false, true)) return
         audioEngine.start()
+        audioEngine.configureEpoch(session.snapshot.epoch)
         audioEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
         // Re-arm the peak-hold warm-up so the initial-acquisition transient
         // (filter/decimator settling, AGC convergence) doesn't get latched
@@ -1047,6 +1083,7 @@ class DspEngine(private val device: IqSource) {
         DebugBus.setStatus(DebugBus.STAGE_AUDIO_TRACK, DebugBus.StageStatus.OK, "AudioTrack started @ ${audioSinkRate} Hz")
         startAudioWriter()
         startDigVoiceAudio()
+        display.start()
         startProcessingPipeline()
         rebuildVocoderDecoder()
         Log.i(TAG, "DSP engine started")
@@ -1076,9 +1113,15 @@ class DspEngine(private val device: IqSource) {
         // from AudioTrack.write() almost immediately (ring-buffer copy), so the
         // Default thread is only parked for <1 ms per block rather than up to 8.5 ms.
         audioWriterJob = scope.launch(Dispatchers.IO) {
+            try {
             for (samples in audioWriteChannel) {
                 if (samples.epoch == session.snapshot.epoch && !session.snapshot.closed)
-                    audioEngine.write(samples.samples) { samples.recordAllowed && samples.generation==recordingGateGeneration.get() }
+                    audioEngine.write(samples)
+            }
+            audioEngine.finishInput()
+            } catch(cancel:CancellationException) { throw cancel }
+            catch(error:Exception) {
+                if(!session.snapshot.closed) _failure.value="声音输出停止（${error.javaClass.simpleName}）"
             }
         }
     }
@@ -1106,8 +1149,9 @@ class DspEngine(private val device: IqSource) {
      */
     private fun startDigVoiceAudio() {
         digVoiceAudioJob?.cancel()
-        digVoiceAudioJob = scope.launch(Dispatchers.Default) {
-            digitalVoiceDecoder.frames.collect { frame ->
+        digVoiceAudioJob = scope.launch(Dispatchers.Default,start=CoroutineStart.UNDISPATCHED) {
+            voiceStage.audioFlow.collect { frame ->
+                if(frame.pipelineEpoch!=session.snapshot.epoch) return@collect
                 val pcm = frame.pcmAudio
                 if (pcm.isEmpty()) return@collect
 
@@ -1151,6 +1195,7 @@ class DspEngine(private val device: IqSource) {
 
     fun stop() {
         if (!session.close()) return
+        voiceStage.stopAccepting()
         runBlocking { producerStartJob?.cancelAndJoin() }
         device.stopStreaming()
         processingJob?.cancel()
@@ -1159,8 +1204,11 @@ class DspEngine(private val device: IqSource) {
         audioEngine.interruptWrites()
         // Do not hold the DSP monitor: an in-flight block must be able to finish.
         runBlocking { processingJob?.join(); digVoiceAudioJob?.join(); audioWriterJob?.join() }
-        digitalVoiceDecoder.close()
+        display.close()
+        voiceStage.close()
         audioEngine.stop()
+        soundCapture.stop()
+        audioWriteChannel.cancel()
         iqRecorder.stop()
         externalDecoderStream.shutdown()
         scope.cancel()
@@ -1187,12 +1235,13 @@ class DspEngine(private val device: IqSource) {
     @Synchronized fun setDemodMode(mode: DemodMode) {
         val modeChanged = (mode != demodMode)
         if(!modeChanged) return
+        session.discontinuity();audioEngine.configureEpoch(session.snapshot.epoch);voiceStage.configure(session.snapshot.epoch)
         cwChannelizer.reset()
         pcmPacketizer.reset()
         while(audioWriteChannel.tryReceive().isSuccess) { }
         audioEngine.clearPendingAudio()
         demodMode = mode
-        demodulator = DemodulatorFactory.create(mode)
+        demodulator = DemodulatorFactory.create(mode,AndroidDemodPrimitives)
         // Switching protocols changes the IF bandwidth, decimation chain, and
         // tuned frequency — any peaks accumulated under the previous mode are
         // no longer meaningful, so clear the peak-hold trace and re-arm the
@@ -1204,7 +1253,6 @@ class DspEngine(private val device: IqSource) {
             // the correct signal path (GMSK for D-STAR, 4FSK for everything else)
             // and resets internal state.  Called for every mode change, not just
             // when entering a digital voice mode, so the decoder always starts clean.
-            digitalVoiceDecoder.setMode(mode)
         }
         // Reset IF bandwidth to the mode's default when switching to a
         // DIFFERENT mode, so the decimation chain always starts at a sensible
@@ -1339,6 +1387,7 @@ class DspEngine(private val device: IqSource) {
     fun setAudioSinkRate(rate: Int) {
         if (rate == audioSinkRate || session.snapshot.closed) return
         val running = started.get()
+        soundCapture.stop()
         if (running) {
             runBlocking { producerStartJob?.cancelAndJoin() }
             device.stopStreaming()
@@ -1353,7 +1402,7 @@ class DspEngine(private val device: IqSource) {
             while (audioWriteChannel.tryReceive().isSuccess) { }
             audioResampler = null; resamplerInRate = 0; resamplerOutRate = 0
             narrowDecimator = null; narrowDecimatorInputRate = 0; narrowDecimatorOutputRate = 0
-            audioEngine = AudioEngine(rate)
+            audioEngine = outputFactory.create(rate)
             oldEngine.stop()
             configurationChanged()
             iqContinuity.reset()
@@ -1368,7 +1417,7 @@ class DspEngine(private val device: IqSource) {
 
     fun getAudioSinkRate(): Int = audioSinkRate
     fun getPlaybackUnderruns(): Int = audioEngine.underruns
-    fun getPlaybackClock(): Map<String,Long> = audioEngine.playbackClock()
+    fun getPlaybackClock(): Map<String,Long> = audioEngine.playbackClock().asLegacyMap()
 
     fun startIqRecording(filePath: String) {
         iqRecorder.start(filePath, device.getSampleRate(), if (device.capabilities.floatIq) IqRecorder.Format.FLOAT32 else IqRecorder.Format.RAW_UINT8)
@@ -1382,12 +1431,12 @@ class DspEngine(private val device: IqSource) {
 
     fun startAudioRecording(filePath:String,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile=
         com.radiosport.ninegradio.recording.AudioRecordingProfile.forFile(filePath)) {
-        audioEngine.startRecording(filePath,profile)
+        soundCapture.start(filePath,audioSinkRate,profile)
         updateStats()
     }
 
     fun stopAudioRecording() {
-        audioEngine.stopRecording()
+        soundCapture.stop()
         updateStats()
     }
 
@@ -1567,12 +1616,31 @@ class DspEngine(private val device: IqSource) {
 
     private val _failure = MutableStateFlow<String?>(null)
     val failure: StateFlow<String?> = _failure.asStateFlow()
+    private val _inputComplete=MutableStateFlow(false)
+    val inputComplete:StateFlow<Boolean> = _inputComplete.asStateFlow()
 
     private fun startProcessingPipeline() {
         // UNDISTPATCHED registers the source subscription before startStreaming; no polling timeout.
         processingJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 device.iqFlow.collect { block -> processIqBlock(block) }
+                if(!session.snapshot.closed) {
+                    voiceStage.finishInput();digVoiceAudioJob?.join()
+                    synchronized(this@DspEngine) {
+                        pcmPacketizer.flush {
+                            audioWriteChannel.trySend(com.radiosport.ninegradio.pipeline.AudioBlock(
+                                it,audioSinkRate,2,session.snapshot.epoch,packetFramePosition))
+                        }
+                    }
+                    audioWriteChannel.close();audioWriterJob?.join()
+                    val deadline=System.nanoTime()+1_000_000_000L
+                    while(!session.snapshot.closed && System.nanoTime()<deadline) {
+                        val clock=audioEngine.playbackClock()
+                        if(clock.playbackHeadFrames>=clock.writtenFrames) break
+                        delay(10)
+                    }
+                    _inputComplete.value=true
+                }
             } catch (cancel: CancellationException) { throw cancel }
             catch (error: Exception) {
                 _failure.value = "Receiver processing failed: ${error.javaClass.simpleName}"
@@ -1585,32 +1653,46 @@ class DspEngine(private val device: IqSource) {
     }
 
     private val iqContinuity = com.radiosport.ninegradio.pipeline.IqContinuity()
+    private val inputSamples=java.util.concurrent.atomic.AtomicLong()
+    private val inputMissingSamples=java.util.concurrent.atomic.AtomicLong()
+    private val staleInputBlocks=java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var driverMissingSamples=0L
+    fun pipelineDiagnostics()=com.radiosport.ninegradio.pipeline.ReceiverDiagnostics(
+        session.snapshot.epoch,device.getSampleRate(),audioSinkRate,inputSamples.get(),
+        DebugBus.getIqFlowDropCount(),inputMissingSamples.get(),driverMissingSamples,staleInputBlocks.get(),
+        display.skipped.get(),voiceStage.droppedPackets.get(),audioQueueDrops.get(),audioEngine.underruns)
     private fun recoverDiscontinuity() {
         session.discontinuity()
-        demodulator=DemodulatorFactory.create(demodMode)
+        audioEngine.configureEpoch(session.snapshot.epoch)
+        measurement.reset()
+        soundCapture.abort("输入信号出现缺口，录制已停止")
+        demodulator=DemodulatorFactory.create(demodMode,AndroidDemodPrimitives)
         dcState.fill(0f); freqShiftPhase=0.0; cwChannelizer.reset()
         iqNoiseBlanker.reset()
         narrowDecimator=null; wfmDecimator=null
         audioResampler=null; decoderResampler=null
         aprsDecoder.setSampleRate(DEFAULT_AUDIO_RATE)
         acarsDecoder.resetSignalState(); pocsagDecoder.resetSignalState(); rdsDecoder.resetSignalState()
-        digitalVoiceDecoder.reset()
+        voiceStage.configure(session.snapshot.epoch)
         noiseReducer.reset(); stereoAudio.reset(); listeningAudio.reset(); listeningSquelch.reset()
         pcmPacketizer.reset()
         while(audioWriteChannel.tryReceive().isSuccess) { }
         if(iqRecorder.isRecording) {
-            iqRecorder.stop()
+            iqRecorder.abort("输入 IQ 出现缺口，录制已停止")
             DebugBus.setError(DebugBus.STAGE_DSP_PROCESS,"IQ 录制因输入缺口停止")
         }
     }
     @Synchronized private fun processIqBlock(block: IqBlock) {
-        if (!session.admits(block.metadata)) return
+        if (!session.admits(block.metadata)) { staleInputBlocks.incrementAndGet();return }
         if (block.metadata.streamId != 0L && (block.metadata.sampleRate != device.getSampleRate()
-                || block.metadata.centerHz != device.getCenterFrequency())) return
+                || block.metadata.centerHz != device.getCenterFrequency())) { staleInputBlocks.incrementAndGet();return }
         if (!receptionAvailable) return
         val continuity = iqContinuity.accept(block.metadata, block.sampleCount)
-        if (continuity.change == com.radiosport.ninegradio.pipeline.IqContinuity.Change.STALE) return
+        if (continuity.change == com.radiosport.ninegradio.pipeline.IqContinuity.Change.STALE) { staleInputBlocks.incrementAndGet();return }
         if (continuity.missingBlocks > 0) DebugBus.incrementIqFlowDrops(continuity.missingBlocks)
+        inputSamples.addAndGet(block.sampleCount.toLong())
+        inputMissingSamples.addAndGet(continuity.missingSamples)
+        driverMissingSamples=block.metadata.driverLostTotal
         if (continuity.missingSamples > 0) DebugBus.setExtra(DebugBus.STAGE_IQ_STREAM,
             "CONSUMER_MISSING_SAMPLES", continuity.missingSamples.toString())
         if (continuity.change == com.radiosport.ninegradio.pipeline.IqContinuity.Change.GAP) recoverDiscontinuity()
@@ -1651,67 +1733,6 @@ class DspEngine(private val device: IqSource) {
             }
         }
 
-        // ── FFT spectrum (rate-limited) ───────────────────────────────────────
-        // Reuse the displayed FFT reference; only new frames feed the BW-limited SQL meter.
-        fftEngine.analysisIntervalSamples=(device.getSampleRate()/60).coerceAtLeast(1)
-        val fftSnapshot = block.spectrum(fftEngine)
-        val widebandPeakDb = fftEngine.lastPeakDb
-        val sqlConfiguration=ChannelSquelchMeter.Configuration(getDialFrequencyHz(),device.getCenterFrequency(),
-            demodMode,ChannelPassband.widthHz(demodMode,ifBandwidthHz,device.capabilities.maxChannelBandwidth(device.getSampleRate())),
-            device.getSampleRate(),fftEngine.decimationFactor,fftSnapshot.size)
-        val sqlReading=channelSquelchMeter.update(fftSnapshot,fftEngine.spectrumSequence,sqlConfiguration,System.nanoTime())
-        _squelchReading.value=sqlReading
-        val squelchSignalDb=if(sqlReading.valid) sqlReading.levelDb else -200f
-        // Reuse the existing hysteresis/hold detector; capture raw IQ before any NB/DSP.
-        recordingGateOpen=!recordBySquelch || recordingSquelch.update(squelchSignalDb,squelchLevel,block.sampleCount.toDouble()/device.getSampleRate())
-        if(iqRecorder.isRecording && recordingGateOpen) iqRecorder.write(block)
-
-        // ── Narrowband (channel-specific) signal level ──────────────────────
-        // Retain the scanner's existing 12.5 kHz mean-bin statistic separately from listening BW peak.
-        val fftBinCount = fftSnapshot.size
-        val hzPerBin = if (fftBinCount > 0)
-            device.getSampleRate().toDouble() / fftEngine.decimationFactor / fftBinCount
-        else 1.0
-        val channelHalfBins = if (hzPerBin > 0)
-            (NARROWBAND_CHANNEL_HZ / hzPerBin / 2.0).toInt().coerceAtLeast(1)
-        else 1
-        val centerIdx = (fftBinCount / 2 - if(isCw()) (cwCenterOffsetHz/hzPerBin).toInt() else 0).coerceIn(0,(fftBinCount-1).coerceAtLeast(0))
-        val loBin = (centerIdx - channelHalfBins).coerceAtLeast(0)
-        val hiBin = (centerIdx + channelHalfBins).coerceAtMost((fftBinCount - 1).coerceAtLeast(0))
-        var centerPowerSum = 0.0
-        var centerBinTally = 0
-        for (i in loBin..hiBin) {
-            centerPowerSum += Math.pow(10.0, fftSnapshot[i] / 10.0)
-            centerBinTally++
-        }
-        val narrowbandCenterDb = if (centerBinTally > 0)
-            (10.0 * Math.log10(centerPowerSum / centerBinTally)).toFloat()
-        else squelchSignalDb
-        val nowMs = System.currentTimeMillis()
-        if (nowMs - lastSpectrumMs >= SPECTRUM_MIN_INTERVAL_MS) {
-            lastSpectrumMs = nowMs
-            _spectrumFlow.tryEmit(fftSnapshot.copyOf())
-            DebugBus.tick(DebugBus.STAGE_FFT_ENGINE)
-            val snap = DebugBus.snapshot()[DebugBus.STAGE_FFT_ENGINE]
-            if (snap.counter % 15L == 0L) {
-                val signalMin = fftSnapshot.minOrNull() ?: -200f
-                val signalMax = widebandPeakDb
-                DebugBus.setDetail(DebugBus.STAGE_FFT_ENGINE,
-                    "FFT size: ${fftEngine.fftSize}  " +
-                    "peak: ${"%.1f".format(signalMax)} dBFS  " +
-                    "floor: ${"%.1f".format(signalMin)} dBFS")
-                DebugBus.setStatus(DebugBus.STAGE_FFT_ENGINE, DebugBus.StageStatus.OK,
-                    "FFT size: ${fftEngine.fftSize}  " +
-                    "peak: ${"%.1f".format(signalMax)} dBFS  " +
-                    "floor: ${"%.1f".format(signalMin)} dBFS")
-            }
-        }
-
-        // ── Convert uint8 IQ → normalised float IQ ───────────────────────────
-        // Reuse a single cached buffer (floatIqBuf) rather than allocating a
-        // fresh FloatArray(rawIq.size) = 512 KB on every block.  The USB block
-        // size is constant after the first transfer so the buffer is allocated
-        // exactly once and reused for every subsequent block.
         val n = block.sampleCount
         if (floatIqBuf.size != n * 2) floatIqBuf = FloatArray(n * 2)
         val floatIq = floatIqBuf
@@ -1723,6 +1744,24 @@ class DspEngine(private val device: IqSource) {
             for (i in rawIq!!.indices) {
                 floatIq[i] = ((rawIq[i].toInt() and 0xFF) - 127.5f) / 128.0f
             }
+        }
+
+        val rate=device.getSampleRate()
+        val hardwareHz=device.getCenterFrequency()
+        val measured=measurement.process(floatIq,getDialFrequencyHz(),hardwareHz,demodMode,
+            ChannelPassband.widthHz(demodMode,ifBandwidthHz,device.capabilities.maxChannelBandwidth(rate)),
+            rate,if(isCw()) cwCenterOffsetHz else 0L,System.nanoTime())
+        val sqlReading=measured.channel
+        _squelchReading.value=sqlReading
+        val squelchSignalDb=if(sqlReading.valid) sqlReading.levelDb else -200f
+        val widebandPeakDb=measured.widebandPeakDb
+        val narrowbandCenterDb=measured.scannerCenterDb
+        recordingGateOpen=!recordBySquelch || recordingSquelch.update(squelchSignalDb,squelchLevel,block.sampleCount.toDouble()/rate)
+        if(iqRecorder.isRecording && recordingGateOpen) iqRecorder.write(block)
+        if(_spectrumFlow.subscriptionCount.value>0) {
+            val meta=block.metadata.copy(sampleRate=rate,centerHz=hardwareHz)
+            val raw=if(block is IqBlock.Float32) block.values else floatIq.copyOf()
+            display.offer(IqBlock.Float32(raw,meta.sequence,meta))
         }
 
         // ── DC offset removal ─────────────────────────────────────────────────
@@ -2062,7 +2101,7 @@ class DspEngine(private val device: IqSource) {
         if (decoderAudio.isNotEmpty() && demodMode in DIGITAL_VOICE_MODES) {
             DebugBus.setExtra(DebugBus.STAGE_DEMODULATOR, DebugBus.EXTRA_DV_FEED_RATE,
                 "${demodRate} Hz \u2192 ${DEFAULT_AUDIO_RATE} Hz (decoderAudio)")
-            digitalVoiceDecoder.feed(decoderAudio, squelchSignalDb)
+            voiceStage.offer(decoderAudio,demodMode,squelchSignalDb,session.snapshot.epoch)
         }
 
         // ── Publish 48 kHz audio baseband for APRS / other subscribers ────────
@@ -2144,7 +2183,7 @@ class DspEngine(private val device: IqSource) {
             widebandPeakDb = widebandPeakDb,
             narrowbandCenterDb = narrowbandCenterDb,
             isRecordingIq = iqRecorder.isRecording,
-            isRecordingAudio = audioEngine.isRecording,
+            isRecordingAudio = soundCapture.isRecording,
             bufferDrops = DebugBus.getIqFlowDropCount().toInt()
         )
     }
@@ -2212,7 +2251,7 @@ class DspEngine(private val device: IqSource) {
             demodMode = demodMode.displayName,
             audioVolume = volume,
             isRecordingIq = iqRecorder.isRecording,
-            isRecordingAudio = audioEngine.isRecording
+            isRecordingAudio = soundCapture.isRecording
         )
     }
 }

@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicLong
 /** Own-package native/AudioTrack lifecycle; does not open USB or alter saved settings. */
 @RunWith(AndroidJUnit4::class)
 class ArchitectureLifecycleTest {
-    private class Source : IqSource {
+    internal class Source : IqSource {
         private val stream = IqStream()
         private val clock = CaptureClock()
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

@@ -32,7 +32,8 @@ data class DigitalFrame(
     val pcmAudio:    ShortArray = ShortArray(0),
     val rssi:        Float      = -100f,
     val snr:         Float      = 0f,
-    val timestamp:   Long       = System.currentTimeMillis()
+    val timestamp:   Long       = System.currentTimeMillis(),
+    val pipelineEpoch: Long    = 0
 ) {
     enum class Protocol { DMR, P25_PHASE1, P25_PHASE2, NXDN48, NXDN96, DSTAR, YSF, M17, DPMR, UNKNOWN }
     enum class FrameType { VOICE, DATA, CONTROL, SYNC_ONLY }
@@ -82,7 +83,17 @@ object DigitalVoiceJni {
 //  Main decoder class — streaming handle-based path
 // ============================================================
 
-class DigitalVoiceDecoder {
+class DigitalVoiceDecoder(private val onFrame:(DigitalFrame)->Unit = {}) {
+    @Volatile private var acceptedEpoch=0L
+    private var inputEpoch=0L
+    fun acceptEpoch(epoch:Long) { acceptedEpoch=epoch }
+    private fun publishFrame(frame:DigitalFrame) {
+        if(inputEpoch==acceptedEpoch) {
+            val current=frame.copy(pipelineEpoch=inputEpoch)
+            _frames.tryEmit(current)
+            onFrame(current)
+        }
+    }
 
     private val _frames = MutableSharedFlow<DigitalFrame>(extraBufferCapacity = 32)
     val frames: SharedFlow<DigitalFrame> = _frames.asSharedFlow()
@@ -143,8 +154,9 @@ class DigitalVoiceDecoder {
     //  samples: 48 kHz normalised float discriminator output
     // --------------------------------------------------------
 
-    @Synchronized fun feed(samples: FloatArray, rfSignalDb: Float = Float.NaN) {
+    @Synchronized fun feed(samples: FloatArray, rfSignalDb: Float = Float.NaN, epoch:Long = 0) {
         if (closed) return
+        inputEpoch=epoch
         if (!rfSignalDb.isNaN()) rssiDb = rfSignalDb
 
         val n = samples.size
@@ -247,7 +259,7 @@ class DigitalVoiceDecoder {
             rssi        = rssiDb
         )
 
-        _frames.tryEmit(frame)
+        publishFrame(frame)
         DebugBus.tick(DebugBus.STAGE_DEMODULATOR)
         DebugBus.setExtra(DebugBus.STAGE_DEMODULATOR, DebugBus.EXTRA_DV_FRAMES_TOTAL,
             dbgFrames.toString())
@@ -345,7 +357,7 @@ class DigitalVoiceDecoder {
             else -> return
         }
         dbgFrames++
-        _frames.tryEmit(DigitalFrame(protocol = proto, frameType = ft, rssi = rssiDb))
+        publishFrame(DigitalFrame(protocol = proto, frameType = ft, rssi = rssiDb))
         DebugBus.tick(DebugBus.STAGE_DEMODULATOR)
         DebugBus.setExtra(DebugBus.STAGE_DEMODULATOR, DebugBus.EXTRA_DV_SYNC_HITS,
             dbgFrames.toString())

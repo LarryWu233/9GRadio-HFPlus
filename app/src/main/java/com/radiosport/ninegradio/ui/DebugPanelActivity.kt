@@ -1478,6 +1478,10 @@ class DebugPanelActivity : RadioThemedActivity() {
         sb.appendLine("  WF_VIEW_WH   : $wfViewWH")
         sb.appendLine("  WF_BITMAP_WH : $wfBitmap")
 
+        sdrService?.dspEngine?.let { engine ->
+            sb.appendLine()
+            sb.append(engine.pipelineDiagnostics().report(com.radiosport.ninegradio.BuildConfig.VERSION_NAME))
+        }
         tvMetricsContent.text = sb.toString()
     }
 
@@ -1620,39 +1624,9 @@ class DebugPanelActivity : RadioThemedActivity() {
     }
 
     private fun buildExportText(): String {
-        val sb = StringBuilder()
-        sb.appendLine("9GRadio Debug Report — ${Date()}")
-        sb.appendLine("=".repeat(60))
-        sb.appendLine()
-        sb.appendLine("PIPELINE STAGES:")
-        for (snap in DebugBus.snapshot()) {
-            sb.appendLine("  ${snap.name.padEnd(20)} [${snap.status}]  ${snap.detail}")
-            sb.appendLine("     cnt=${snap.counter}  rate=${"%.1f".format(snap.ratePerSec)}/s  last=${DebugBus.formatElapsed(snap.lastEventMs)}")
-            if (snap.errorMsg.isNotBlank()) sb.appendLine("     ERROR: ${snap.errorMsg}")
-            for ((k, v) in snap.extras) sb.appendLine("     $k: $v")
-        }
-        sb.appendLine()
-        sb.appendLine("IQ STREAM — BULK TRANSFER PERFORMANCE:")
-        val iqPerf = DebugBus.getIqPerf()
-        sb.appendLine("  Rating              : ${iqPerf.rating}")
-        sb.appendLine("  Xfer time (avg/max) : %.1f ms / %d ms".format(iqPerf.avgXferMs, iqPerf.maxXferMs))
-        sb.appendLine("  Jitter (stddev)     : %.1f ms".format(iqPerf.jitterMs))
-        sb.appendLine("  USB read errors     : ${iqPerf.dropCount}")
-        sb.appendLine("  Short reads         : ${iqPerf.shortReadCount}")
-        sb.appendLine("  Drop rate           : %.2f%% (of ${iqPerf.totalReads} reads)".format(iqPerf.dropRatePct))
-        sb.appendLine()
-        sb.appendLine("GLOBAL METRICS:")
-        for ((k, v) in DebugBus.getGlobals()) sb.appendLine("  $k: $v")
-        sb.appendLine()
-        sb.appendLine("LIVE METRICS:")
-        val dsp = sdrService?.dspEngine?.statsFlow?.value
-        if (dsp != null) {
-            sb.appendLine("  demod=${dsp.demodMode} rate=${dsp.sampleRate} signal=${"%.1f".format(dsp.signalDb)}dBFS squelch=${if(dsp.squelchOpen) "OPEN" else "CLOSED"}")
-        }
-        sb.appendLine()
-        sb.appendLine("DIAGNOSTIC LOG:")
-        for (line in DebugBus.getLog()) sb.appendLine(line)
-        return sb.toString()
+        val snapshot=sdrService?.dspEngine?.pipelineDiagnostics()
+            ?: com.radiosport.ninegradio.pipeline.ReceiverDiagnostics()
+        return snapshot.report(com.radiosport.ninegradio.BuildConfig.VERSION_NAME)
     }
 
     // ── View helpers ──────────────────────────────────────────────────────────

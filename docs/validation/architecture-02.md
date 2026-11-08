@@ -17,3 +17,7 @@ Continues the unmerged architecture branch from milestone 01. The ten portable D
 Nine core tests and all 91 existing application host tests pass with zero failures/skips, including the local speech-quality fixture. The arch02 application and its instrumentation APK compile. A separate Android test now exercises 300 actual DSP/AudioTrack/native engine start-stop cycles and repeated mode/BW/output-rate changes; it is compiled but has not yet run because MIUI installation is blocked. The pure state/stream tests are not a substitute for that runtime test. Protocol gap vectors, EOF/audio drain, resource stress and hardware timing remain required before merge. This milestone does not claim the complete architecture plan is finished.
 
 中文：本阶段整理配置边界、先停流再等待退出的顺序，以及输入缺口恢复。预览版仍独立安装，主干不变。后续继续拆分频谱／测量、录制与播放，并进行组件及真机对照。
+
+## Android 13 runtime update
+
+After the user enabled installation, the independent arch02 application and its own test package installed successfully. Both `ArchitectureLifecycleTest` cases passed in 14.051 seconds: 300 actual DSP/AudioTrack/native engine start-stop cycles, plus repeated mode/BW/output-rate transitions. Tests use silent synthetic input, do not open USB and do not change saved settings. This verifies this scenario, not all physical USB/routing/long-run failure modes.

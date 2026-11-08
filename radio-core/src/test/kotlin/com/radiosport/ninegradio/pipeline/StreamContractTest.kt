@@ -82,4 +82,14 @@ class StreamContractTest {
         assertThrows(IllegalArgumentException::class.java) { AudioBlock(FloatArray(3), 48000, 2, 7, 0) }
         assertThrows(IllegalArgumentException::class.java) { IqBlock.Unsigned8(ByteArray(3)) }
     }
+    @Test fun driverLossAndQueueLossAreNotCountedAsTheSameSamples() {
+        val clock=CaptureClock();val meter=IqContinuity()
+        val a=clock.stamp(100,48000,10000000)
+        meter.accept(a,100)
+        clock.stamp(30,48000,10000000,driverLostSamples=7) // lost by this consumer
+        val c=clock.stamp(20,48000,10000000)
+        val gap=meter.accept(c,20)
+        assertEquals(1L,gap.missingBlocks);assertEquals(30L,gap.missingSamples)
+        assertEquals(7L,gap.driverLostSamples);assertEquals(7L,c.driverLostTotal)
+    }
 }

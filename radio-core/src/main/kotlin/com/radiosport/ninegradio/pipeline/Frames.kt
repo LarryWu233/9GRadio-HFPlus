@@ -11,7 +11,8 @@ data class IqMetadata(
     val sampleRate: Int = 0,
     val centerHz: Long = 0,
     val arrivalNanos: Long = 0,
-    val driverLostSamples: Long = 0
+    val driverLostSamples: Long = 0,
+    val driverLostTotal: Long = 0
 )
 
 /** One producer stamps data BEFORE a queue can discard it. */
@@ -23,9 +24,10 @@ class CaptureClock {
     private var position = 0L
     private var rate = 0
     private var frequency = 0L
+    private var driverLoss=0L
 
     @Synchronized fun restart() {
-        stream = ids.incrementAndGet(); epoch = 0; sequence = 0; position = 0; rate = 0
+        stream = ids.incrementAndGet(); epoch = 0; sequence = 0; position = 0; rate = 0; driverLoss=0
     }
 
     @Synchronized fun stamp(count: Int, sampleRate: Int, centerHz: Long,
@@ -33,7 +35,8 @@ class CaptureClock {
         require(count >= 0 && sampleRate > 0 && driverLostSamples >= 0)
         if (rate != sampleRate || frequency != centerHz) { epoch++; rate = sampleRate; frequency = centerHz }
         position += driverLostSamples
-        return IqMetadata(stream, epoch, sequence++, position, rate, frequency, arrivalNanos, driverLostSamples)
+        driverLoss+=driverLostSamples
+        return IqMetadata(stream, epoch, sequence++, position, rate, frequency, arrivalNanos, driverLostSamples,driverLoss)
             .also { position += count }
     }
 }
@@ -47,7 +50,8 @@ data class AudioBlock(val samples: FloatArray, val sampleRate: Int, val channels
 /** Per consumer: a slow display is not counted as a decoder or driver failure. */
 class IqContinuity {
     enum class Change { FIRST, CONTINUOUS, GAP, RECONFIGURED, STALE }
-    data class Observation(val change: Change, val missingBlocks: Long = 0, val missingSamples: Long = 0)
+    data class Observation(val change: Change, val missingBlocks: Long = 0, val missingSamples: Long = 0,
+                           val driverLostSamples: Long = 0)
     private var previous: IqMetadata? = null
     private var end = 0L
     @Synchronized fun reset() { previous = null; end = 0 }
@@ -63,8 +67,10 @@ class IqContinuity {
             else -> Change.CONTINUOUS
         }
         val missingBlocks = if (change == Change.GAP) (meta.sequence - old!!.sequence - 1).coerceAtLeast(0) else 0
-        val missingSamples = if (change == Change.GAP && meta.firstSample >= 0) (meta.firstSample - end).coerceAtLeast(0) else 0
+        val driverLost=if(old!=null && meta.streamId==old.streamId)
+            maxOf(meta.driverLostSamples,meta.driverLostTotal-old.driverLostTotal).coerceAtLeast(0) else meta.driverLostTotal
+        val missingSamples = if (change == Change.GAP && meta.firstSample >= 0) (meta.firstSample - end-driverLost).coerceAtLeast(0) else 0
         previous = meta; end = meta.firstSample + count
-        return Observation(change, missingBlocks, missingSamples)
+        return Observation(change, missingBlocks, missingSamples,driverLost)
     }
 }

@@ -44,7 +44,7 @@ import kotlin.math.*
 //      ▼
 //    48-kHz PolyphaseResampler  (in DspEngine, not here)
 //
-class AmDemodulator : Demodulator() {
+class AmDemodulator(private val primitives:DemodPrimitives = ReferenceDemodPrimitives) : Demodulator() {
     override val mode = DemodMode.AM
 
     // ── [2] DC blocker ─────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ class AmDemodulator : Demodulator() {
         val out = FloatArray(n)
 
         // ── [1] Envelope detection — vectorised via NativeDsp (NEON/VOLK) ──────
-        val envBuf = NativeDsp.amDetect(iq)
+        val envBuf = primitives.amDetect(iq)
 
         for (i in 0 until n) {
             val env = envBuf[i]
@@ -190,11 +190,11 @@ class AmDemodulator : Demodulator() {
 //      ▼
 //    48-kHz PolyphaseResampler (in DspEngine)
 //
-class NfmDemodulator : Demodulator() {
+class NfmDemodulator(private val primitives:DemodPrimitives = ReferenceDemodPrimitives) : Demodulator() {
     override val mode = DemodMode.NFM
 
     // ── [1] FM discriminator state — prevI/prevQ across block boundaries ────────
-    // float[2] = [prevI, prevQ]; passed to NativeDsp.fmDemodulateStateful() and
+    // float[2] = [prevI, prevQ]; passed to primitives.fmDemodulateStateful() and
     // updated in-place so the phase estimate is continuous at USB-block seams.
     private val fmState = FloatArray(2)   // [0]=prevI, [1]=prevQ
 
@@ -263,7 +263,7 @@ class NfmDemodulator : Demodulator() {
         // ── [1] FM discriminator — stateful NEON/VOLK path ─────────────────────
         // fmDemodulateStateful() updates fmState[0/1] (prevI/prevQ) in-place so
         // the phase estimate is continuous across USB-bulk-transfer block seams.
-        val disc = NativeDsp.fmDemodulateStateful(iq, fmState, gainHz)
+        val disc = primitives.fmDemodulateStateful(iq, fmState, gainHz)
 
         for (i in out.indices) {
             // ── [2] DC blocker ─────────────────────────────────────────────────
@@ -329,7 +329,7 @@ class NfmDemodulator : Demodulator() {
 //    IQ at narrow IF rate (48 kHz)
 //      │
 //      ▼
-//    [1] FM discriminator — NativeDsp.fmDemodulateStateful()
+//    [1] FM discriminator — primitives.fmDemodulateStateful()
 //        gain = fs / (2π × 5 000) — normalises ±5 kHz NFM deviation to ±1
 //      │
 //      ▼
@@ -343,7 +343,7 @@ class NfmDemodulator : Demodulator() {
 //  Reference: Dire Wolf demod_afsk.c — the discriminator output goes directly
 //  into the bandpass correlator; no AGC or limiter is applied at this stage.
 //
-class AprsDemodulator : Demodulator() {
+class AprsDemodulator(private val primitives:DemodPrimitives = ReferenceDemodPrimitives) : Demodulator() {
     override val mode = DemodMode.APRS
 
     private val fmState = FloatArray(2)   // [prevI, prevQ] — stateful across blocks
@@ -364,7 +364,7 @@ class AprsDemodulator : Demodulator() {
 
         // [1] FM discriminator — same gain as NFM (±5 kHz deviation → ±1).
         val gainHz = sampleRate / (2f * PI.toFloat() * 5_000f)
-        val disc = NativeDsp.fmDemodulateStateful(iq, fmState, gainHz)
+        val disc = primitives.fmDemodulateStateful(iq, fmState, gainHz)
 
         // [2] DC blocker only — no LPF, no AGC, no limiter.
         // AprsDecoder's per-channel biquad + AGC handles everything downstream.
@@ -417,7 +417,7 @@ class AprsDemodulator : Demodulator() {
 //      ▼
 //    Audio PolyphaseResampler(wfmIfRate → 48 kHz)  — in DspEngine
 //
-class WfmDemodulator(private val stereo: Boolean = false) : Demodulator() {
+class WfmDemodulator(private val stereo: Boolean = false, private val primitives:DemodPrimitives = ReferenceDemodPrimitives) : Demodulator() {
     override val mode = if (stereo) DemodMode.WFM_STEREO else DemodMode.WFM
     private val fmState = FloatArray(2)
     private val decoder = BroadcastFmAudio(stereo)
@@ -429,12 +429,12 @@ class WfmDemodulator(private val stereo: Boolean = false) : Demodulator() {
         if (rate != sampleRate) { rate=sampleRate; fmState.fill(0f) }
         val count=iq.size/2
         if (multiplex.size != count) multiplex=FloatArray(count)
-        NativeDsp.fmDemodulateStatefulInto(iq,fmState,sampleRate/(2f*PI.toFloat()*75000),multiplex)
+        primitives.fmDemodulateStatefulInto(iq,fmState,sampleRate/(2f*PI.toFloat()*75000),multiplex)
         return decoder.process(multiplex,sampleRate,deemphasisUs)
     }
 }
 
-class SsbDemodulator(private val isUsb: Boolean) : Demodulator() {
+class SsbDemodulator(private val isUsb: Boolean, private val primitives:DemodPrimitives = ReferenceDemodPrimitives) : Demodulator() {
     override val mode = if (isUsb) DemodMode.USB else DemodMode.LSB
 
     private val bfFreq = 1500.0  // Beat frequency oscillator (1.5 kHz)
@@ -450,7 +450,7 @@ class SsbDemodulator(private val isUsb: Boolean) : Demodulator() {
     private val LPF_TAPS  = 63          // more taps for better roll-off
     private val LPF_CUTOFF = 3000.0     // SSB voice bandwidth ceiling
 
-    // ── [2] Dual-branch FIR state — passed to NativeDsp.applyFirDual() ─────────
+    // ── [2] Dual-branch FIR state — passed to primitives.applyFirDual() ─────────
     // NativeDsp keeps the delay lines continuous across block boundaries so there
     // are no clicks at USB-block seams.  bufPos[0] is wrapped mod LPF_TAPS.
     private var lpfBufI  = FloatArray(LPF_TAPS)
@@ -524,7 +524,7 @@ class SsbDemodulator(private val isUsb: Boolean) : Demodulator() {
         // applyFirDual() processes I and Q channels together in one JNI call,
         // updating lpfBufI/lpfBufQ/lpfBufPos in-place to stay continuous across
         // USB block seams.  Returns an interleaved FloatArray (same length as mixIQ).
-        val filtered = NativeDsp.applyFirDual(mixIQ, lpfTaps, lpfBufI, lpfBufQ, lpfBufPos)
+        val filtered = primitives.applyFirDual(mixIQ, lpfTaps, lpfBufI, lpfBufQ, lpfBufPos)
 
         for (i in 0 until n) {
             val filtI = filtered[2 * i]
@@ -704,7 +704,7 @@ class RawDemodulator : Demodulator() {
 //  adaptive level tracking (snapMinMax) and symbol clock recovery
 //  internally.
 //
-class DigitalVoiceDemodulator : Demodulator() {
+class DigitalVoiceDemodulator(private val primitives:DemodPrimitives = ReferenceDemodPrimitives) : Demodulator() {
     override val mode = DemodMode.DMR   // representative; factory creates one per protocol
 
     private val fmState = FloatArray(2)   // [prevI, prevQ] — stateful across blocks
@@ -727,7 +727,7 @@ class DigitalVoiceDemodulator : Demodulator() {
         // signals within ~40–70 % of int16 FS, safely below the dsdcc
         // cosine-filter saturation ceiling.  See class comment for details.
         val gainHz = sampleRate / (2f * PI.toFloat() * 5_000f)
-        val disc = NativeDsp.fmDemodulateStateful(iq, fmState, gainHz)
+        val disc = primitives.fmDemodulateStateful(iq, fmState, gainHz)
 
         // DC blocker — removes discriminator DC offset without distorting
         // the 4FSK symbol eye (single-pole IIR, fc ≈ 0.8 Hz at 48 kHz).
@@ -745,15 +745,15 @@ class DigitalVoiceDemodulator : Demodulator() {
 //  FACTORY
 // ═════════════════════════════════════════════════════════════════════════════
 object DemodulatorFactory {
-    fun create(mode: DemodMode): Demodulator = when (mode) {
-        DemodMode.AM     -> AmDemodulator()
+    fun create(mode: DemodMode, primitives:DemodPrimitives = ReferenceDemodPrimitives): Demodulator = when (mode) {
+        DemodMode.AM     -> AmDemodulator(primitives)
         // ACARS is transmitted on an AM carrier (VDL Mode A).  The AM demodulator
         // recovers the baseband audio that contains the 1200/2400 Hz AFSK subcarrier
         // tones.  Previously ACARS fell through to RawDemodulator(), which returned
         // IQ magnitudes at device rate — completely wrong input for AcarsDecoder.
-        DemodMode.ACARS  -> AmDemodulator()
-        DemodMode.NFM    -> NfmDemodulator()
-        DemodMode.APRS   -> AprsDemodulator()  // FIX 17: raw discriminator, no AGC/LPF/limiter
+        DemodMode.ACARS  -> AmDemodulator(primitives)
+        DemodMode.NFM    -> NfmDemodulator(primitives)
+        DemodMode.APRS   -> AprsDemodulator(primitives)  // FIX 17: raw discriminator, no AGC/LPF/limiter
         // Digital voice — each protocol gets its own DigitalVoiceDemodulator
         // instance so that APRS and digital voice signal chains are fully
         // decoupled and can evolve independently.
@@ -764,11 +764,11 @@ object DemodulatorFactory {
         DemodMode.YSF,
         DemodMode.M17,
         DemodMode.DPMR,
-        DemodMode.DIG    -> DigitalVoiceDemodulator()
-        DemodMode.FM, DemodMode.WFM -> WfmDemodulator(stereo = false)
-        DemodMode.WFM_STEREO -> WfmDemodulator(stereo = true)
-        DemodMode.USB    -> SsbDemodulator(isUsb = true)
-        DemodMode.LSB    -> SsbDemodulator(isUsb = false)
+        DemodMode.DIG    -> DigitalVoiceDemodulator(primitives)
+        DemodMode.FM, DemodMode.WFM -> WfmDemodulator(stereo = false, primitives = primitives)
+        DemodMode.WFM_STEREO -> WfmDemodulator(stereo = true, primitives = primitives)
+        DemodMode.USB    -> SsbDemodulator(isUsb = true, primitives = primitives)
+        DemodMode.LSB    -> SsbDemodulator(isUsb = false, primitives = primitives)
         DemodMode.CW     -> CwDemodulator(reverse = false)
         DemodMode.CWR    -> CwDemodulator(reverse = true)
         DemodMode.DSB    -> DsbDemodulator()

@@ -58,6 +58,7 @@ class AudioFileRecorder(private val path:String,private val rate:Int,private val
             error="编码或存储未能跟上，录制已停止";isRecording=false;finishing=true
         }
     }
+    fun abort(reason:String) { error=reason;isRecording=false;finishing=true }
     fun stop() {
         isRecording=false;finishing=true
         worker?.join(15000)

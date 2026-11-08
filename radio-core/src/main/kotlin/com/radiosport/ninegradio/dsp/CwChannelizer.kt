@@ -3,7 +3,7 @@ package com.radiosport.ninegradio.dsp
 /** CW VFO adapter: staged decimation followed by channel FIR, before the audio pitch shifter.
  * Reuses the existing resampler and FIR kernels; no new filtering algorithm.
  */
-internal class CwChannelizer {
+class CwChannelizer(private val primitives:DemodPrimitives = ReferenceDemodPrimitives) {
     private var configuration=Triple(0,0,0)
     private val stages=mutableListOf<ComplexDecimator>()
     private var taps=FloatArray(0)
@@ -27,6 +27,6 @@ internal class CwChannelizer {
         }
         var iq=input
         stages.forEach { iq=it.process(iq) }
-        return NativeDsp.applyFirDual(iq,taps,iHistory,qHistory,position)
+        return primitives.applyFirDual(iq,taps,iHistory,qHistory,position)
     }
 }
