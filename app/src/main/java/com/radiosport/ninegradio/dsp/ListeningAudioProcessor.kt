@@ -19,6 +19,10 @@ class ListeningAudioProcessor : AutoCloseable {
         nativeProcess(handle,stereo,rate,mode.ordinal,config.leveling,config.notch && notchAllowed,
             config.limitDb.coerceIn(0f,18f),config.notchSpeed.coerceIn(0.0001f,0.02f))
     }
+    @Synchronized fun reset() {
+        if(handle!=0L) nativeDestroy(handle)
+        handle=0
+    }
     @Synchronized override fun close() {
         closed=true
         if(handle!=0L) nativeDestroy(handle)

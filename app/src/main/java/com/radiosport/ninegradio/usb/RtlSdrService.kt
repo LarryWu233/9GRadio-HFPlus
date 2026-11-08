@@ -70,6 +70,7 @@ class RtlSdrService : Service() {
     private val controlScope = CoroutineScope(controlDispatcher + SupervisorJob())
     private val generation = AtomicLong()
     private var monitorJob: Job? = null
+    private var targetsJob: Job? = null
     private data class Tune(val hz: Long, val generation: Long, val immediate: Boolean)
     private val tunes = Channel<Tune>(Channel.CONFLATED)
     private fun control(action: () -> Unit) {
@@ -244,12 +245,23 @@ class RtlSdrService : Service() {
                 engine.setListeningAudio(pendingListeningAudio)
                 if (pendingIfBandwidth > 0) engine.setIfBandwidth(pendingIfBandwidth)
                 engine.setAudioSinkRate(pendingAudioSinkRate)
+                targetsJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    engine.aprsDecoder.packets.collect { packet -> control {
+                        val lat=packet.latitude; val lon=packet.longitude
+                        if(source===next && lat!=null && lon!=null)
+                            com.radiosport.ninegradio.data.RadioTargets.upsertStation(
+                                com.radiosport.ninegradio.data.RadioTarget("aprs:${packet.source}",packet.source,
+                                    lat,lon,"${packet.source}\n$lat, $lon",System.currentTimeMillis()))
+                    } }
+                }
                 engine.start()
                 if (expected != generation.get()) { disconnectNow(); return@launch }
                 _connectionState.value = ConnectionState.Connected(next.getSourceName())
                 updateNotification("Connected: ${next.getSourceName()}")
                 monitorJob = scope.launch {
-                    next.statusFlow.filter { it.streamRestartRequired || !it.connected }.collect { status ->
+                    combine(next.statusFlow,engine.failure) { status,failure ->
+                        if(failure!=null) status.copy(error=failure,streamRestartRequired=true) else status
+                    }.filter { it.streamRestartRequired || !it.connected }.collect { status ->
                         control {
                             if (source === next) {
                                 disconnectNow()
@@ -274,6 +286,7 @@ class RtlSdrService : Service() {
         finishCapture(false); finishCapture(true)
         captureMonitor?.cancel(); captureMonitor=null
         monitorJob?.cancel()
+        targetsJob?.cancel(); targetsJob=null
         monitorJob = null
         adsbReceiver.stop()
         audioContent.attach(null)
@@ -367,7 +380,7 @@ class RtlSdrService : Service() {
                 // close/open path so the old DSP and playback clock cannot
                 // consume blocks across a device-rate transition.
                 val factory=selectedFactory
-                if(active.capabilities.floatIq && factory!=null) switchSource(factory,selected)
+                if(factory!=null) switchSource(factory,selected)
                 else { adsbReceiver.stop(); active.setSampleRate(selected) }
             }
             updateAdsbReceiver()
@@ -395,13 +408,13 @@ class RtlSdrService : Service() {
     }
     fun setFftSize(size: Int) { pendingFftSize = size; control { dspEngine?.setFftSize(size) } }
     fun setFftDecimation(factor: Int) { pendingFftDecimation = factor; control { dspEngine?.setFftDecimation(factor) } }
-    fun setSquelch(dbLevel: Float) { dspEngine?.setSquelchLevel(dbLevel) }
+    fun setSquelch(dbLevel: Float) = control { dspEngine?.setSquelchLevel(dbLevel) }
     fun setAudioVolume(vol: Float) = control { dspEngine?.setVolume(vol) }
     fun setFmDeemphasis(us: Int) = control { dspEngine?.setFmDeemphasis(us) }
-    fun setDcBlock(enabled: Boolean) { dspEngine?.setDcBlockEnabled(enabled) }
-    fun setFreqOffset(hz: Int) { dspEngine?.setFreqOffset(hz) }
-    fun enableDualAprs(centreHz: Long) { dspEngine?.enableDualAprs(centreHz) }
-    fun disableDualAprs() { dspEngine?.disableDualAprs() }
+    fun setDcBlock(enabled: Boolean) = control { dspEngine?.setDcBlockEnabled(enabled) }
+    fun setFreqOffset(hz: Int) = control { dspEngine?.setFreqOffset(hz) }
+    fun enableDualAprs(centreHz: Long) = control { dspEngine?.enableDualAprs(centreHz) }
+    fun disableDualAprs() = control { dspEngine?.disableDualAprs() }
     fun setIfBandwidth(hz: Int) { pendingIfBandwidth = hz; control { dspEngine?.setIfBandwidth(hz) } }
     fun getIfBandwidth(): Int = dspEngine?.getIfBandwidth() ?: pendingIfBandwidth
     fun setNoiseBlanker(enabled: Boolean) {

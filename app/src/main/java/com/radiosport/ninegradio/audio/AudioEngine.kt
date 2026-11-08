@@ -28,7 +28,8 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         }
     }
 
-    private var audioTrack: AudioTrack? = null
+    @Volatile private var audioTrack: AudioTrack? = null
+    @Volatile private var stopping = false
     @Volatile private var pcmRecorder: AudioFileRecorder? = null
     private val writeFails = AtomicInteger(0)
     private var prefilling=true
@@ -64,6 +65,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
     val isRecording: Boolean get() = pcmRecorder?.isRecording == true
 
     fun start() {
+        stopping = false
         synchronized(trackLock) { if(audioTrack?.state==AudioTrack.STATE_INITIALIZED) return }
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, CHANNEL_CONFIG, AUDIO_FORMAT)
         // Hardware buffer and fixed-duration PCM queue absorb scheduler and USB jitter.
@@ -152,7 +154,14 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
         Log.i(TAG, "AudioTrack started: $sampleRate Hz, buf=${bufSize}B (${bufSize / 8 * 1000 / sampleRate}ms)")
     }
 
+    /** Unblock a pending platform write without releasing its native pointer. */
+    fun interruptWrites() {
+        stopping = true
+        runCatching { audioTrack?.stop() }
+    }
+
     fun stop() {
+        interruptWrites()
         // Synchronized with write(): ensures no write() call is mid-flight
         // inside AudioTrack.native_write_float() on the DSP coroutine when we
         // call stop()/release() here, which would otherwise crash with
@@ -183,6 +192,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
     }
 
     fun write(samples: FloatArray, recordingAllowed: () -> Boolean = { true }) {
+        if (stopping) return
         // Hold trackLock for the duration of the write so a concurrent stop()
         // cannot release the native AudioTrack out from under this call.
         // The lock is held across the (possibly blocking) native write —
@@ -217,7 +227,7 @@ class AudioEngine(private val sampleRate: Int = 48_000) {
             // WRITE_NON_BLOCKING causes when the 500 ms buffer fills ahead of playback.
             // For WFM at 48 kHz the blocking duration is at most ~64 ms per IQ block — harmless.
             var written = 0
-            while (written < samples.size) {
+            while (written < samples.size && !stopping) {
                 val n = try {
                     track.write(samples, written, minOf(samples.size-written,sampleRate/50*2), AudioTrack.WRITE_BLOCKING)
                 } catch (e: IllegalStateException) {

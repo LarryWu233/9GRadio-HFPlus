@@ -8,6 +8,10 @@ class ListeningNoiseProcessor(private val spectral: SpectralNoiseReducer = Spect
     private var wasProcessing = false
     private var warmSamples = 0
     private var sampleRate = 0
+    fun reset() {
+        spectral.reset(); dryDelay.fill(0f); position=0; wetMix=0f
+        wasProcessing=false; warmSamples=0; sampleRate=0
+    }
 
     fun process(input: FloatArray, enabled: Boolean, rate: Int): FloatArray {
         if (rate != sampleRate) {

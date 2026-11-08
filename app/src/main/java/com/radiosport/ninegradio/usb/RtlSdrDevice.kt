@@ -1778,12 +1778,12 @@ class RtlSdrDevice(
 
     fun stopStreaming() {
         isStreaming = false
-        streamingJob?.cancel()
+        val oldJob = streamingJob
+        oldJob?.cancel()
         streamingJob = null
         usbHelper?.resetPath()
-        scope.launch {
-            try { resetEndpoint(fullReset = false) } catch (_: Exception) {}
-        }
+        kotlinx.coroutines.runBlocking { oldJob?.join() }
+        // No fire-and-forget endpoint write may survive close/reconnect.
         DebugBus.setStatus(DebugBus.STAGE_IQ_STREAM, DebugBus.StageStatus.IDLE, "Streaming stopped")
         Log.i(TAG, "Streaming stopped")
     }

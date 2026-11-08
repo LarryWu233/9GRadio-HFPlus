@@ -13,16 +13,16 @@ import java.io.Closeable
  * The DspEngine and RtlSdrService work exclusively through IqSource so that
  * the rest of the pipeline is entirely source-agnostic.
  */
-interface IqSource : Closeable {
+interface IqSource : com.radiosport.ninegradio.pipeline.IqInput, Closeable {
 
     // ── Raw IQ stream ─────────────────────────────────────────────────────────
 
     /** Typed IQ blocks; float sources retain the receiver's full precision. */
-    val iqFlow: Flow<IqBlock>
+    override val iqFlow: Flow<IqBlock>
     val capabilities: DeviceCapabilities get() = DeviceCapabilities.RTL
 
     /** Current subscriber count on [iqFlow]. */
-    val iqSubscriberCount: Int
+    override val iqSubscriberCount: Int
 
     /** Observable device/connection status. */
     val statusFlow: StateFlow<SourceStatus>
@@ -36,10 +36,10 @@ interface IqSource : Closeable {
     fun open(): Boolean
 
     /** Start emitting IQ data on [iqFlow]. */
-    fun startStreaming(bufferSize: Int = 32_768)
+    override fun startStreaming(bufferSize: Int)
 
     /** Stop streaming; the source remains open (tunable). */
-    fun stopStreaming()
+    override fun stopStreaming()
 
     /** Stop streaming and close/disconnect the source. */
     override fun close()

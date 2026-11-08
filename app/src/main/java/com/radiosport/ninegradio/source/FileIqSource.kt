@@ -68,7 +68,10 @@ class FileIqSource(private val file: File, private val rate: Int, private val fr
             }
         }
     }
-    override fun stopStreaming() { job?.cancel(); job = null }
+    override fun stopStreaming() {
+        val old = job; old?.cancel(); job = null
+        kotlinx.coroutines.runBlocking { old?.join() }
+    }
     override fun close() { stopStreaming(); input?.close(); input = null; scope.cancel(); status.value = status.value.copy(connected = false) }
     override fun setCenterFrequency(freqHz: Long) = freqHz == info.hardwareHz || freqHz==info.dialHz
     override fun getCenterFrequency() = info.hardwareHz

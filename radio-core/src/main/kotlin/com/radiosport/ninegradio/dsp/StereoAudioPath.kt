@@ -6,6 +6,10 @@ class StereoAudioPath {
     private var leftResampler: PolyphaseResampler?=null
     private var rightResampler: PolyphaseResampler?=null
     private val leftNr=AudioDsp.NoiseReducer(); private val rightNr=AudioDsp.NoiseReducer()
+    fun reset() {
+        inputRate=0; outputRate=0; leftResampler=null; rightResampler=null
+        leftNr.reset(); rightNr.reset()
+    }
     fun setStrength(value: Float) { leftNr.setStrength(value); rightNr.setStrength(value) }
     fun process(interleaved: FloatArray, fromRate: Int, toRate: Int, nr: Boolean, nb: Boolean): FloatArray {
         if (fromRate!=inputRate || toRate!=outputRate) {

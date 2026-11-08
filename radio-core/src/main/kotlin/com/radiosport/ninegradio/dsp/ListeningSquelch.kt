@@ -6,6 +6,7 @@ class ListeningSquelch(initiallyOpen:Boolean=true) {
         private set
     private var belowSeconds=0.0
     private var gain=1f
+    fun reset() { open=false; belowSeconds=0.0; gain=0f }
     fun update(signalDb: Float, thresholdDb: Float, seconds: Double): Boolean {
         if(thresholdDb<=-120f) { open=true; belowSeconds=0.0 }
         else if(!open && signalDb>=thresholdDb+1f) { open=true; belowSeconds=0.0 }

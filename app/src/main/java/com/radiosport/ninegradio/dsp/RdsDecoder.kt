@@ -80,6 +80,10 @@ class RdsDecoder(private val sampleRate: Int = 240_000) {
      * Internally extracts the 57 kHz RDS subcarrier, clock-recovers,
      * and decodes blocks.
      */
+    fun resetSignalState() {
+        bitPhase=0.0; prevSample=0f; lpfY=0f; bitBuffer.clear()
+        syncState=SyncState.NOSYNC; blockCount=0; blocks.fill(null)
+    }
     fun feedAudio(samples: FloatArray) {
         val step = 2.0 * PI * RDS_FREQ / sampleRate
         var phase = 0.0

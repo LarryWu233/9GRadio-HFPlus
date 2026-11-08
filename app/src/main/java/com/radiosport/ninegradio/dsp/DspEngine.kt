@@ -735,6 +735,12 @@ class DspEngine(private val device: IqSource) {
     )
 
     private var processingJob: Job? = null
+    private var producerStartJob: Job? = null
+    private val started = java.util.concurrent.atomic.AtomicBoolean()
+    private fun receiverConfiguration() = com.radiosport.ninegradio.pipeline.ReceiverConfiguration(
+        demodMode.name, device.getSampleRate(), ifBandwidthHz, audioSinkRate)
+    private val session = com.radiosport.ninegradio.pipeline.PipelineSession(receiverConfiguration())
+    private fun configurationChanged() { session.configure(receiverConfiguration()) }
 
     // ─── Decoupled audio output ───────────────────────────────────────────────
     // processIqBlock() must never block the IQ collection coroutine waiting on
@@ -775,7 +781,7 @@ class DspEngine(private val device: IqSource) {
     fun audioRecordedDurationMs()=audioEngine.recordingDurationMs()
     fun audioRecordingError()=audioEngine.recordingError
     fun isAudioRecording()=audioEngine.isRecording
-    private data class PlaybackBlock(val samples:FloatArray,val recordAllowed:Boolean,val generation:Long)
+    private data class PlaybackBlock(val samples:FloatArray,val recordAllowed:Boolean,val generation:Long,val epoch:Long)
     private val listeningAudio=ListeningAudioProcessor()
     fun setListeningAudio(settings: ListeningAudioProcessor.Settings) { listeningAudio.settings=settings }
     private val audioWriteChannel = Channel<PlaybackBlock>(
@@ -787,7 +793,7 @@ class DspEngine(private val device: IqSource) {
     )
     private var audioWriterJob: Job? = null
     @Synchronized private fun enqueueAudio(samples: FloatArray) {
-        pcmPacketizer.append(samples) { audioWriteChannel.trySend(PlaybackBlock(it,recordingGateOpen,recordingGateGeneration.get())) }
+        pcmPacketizer.append(samples) { audioWriteChannel.trySend(PlaybackBlock(it,recordingGateOpen,recordingGateGeneration.get(),session.snapshot.epoch)) }
     }
 
     // ─── Digital voice audio output ───────────────────────────────────────────
@@ -1030,6 +1036,8 @@ class DspEngine(private val device: IqSource) {
     // ─── Public API ───────────────────────────────────────────────────────────
 
     fun start() {
+        check(!session.snapshot.closed) { "Closed DSP sessions cannot be restarted" }
+        if (!started.compareAndSet(false, true)) return
         audioEngine.start()
         audioEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
         // Re-arm the peak-hold warm-up so the initial-acquisition transient
@@ -1069,7 +1077,8 @@ class DspEngine(private val device: IqSource) {
         // Default thread is only parked for <1 ms per block rather than up to 8.5 ms.
         audioWriterJob = scope.launch(Dispatchers.IO) {
             for (samples in audioWriteChannel) {
-                audioEngine.write(samples.samples) { samples.recordAllowed && samples.generation==recordingGateGeneration.get() }
+                if (samples.epoch == session.snapshot.epoch && !session.snapshot.closed)
+                    audioEngine.write(samples.samples) { samples.recordAllowed && samples.generation==recordingGateGeneration.get() }
             }
         }
     }
@@ -1141,9 +1150,15 @@ class DspEngine(private val device: IqSource) {
     }
 
     fun stop() {
+        if (!session.close()) return
+        runBlocking { producerStartJob?.cancelAndJoin() }
+        device.stopStreaming()
         processingJob?.cancel()
         audioWriterJob?.cancel()
         digVoiceAudioJob?.cancel()
+        audioEngine.interruptWrites()
+        // Do not hold the DSP monitor: an in-flight block must be able to finish.
+        runBlocking { processingJob?.join(); digVoiceAudioJob?.join(); audioWriterJob?.join() }
         digitalVoiceDecoder.close()
         audioEngine.stop()
         iqRecorder.stop()
@@ -1286,6 +1301,7 @@ class DspEngine(private val device: IqSource) {
         DebugBus.setStatus(DebugBus.STAGE_DEMODULATOR, DebugBus.StageStatus.OK,
             "Mode: ${mode.displayName}  directSamp: ${mode.requiresDirectSampling}")
         Log.i(TAG, "Demod mode: $mode")
+        configurationChanged()
     }
 
     fun setSquelchLevel(db: Float) {
@@ -1320,35 +1336,33 @@ class DspEngine(private val device: IqSource) {
      * @param rate One of [AUDIO_SINK_RATES] (44 100, 32 000, 24 000, 22 050,
      *             16 000, 48 000 Hz).
      */
-    @Synchronized fun setAudioSinkRate(rate: Int) {
-        if (rate == audioSinkRate) return
-        Log.i(TAG, "Audio sink rate: $audioSinkRate → $rate Hz")
-        audioSinkRate = rate
-        pcmPacketizer=com.radiosport.ninegradio.audio.PcmPacketizer(rate)
-        while(audioWriteChannel.tryReceive().isSuccess) { }
-        // Invalidate the sink resampler so it is rebuilt for the new rate.
-        audioResampler    = null
-        resamplerInRate   = 0
-        resamplerOutRate  = 0
-        // Invalidate the narrow decimator — narrowIfRateFor(deviceRate, sinkRate) may
-        // return a different IF rate for the new sink rate, so the ComplexDecimator
-        // must be rebuilt on the next IQ block.  Example: at 250 kS/s, switching from
-        // sinkRate=48 kHz (IF=50 kHz) to sinkRate=32 kHz (IF=50 kHz→same here, but
-        // at 1024 kS/s: 48 kHz→sinkRate=32 kHz means IF changes 51.2 k→32 k directly).
-        narrowDecimator       = null
-        narrowDecimatorInputRate  = 0
-        narrowDecimatorOutputRate = 0
-        // Replace the AudioTrack at the new output rate.
-        val oldEngine = audioEngine
-        val newEngine = AudioEngine(rate)
-        audioEngine = newEngine   // swap before start so write() goes to new engine
-        oldEngine.stop()
-        newEngine.start()
-        newEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
-        startAudioWriter()   // re-launch writer bound to the new AudioEngine instance
-        startDigVoiceAudio() // re-launch with updated audioSinkRate for upsampling ratio
-        DebugBus.setStatus(DebugBus.STAGE_AUDIO_TRACK, DebugBus.StageStatus.OK,
-            "AudioTrack restarted @ $rate Hz")
+    fun setAudioSinkRate(rate: Int) {
+        if (rate == audioSinkRate || session.snapshot.closed) return
+        val running = started.get()
+        if (running) {
+            runBlocking { producerStartJob?.cancelAndJoin() }
+            device.stopStreaming()
+            runBlocking { processingJob?.cancelAndJoin(); digVoiceAudioJob?.cancelAndJoin() }
+        }
+        audioEngine.interruptWrites()
+        runBlocking { audioWriterJob?.cancelAndJoin() }
+        synchronized(this) {
+            val oldEngine = audioEngine
+            audioSinkRate = rate
+            pcmPacketizer = com.radiosport.ninegradio.audio.PcmPacketizer(rate)
+            while (audioWriteChannel.tryReceive().isSuccess) { }
+            audioResampler = null; resamplerInRate = 0; resamplerOutRate = 0
+            narrowDecimator = null; narrowDecimatorInputRate = 0; narrowDecimatorOutputRate = 0
+            audioEngine = AudioEngine(rate)
+            oldEngine.stop()
+            configurationChanged()
+            iqContinuity.reset()
+        }
+        if (running) {
+            audioEngine.start()
+            audioEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted && receptionAvailable) volume.coerceIn(0f,1f) else 0f)
+            startAudioWriter(); startDigVoiceAudio(); startProcessingPipeline()
+        }
         updateStats()
     }
 
@@ -1419,7 +1433,7 @@ class DspEngine(private val device: IqSource) {
      * @param hz  Desired IF bandwidth in Hz (e.g. 2000 = very narrow CW,
      *            15000 = standard NFM, 25000 = AM/ACARS), or 0 for auto.
      */
-    fun setIfBandwidth(hz: Int) {
+    @Synchronized fun setIfBandwidth(hz: Int) {
         // 0 (or negative) means "auto — use narrowIfRate(deviceRate)".
         // Reset to sentinel -1 so resolveNarrowIfRate() picks the correct rate
         // for the current device rate on the next IQ block.
@@ -1432,6 +1446,7 @@ class DspEngine(private val device: IqSource) {
         narrowDecimatorInputRate  = 0
         narrowDecimatorOutputRate = 0
         Log.i(TAG, "IF bandwidth set to ${if (newHz < 0) "auto" else "$newHz Hz"}")
+        configurationChanged()
     }
 
     /**
@@ -1479,13 +1494,14 @@ class DspEngine(private val device: IqSource) {
      *
      * @param dialHz The frequency the user intends to receive (as shown on the dial).
      */
-    fun setCarrierFrequency(dialHz: Long) {
+    @Synchronized fun setCarrierFrequency(dialHz: Long) {
         dialFreqHz = dialHz
         if(device is com.radiosport.ninegradio.source.FileIqSource) {
             val hardware=device.getCenterFrequency()
             cwCenterOffsetHz=if(isCw()) hardware-dialHz else 0L
             val expected=when(demodMode) { DemodMode.USB,DemodMode.LSB -> dialHz+SSB_BFO_OFFSET_HZ; else -> dialHz }
             tuningCorrectionHz=if(isCw()) 0L else hardware-expected
+            session.tuneBoundary()
             return
         }
         // The BFO mixes with exp(+j*2pi*1500*t) — a +1500 Hz upward spectral shift.
@@ -1516,6 +1532,7 @@ class DspEngine(private val device: IqSource) {
         }
         val actual = device.capabilities.nearestFrequency(hwHz)
         if (device.setCenterFrequency(actual)) tuningCorrectionHz = actual - hwHz
+        session.tuneBoundary()
         Log.i(TAG, "setCarrierFrequency: dial=$dialHz mode=$demodMode hw=$hwHz")
     }
     fun getDialFrequencyHz(): Long = dialFreqHz.takeIf { it>0 } ?: device.getCenterFrequency()
@@ -1548,95 +1565,55 @@ class DspEngine(private val device: IqSource) {
 
     // ─── Processing Pipeline ─────────────────────────────────────────────────
 
+    private val _failure = MutableStateFlow<String?>(null)
+    val failure: StateFlow<String?> = _failure.asStateFlow()
+
     private fun startProcessingPipeline() {
-        scope.launch {
-            aprsDecoder.packets.collect { packet ->
-                val latitude = packet.latitude
-                val longitude = packet.longitude
-                if (latitude != null && longitude != null)
-                    com.radiosport.ninegradio.data.RadioTargets.upsertStation(
-                        com.radiosport.ninegradio.data.RadioTarget("aprs:${packet.source}", packet.source,
-                            latitude, longitude, "${packet.source}\n$latitude, $longitude", System.currentTimeMillis()))
+        // UNDISTPATCHED registers the source subscription before startStreaming; no polling timeout.
+        processingJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                device.iqFlow.collect { block -> processIqBlock(block) }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) {
+                _failure.value = "Receiver processing failed: ${error.javaClass.simpleName}"
+                DebugBus.setError(DebugBus.STAGE_DSP_PROCESS, _failure.value!!)
             }
         }
-        DebugBus.setStatus(DebugBus.STAGE_FFT_ENGINE, DebugBus.StageStatus.OK,
-            "FFT size: ${fftEngine.fftSize}  waiting for IQ stream…")
-        DebugBus.setStatus(DebugBus.STAGE_DSP_PROCESS, DebugBus.StageStatus.OK, "Pipeline starting…")
-        DebugBus.setStatus(DebugBus.STAGE_AUDIO_RESAMPLE, DebugBus.StageStatus.OK,
-            "Resampler ready  → ${DEFAULT_AUDIO_RATE} Hz")
-
-        // Launch the IQ collector coroutine.  We must ensure collect() is registered
-        // on the SharedFlow BEFORE startStreaming() begins emitting, otherwise with
-        // replay=0 all IQ data is silently dropped.
-        //
-        // The old yield() trick is unreliable across dispatcher boundaries: this
-        // scope uses Dispatchers.Default while RtlSdrDevice.scope uses Dispatchers.IO.
-        // A single yield() only suspends within the same thread pool; IO can win the
-        // race and call emit() before Default reaches collect().
-        //
-        // Fix: launch the collector, then in a second coroutine confirm subscriptionCount
-        // >= 1 before calling startStreaming().  RtlSdrDevice.startStreaming() also has
-        // its own subscriber-wait; together these two guards guarantee no IQ block is lost.
-        processingJob = scope.launch {
-            device.iqFlow.collect { rawIq ->
-                processIqBlock(rawIq)
-            }
-        }
-
-        // In a separate coroutine: wait until the collector above has registered its
-        // subscription on iqFlow, then start USB streaming.  Using scope.launch keeps
-        // this non-blocking (start() is not a suspend function).
-        scope.launch {
-            val deadline = System.currentTimeMillis() + 500L
-            while (device.iqSubscriberCount == 0 && System.currentTimeMillis() < deadline) {
-                kotlinx.coroutines.delay(2)
-            }
-            if (device.iqSubscriberCount == 0) {
-                Log.w(TAG, "startProcessingPipeline: IQ subscriber not ready after 500 ms — starting anyway")
-            }
-            // Start device streaming now that the collector is confirmed subscribed.
-            //
-            // USB BUFFER SIZE & CHUNKING RATIONALE — 32,768 bytes split into 2 × 16,384-byte chunks
-            // ──────────────────────────────────────────────────────────────────────────────────────
-            // The RTL-SDR Android bulkTransfer() is a single-URB synchronous model.
-            // At 2 MS/s, a 32,768-byte (8,192 IQ samples) USB transfer takes ~8 ms to
-            // complete.  The transfer is then split into 2 × DSP_CHUNK_SIZE (16,384-byte)
-            // chunks and emitted to the SharedFlow one at a time.
-            //
-            // Without a yield() between chunk emits, both chunks arrive at the SharedFlow
-            // in the same ~0 ms window after the 8 ms USB stall.  The DSP coroutine on
-            // Dispatchers.Default processes them as a burst, producing two audio frames
-            // back-to-back with no temporal separation.  AudioTrack receives a burst of
-            // 8 ms of audio then silence for ~8 ms — a rhythmic gap that manifests as
-            // audible WFM stutter even though the SharedFlow never drops a block.
-            //
-            // rtl_tcp is immune because RtlTcpSource.READ_BUF_SIZE = 16,384 bytes and
-            // InputStream.read() blocks naturally for ~4 ms per chunk, spacing each emit
-            // 4 ms apart and giving Dispatchers.Default time to process each block before
-            // the next arrives.
-            //
-            // Fix: RtlSdrDevice emits each 16,384-byte chunk individually and calls
-            // yield() after every emit.  Dispatchers.IO and Dispatchers.Default share the
-            // same backing JVM thread pool; yield() parks the IO streaming thread for one
-            // scheduler quantum so Default can run processIqBlock() on the first chunk
-            // before the second is emitted — matching TCP's natural timing at zero cost.
-            //
-            // USB buffer remains 32,768 bytes (64 × 512 B USB packets — efficient) and
-            // the chunk pool (40 slots) is sized for the full SharedFlow depth (17) plus
-            // 2 in-flight slots + headroom, so the producer can never overwrite a buffer
-            // still held by the DSP consumer.
-            device.startStreaming(USB_STREAMING_BUF)
+        producerStartJob = scope.launch {
+            if (!session.snapshot.closed) device.startStreaming(USB_STREAMING_BUF)
         }
     }
 
     private val iqContinuity = com.radiosport.ninegradio.pipeline.IqContinuity()
+    private fun recoverDiscontinuity() {
+        session.discontinuity()
+        demodulator=DemodulatorFactory.create(demodMode)
+        dcState.fill(0f); freqShiftPhase=0.0; cwChannelizer.reset()
+        iqNoiseBlanker.reset()
+        narrowDecimator=null; wfmDecimator=null
+        audioResampler=null; decoderResampler=null
+        aprsDecoder.setSampleRate(DEFAULT_AUDIO_RATE)
+        acarsDecoder.resetSignalState(); pocsagDecoder.resetSignalState(); rdsDecoder.resetSignalState()
+        digitalVoiceDecoder.reset()
+        noiseReducer.reset(); stereoAudio.reset(); listeningAudio.reset(); listeningSquelch.reset()
+        pcmPacketizer.reset()
+        while(audioWriteChannel.tryReceive().isSuccess) { }
+        if(iqRecorder.isRecording) {
+            iqRecorder.stop()
+            DebugBus.setError(DebugBus.STAGE_DSP_PROCESS,"IQ 录制因输入缺口停止")
+        }
+    }
     @Synchronized private fun processIqBlock(block: IqBlock) {
+        if (!session.admits(block.metadata)) return
+        if (block.metadata.streamId != 0L && (block.metadata.sampleRate != device.getSampleRate()
+                || block.metadata.centerHz != device.getCenterFrequency())) return
         if (!receptionAvailable) return
         val continuity = iqContinuity.accept(block.metadata, block.sampleCount)
         if (continuity.change == com.radiosport.ninegradio.pipeline.IqContinuity.Change.STALE) return
         if (continuity.missingBlocks > 0) DebugBus.incrementIqFlowDrops(continuity.missingBlocks)
         if (continuity.missingSamples > 0) DebugBus.setExtra(DebugBus.STAGE_IQ_STREAM,
             "CONSUMER_MISSING_SAMPLES", continuity.missingSamples.toString())
+        if (continuity.change == com.radiosport.ninegradio.pipeline.IqContinuity.Change.GAP) recoverDiscontinuity()
         val rawIq = (block as? IqBlock.Unsigned8)?.bytes
         // ── Zero-content guard ────────────────────────────────────────────────
         // The async URB path in RtlSdrUsbHelper can produce all-zero buffers

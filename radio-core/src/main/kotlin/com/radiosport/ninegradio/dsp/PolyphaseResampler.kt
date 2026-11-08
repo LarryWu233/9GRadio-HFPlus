@@ -56,7 +56,7 @@ class PolyphaseResampler(val inputRate: Int, val outputRate: Int,
         }
         return if (produced == result.size) result else result.copyOf(produced)
     }
-    internal fun coefficientsForUnitRate(): FloatArray { require(l==1 && m==1); return bank.single().copyOf() }
+    fun coefficientsForUnitRate(): FloatArray { require(l==1 && m==1); return bank.single().copyOf() }
     fun reset() { history.fill(0f); position = 0; inputCount = 0; outputCount = 0 }
     val ratio: Double get() = outputRate.toDouble() / inputRate
     val isDecimating get() = outputRate < inputRate

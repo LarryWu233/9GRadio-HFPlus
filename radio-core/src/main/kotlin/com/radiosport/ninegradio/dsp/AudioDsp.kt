@@ -89,11 +89,12 @@ object AudioDsp {
         private val listening = ListeningNoiseProcessor(spectral)
         fun setStrength(value: Float) { spectral.strength = value }
         fun setSampleRate(rate: Int) = spectral.setSampleRate(rate)
-        internal fun calibrate(samples: FloatArray) = Unit
+        @Deprecated("The spectral estimator adapts continuously")
+        fun calibrate(samples: FloatArray) = Unit
         fun process(samples: FloatArray) = spectral.process(samples)
         fun processListening(samples: FloatArray, enabled: Boolean, rate: Int) = listening.process(samples, enabled, rate)
         fun isCalibrated() = true
-        fun reset() = spectral.reset()
+        fun reset() = listening.reset()
     }
 
     // ─── Auto Notch Filter (LMS adaptive notch) ───────────────────────────────
