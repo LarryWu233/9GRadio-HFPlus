@@ -1,7 +1,6 @@
 package com.radiosport.ninegradio.ui
 
 import android.content.Context
-import android.graphics.Color
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -21,18 +20,22 @@ object BandPresetPicker {
         val prefs = context.getSharedPreferences("band_presets", Context.MODE_PRIVATE)
         FrequencyStepManager.BAND_PRESETS.filter { current in it.startHz..it.stopHz && caps.supportsFrequency(current) }
             .forEach { prefs.edit().putLong(it.name, current).apply() }
-        val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        val picker = SegmentedSelectorView(context)
-        box.addView(picker, LinearLayout.LayoutParams(-1, (48 * context.resources.displayMetrics.density).toInt()))
+        val density=context.resources.displayMetrics.density
+        val box=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL;setPadding((16*density).toInt(),0,(16*density).toInt(),0) }
+        val picker=com.google.android.material.chip.ChipGroup(context).apply {
+            isSingleLine=false;isSingleSelection=true;isSelectionRequired=true
+            chipSpacingHorizontal=(8*density).toInt();chipSpacingVertical=(4*density).toInt()
+        }
+        box.addView(picker,LinearLayout.LayoutParams(-1,-2))
         val list = ListView(context)
-        box.addView(list, LinearLayout.LayoutParams(-1, (340 * context.resources.displayMetrics.density).toInt()))
+        box.addView(list, LinearLayout.LayoutParams(-1, (300 * context.resources.displayMetrics.density).toInt()))
         var rows = FrequencyStepManager.BAND_PRESETS
         val adapter = object : ArrayAdapter<String>(context, android.R.layout.simple_list_item_1) {
             override fun isEnabled(position: Int): Boolean = caps.scanRanges(rows[position].startHz, rows[position].stopHz).isNotEmpty()
             override fun areAllItemsEnabled() = false
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
                 super.getView(position, convertView, parent).also { view ->
-                    (view as TextView).setTextColor(if (isEnabled(position)) 0xffb8d0df.toInt() else 0xff55616a.toInt())
+                    (view as TextView).setTextColor(UiThemes.color(context,if (isEnabled(position)) com.radiosport.ninegradio.R.attr.radioText else com.radiosport.ninegradio.R.attr.radioMuted))
                     view.textSize = 14f
                 }
         }
@@ -45,8 +48,12 @@ object BandPresetPicker {
                 "${preset.name}\n$range${if (caps.scanRanges(preset.startHz,preset.stopHz).isEmpty()) " · 不支持" else ""}"
             })
         }
-        picker.setChoices(listOf("全部","广播","业余","航空","其他").map { it to it }, "全部")
-        picker.onSelected = { render(it) }
+        for(label in listOf("全部","广播","业余","航空","其他")) {
+            picker.addView(RadioChoiceChips.create(context,label,label=="全部").apply { id=View.generateViewId();tag=label })
+        }
+        picker.setOnCheckedStateChangeListener { group,ids ->
+            ids.firstOrNull()?.let { id -> render(group.findViewById<View>(id).tag as String) }
+        }
         render("全部")
         val dialog = AlertDialog.Builder(context).setTitle("频段预设").setView(box).setNegativeButton("关闭", null).create()
         list.setOnItemClickListener { _, _, index, _ ->

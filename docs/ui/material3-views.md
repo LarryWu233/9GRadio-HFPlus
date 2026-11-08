@@ -97,3 +97,11 @@ CW／CWR、SSTV、SAT、EiBi 等内容页的共享并排操作行使用 48 dp �
 应用标识为本衍生项目新绘制的矢量图形：开放的调谐环、窄信号峰与橙色指示点，不含字母或数字。深海军蓝背景、浅青绿环与浅色信号线取自现有配色体系。图形位于自适应图标安全区域，提供 Android 8+ adaptive-icon，以及 Android 13+ monochrome 前景。桌面标识保持固定品牌色，系统主题图标可使用系统色；应用内部控件仍跟随用户所选皮肤。矢量素材随项目源码许可提供，不冒用原版图标。
 
 图标分层、安全区域与单色资源参考 [Android 官方自适应图标规范](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive)；该规范使用 XML/vector 资源实现，不构成 Compose 迁移。
+
+## Alpha28 分类标签与收藏配色
+
+频道预设分类不再均分为五个窄按钮。复用现有 Material ChipGroup 的换行和单选能力，标签使用 14 sp、按内容确定宽度、最低 72 dp 宽度和原生 48 dp 触控目标，保留完整文字；横向间距 8 dp、行距 4 dp。分类筛选和当前设备能力判断保持。
+
+预设与收藏筛选共用 `RadioChoiceChips`，使用 radioSelected／radioSurface、radioAccent／radioSecondary、radioOutline 及禁用色。预设允许换行；收藏的分组数量不定，保留横向滚动并显示完整名称，全部／未分组的筛选语义不变。
+
+收藏条目底色改用 radioSurface，模式标签改用 radioSelected／radioAccent，亮色调谐按钮上的文字使用 radioMain。每条收藏原先单独保存的 color 标记不替换、不迁移，继续表达用户的分类，而不是 UI 主题色。

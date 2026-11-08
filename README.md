@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.27.0-hfplus-alpha27` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.28.0-hfplus-alpha28` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha28 replaces the squeezed preset category strip with wrapping, fully labelled Material chips. Bookmark filters and saved rows now use theme colours; filters read All/Uncategorized as 全部/未分组 in the Chinese UI. Per-bookmark colour markings and stored data are preserved. See [alpha28 validation](docs/validation/2026-11-08-alpha28.md).
 
 Alpha27 extends the Settings surface through the status-bar inset, makes menu icons follow all seven themes, rounds both edges of the menu header at 16 dp, separates compact band ranges, and spaces audio-content actions. It removes the mode-label backing and adds an original text-free adaptive launcher icon with monochrome artwork. See [alpha27 validation](docs/validation/2026-11-08-alpha27.md).
 
@@ -86,7 +88,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.27.0-hfplus-alpha27` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.28.0-hfplus-alpha28` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha28 将预设分类改为可换行、完整显示文字的 Material 标签；收藏筛选与条目使用主题色，All／Uncategorized 改为“全部／未分组”。保留条目单独标记色及原数据。详见 [alpha28 验证](docs/validation/2026-11-08-alpha28.md)。
 
 Alpha27 将设置顶栏表面延伸至状态栏，菜单图标跟随七套主题，图标栏上下统一为 16 dp 圆角；频段范围单独紧凑显示，内容页按钮留出间距。移除模式文字底块，并加入无文字的原创自适应图标及单色版本。详见 [alpha27 验证](docs/validation/2026-11-08-alpha27.md)。
 

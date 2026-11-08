@@ -1310,31 +1310,14 @@ class BookmarkActivity : RadioThemedActivity() {
     private fun rebuildChips(lists: List<com.radiosport.ninegradio.data.BookmarkList>) {
         listChipsContainer.removeAllViews()
 
-        fun makeChip(label: String, listId: Long): TextView {
-            return TextView(this).apply {
-                text = label
-                textSize = 13f
-                setTextColor(android.graphics.Color.WHITE)
-                val active = (listId == selectedListId)
-                setBackgroundResource(if (active) R.drawable.bg_chip_active else R.drawable.bg_chip)
-                val pad = (10 * resources.displayMetrics.density).toInt()
-                val vPad = (6 * resources.displayMetrics.density).toInt()
-                setPadding(pad, vPad, pad, vPad)
-                val margin = (4 * resources.displayMetrics.density).toInt()
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).also { it.marginEnd = margin }
-                setOnClickListener {
-                    selectedListId = listId
-                    rebuildChips(allLists)
-                    resubscribe()
-                }
+        fun makeChip(label:String,listId:Long):TextView = RadioChoiceChips.create(this,label,listId==selectedListId).apply {
+            layoutParams=LinearLayout.LayoutParams(-2,-2).apply { marginEnd=(8*resources.displayMetrics.density).toInt() }
+            setOnClickListener {
+                selectedListId=listId;rebuildChips(allLists);resubscribe()
             }
         }
-
-        listChipsContainer.addView(makeChip("All", FILTER_ALL))
-        listChipsContainer.addView(makeChip("Uncategorized", FILTER_UNCATEGORIZED))
+        listChipsContainer.addView(makeChip("全部",FILTER_ALL))
+        listChipsContainer.addView(makeChip("未分组",FILTER_UNCATEGORIZED))
         lists.forEach { bl ->
             listChipsContainer.addView(makeChip(bl.name, bl.id))
         }
