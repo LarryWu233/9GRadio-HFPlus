@@ -1188,7 +1188,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * running (no-op in that case).
      */
     fun rebuildVocoderDecoder() {
-        sdrService?.dspEngine?.rebuildVocoderDecoder()
+        sdrService?.rebuildVocoderDecoder()
     }
 
     // ─── RDS data ─────────────────────────────────────────────────────────────

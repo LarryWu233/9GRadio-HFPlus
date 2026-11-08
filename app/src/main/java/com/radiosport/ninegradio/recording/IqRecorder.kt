@@ -127,18 +127,16 @@ class IqRecorder : IqRecordingSink {
 
     @Synchronized
     override fun stop() {
-        if (!isRecording) return
+        val output=outputStream ?: fileOutputStream ?: return
         isRecording = false
-        try {
-            outputStream?.flush()
-            outputStream?.close()
-            val durationMs = System.currentTimeMillis() - startTimeMs
-            Log.i(TAG, "IQ recording stopped: $bytesWritten bytes in ${durationMs}ms -> $filePath")
-        } catch (e: IOException) {
-            Log.e(TAG, "Error closing IQ file", e)
-        }
         outputStream = null
         fileOutputStream = null
+        var failure:IOException?=null
+        try { output.flush() } catch(e:IOException) { failure=e }
+        try { output.close() } catch(e:IOException) { failure?.addSuppressed(e) ?: run { failure=e } }
+        if(failure!=null) throw failure!!
+        val durationMs = System.currentTimeMillis() - startTimeMs
+        Log.i(TAG, "IQ recording stopped: $bytesWritten bytes in ${durationMs}ms -> $filePath")
     }
 
     @Synchronized override fun capturedDurationMs(): Long = bytesWritten * 1000L / ((if(format==Format.FLOAT32) 8L else 2L)*sampleRate.coerceAtLeast(1))

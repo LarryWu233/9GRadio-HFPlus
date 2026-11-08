@@ -41,7 +41,8 @@ class ArchitectureHardwareTest {
         assertTrue("Hardware tune",source.setCenterFrequency(frequency))
         val engine=DspEngine(source)
         try {
-            engine.setDemodMode(mode);engine.setSquelchLevel(-120f);engine.setVolume(.5f)
+            engine.setDemodMode(mode);engine.setCarrierFrequency(frequency)
+            engine.setSquelchLevel(-120f);engine.setVolume(.5f)
             engine.start();delay(5000)
             val before=engine.pipelineDiagnostics()
             val start=SystemClock.elapsedRealtime();val cpu=Process.getElapsedCpuTime()

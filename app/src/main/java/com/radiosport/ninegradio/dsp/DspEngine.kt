@@ -22,7 +22,8 @@ import kotlinx.coroutines.flow.*
  */
 class DspEngine(private val device: IqSource,
     private val outputFactory: com.radiosport.ninegradio.pipeline.AudioOutputFactory =
-        com.radiosport.ninegradio.pipeline.AudioOutputFactory { AudioEngine(it) }) {
+        com.radiosport.ninegradio.pipeline.AudioOutputFactory { AudioEngine(it) },
+    private val iqResamplers:ComplexIqResamplerFactory = ReferenceIqResamplers) {
     @Volatile private var tuningCorrectionHz = 0L
 
     // Centre frequency used for dual-APRS NCO calculation.
@@ -849,19 +850,20 @@ class DspEngine(private val device: IqSource,
     // Integer-only decimation eliminates fractional-ratio artefacts and pitch
     // drift; the WfmDemodulator reconstructs all coefficients from the actual
     // IF rate received via sampleRate in demodulate().
-    @Volatile private var wfmDecimator: ComplexDecimator? = null
+    @Volatile private var wfmDecimator: ComplexIqResampler? = null
     private var wfmDecimatorInputRate  = 0
     private var wfmDecimatorOutputRate = 0
     private var wfmFilterWidth = 0
 
-    private fun getWfmDecimator(deviceRate: Int): Pair<ComplexDecimator, Int> {
+    private fun getWfmDecimator(deviceRate: Int): Pair<ComplexIqResampler, Int> {
         val requested=(ifBandwidthHz.takeIf { it>0 } ?: WFM_TARGET_BW).coerceAtMost(device.capabilities.maxChannelBandwidth(deviceRate))
         val ifRate = wfmIfRate(deviceRate,requested)
         val width = requested
             .coerceIn(50_000, (ifRate * 0.9).toInt().coerceAtLeast(50_000))
         if (wfmDecimator == null || wfmDecimatorInputRate != deviceRate
                 || wfmDecimatorOutputRate != ifRate || wfmFilterWidth != width) {
-            wfmDecimator = ComplexDecimator(deviceRate, ifRate, cutoffHz = width / 2.0)
+            val next=iqResamplers.create(deviceRate,ifRate,width/2.0)
+            wfmDecimator?.close();wfmDecimator=next
             wfmFilterWidth = width
             wfmDecimatorInputRate  = deviceRate
             wfmDecimatorOutputRate = ifRate
@@ -912,7 +914,7 @@ class DspEngine(private val device: IqSource,
     //   • 2560kS/s, sinkRate=32kHz  → IF=32kHz  (÷80, direct; previously BROKEN)
     //
     // Invalidated by setAudioSinkRate() and setDemodMode(); rebuilt on next IQ block.
-    @Volatile private var narrowDecimator: ComplexDecimator? = null
+    @Volatile private var narrowDecimator: ComplexIqResampler? = null
     private var narrowDecimatorInputRate = 0
     private var narrowDecimatorOutputRate = 0
 
@@ -993,7 +995,7 @@ class DspEngine(private val device: IqSource,
                else ifBandwidthHz.coerceIn(MIN_IF_BANDWIDTH_HZ, auto)
     }
 
-    private fun getNarrowDecimator(deviceRate: Int): ComplexDecimator {
+    private fun getNarrowDecimator(deviceRate: Int): ComplexIqResampler {
         // Rebuild when the device rate OR the resolved IF rate changes.
         // resolveNarrowIfRate() now calls narrowIfRateFor(deviceRate, audioSinkRate),
         // so the IF rate tracks the sink rate automatically; setAudioSinkRate()
@@ -1012,7 +1014,8 @@ class DspEngine(private val device: IqSource,
                 && narrowDecimatorOutputRate == targetRate) {
             return current   // fast path — no allocation, no race
         }
-        val fresh = ComplexDecimator(deviceRate, targetRate)
+        val fresh = iqResamplers.create(deviceRate,targetRate,null)
+        current?.close()
         narrowDecimator           = fresh
         narrowDecimatorInputRate  = deviceRate
         narrowDecimatorOutputRate = targetRate
@@ -1206,6 +1209,10 @@ class DspEngine(private val device: IqSource,
         runBlocking { processingJob?.join(); digVoiceAudioJob?.join(); audioWriterJob?.join() }
         display.close()
         voiceStage.close()
+        synchronized(this) {
+            narrowDecimator?.close();narrowDecimator=null
+            wfmDecimator?.close();wfmDecimator=null
+        }
         audioEngine.stop()
         soundCapture.stop()
         audioWriteChannel.cancel()
@@ -1233,6 +1240,7 @@ class DspEngine(private val device: IqSource,
     }
 
     @Synchronized fun setDemodMode(mode: DemodMode) {
+        if(session.snapshot.closed) return
         val modeChanged = (mode != demodMode)
         if(!modeChanged) return
         session.discontinuity();audioEngine.configureEpoch(session.snapshot.epoch);voiceStage.configure(session.snapshot.epoch)
@@ -1312,7 +1320,7 @@ class DspEngine(private val device: IqSource,
             // already correct.
             ifBandwidthHz = if (mode == DemodMode.USB || mode == DemodMode.LSB ||
                                  mode == DemodMode.APRS || mode == DemodMode.CW || mode == DemodMode.CWR || modeDefault >= dynamicCeiling) -1 else modeDefault
-            narrowDecimator = null
+            narrowDecimator?.close();narrowDecimator = null
             narrowDecimatorInputRate  = 0
             narrowDecimatorOutputRate = 0
         }
@@ -1336,13 +1344,13 @@ class DspEngine(private val device: IqSource,
         // Free WFM decimator when leaving WFM modes — saves memory and forces
         // re-creation (with up-to-date device rate) if we return to WFM later.
         if (mode != DemodMode.WFM && mode != DemodMode.WFM_STEREO) {
-            wfmDecimator = null
+            wfmDecimator?.close();wfmDecimator = null
             wfmDecimatorInputRate  = 0
             wfmDecimatorOutputRate = 0
         }
         // Free narrow decimator when leaving narrow modes — same rationale.
         if (!mode.isNarrowMode()) {
-            narrowDecimator = null
+            narrowDecimator?.close();narrowDecimator = null
             narrowDecimatorInputRate = 0
         }
         updateStats()
@@ -1401,7 +1409,7 @@ class DspEngine(private val device: IqSource,
             pcmPacketizer = com.radiosport.ninegradio.audio.PcmPacketizer(rate)
             while (audioWriteChannel.tryReceive().isSuccess) { }
             audioResampler = null; resamplerInRate = 0; resamplerOutRate = 0
-            narrowDecimator = null; narrowDecimatorInputRate = 0; narrowDecimatorOutputRate = 0
+            narrowDecimator?.close();narrowDecimator = null; narrowDecimatorInputRate = 0; narrowDecimatorOutputRate = 0
             audioEngine = outputFactory.create(rate)
             oldEngine.stop()
             configurationChanged()
@@ -1483,6 +1491,7 @@ class DspEngine(private val device: IqSource,
      *            15000 = standard NFM, 25000 = AM/ACARS), or 0 for auto.
      */
     @Synchronized fun setIfBandwidth(hz: Int) {
+        if(session.snapshot.closed) return
         // 0 (or negative) means "auto — use narrowIfRate(deviceRate)".
         // Reset to sentinel -1 so resolveNarrowIfRate() picks the correct rate
         // for the current device rate on the next IQ block.
@@ -1491,7 +1500,7 @@ class DspEngine(private val device: IqSource,
         if (newHz == ifBandwidthHz) return
         ifBandwidthHz = newHz
         // Invalidate so getNarrowDecimator() rebuilds at next IQ block.
-        narrowDecimator = null
+        narrowDecimator?.close();narrowDecimator = null
         narrowDecimatorInputRate  = 0
         narrowDecimatorOutputRate = 0
         Log.i(TAG, "IF bandwidth set to ${if (newHz < 0) "auto" else "$newHz Hz"}")
@@ -1585,6 +1594,22 @@ class DspEngine(private val device: IqSource,
         Log.i(TAG, "setCarrierFrequency: dial=$dialHz mode=$demodMode hw=$hwHz")
     }
     fun getDialFrequencyHz(): Long = dialFreqHz.takeIf { it>0 } ?: device.getCenterFrequency()
+    @Synchronized fun controlSnapshot() = com.radiosport.ninegradio.pipeline.ReceiverControls(
+        demodMode,getDialFrequencyHz(),ifBandwidthHz,squelchLevel,volume,listeningEnabled,
+        dcBlockEnabled,freqOffsetHz,deemphasisUs)
+    @Synchronized fun restoreControls(state:com.radiosport.ninegradio.pipeline.ReceiverControls) {
+        setDemodMode(state.mode);setIfBandwidth(state.bandwidthHz)
+        setSquelchLevel(state.squelchDb);setVolume(state.volume);setListeningEnabled(state.listening)
+        setDcBlockEnabled(state.dcBlock);setFreqOffset(state.frequencyOffsetHz);setFmDeemphasis(state.deemphasisUs)
+        setCarrierFrequency(state.dialHz)
+    }
+    /** The scanner has tuned the exact capture centre, without VFO/BFO offsets. */
+    @Synchronized fun scannerCenterApplied(centerHz:Long) {
+        if(session.snapshot.closed) return
+        dialFreqHz=when(demodMode) { DemodMode.USB,DemodMode.LSB -> centerHz-SSB_BFO_OFFSET_HZ;else -> centerHz }
+        cwCenterOffsetHz=0L;tuningCorrectionHz=0L
+        session.tuneBoundary();fftEngine.resetSpectrumAveraging()
+    }
 
     /**
      * Activate the dual-APRS simultaneous-reception path.
@@ -1669,7 +1694,8 @@ class DspEngine(private val device: IqSource,
         demodulator=DemodulatorFactory.create(demodMode,AndroidDemodPrimitives)
         dcState.fill(0f); freqShiftPhase=0.0; cwChannelizer.reset()
         iqNoiseBlanker.reset()
-        narrowDecimator=null; wfmDecimator=null
+        narrowDecimator?.close();narrowDecimator=null
+        wfmDecimator?.close();wfmDecimator=null
         audioResampler=null; decoderResampler=null
         aprsDecoder.setSampleRate(DEFAULT_AUDIO_RATE)
         acarsDecoder.resetSignalState(); pocsagDecoder.resetSignalState(); rdsDecoder.resetSignalState()

@@ -316,7 +316,7 @@ class ScannerActivity : RadioThemedActivity() {
                 val mode    = DemodMode.values().getOrElse(modeIdx) { DemodMode.NFM }
                 val adaptive = switchAdaptive.isChecked
 
-                scanner = FrequencyScanner(source, signalLevelProvider = buildSignalLevelProvider(svc, source))
+                scanner = FrequencyScanner(source,tuner=svc.scannerTuner(source), signalLevelProvider = buildSignalLevelProvider(svc, source))
                     .also { sc ->
                         sc.startScan(FrequencyScanner.ScanConfig(
                             startFreqHz = snappedStartHz,
@@ -393,7 +393,7 @@ class ScannerActivity : RadioThemedActivity() {
                 val modeIdx = spinnerMode.selectedItemPosition
                 val mode    = DemodMode.values().getOrElse(modeIdx) { DemodMode.NFM }
 
-                scanner = FrequencyScanner(source, signalLevelProvider = buildSignalLevelProvider(svc, source))
+                scanner = FrequencyScanner(source,tuner=svc.scannerTuner(source), signalLevelProvider = buildSignalLevelProvider(svc, source))
                     .also { sc ->
                         sc.startSearch(startFreqHz = startHz, stopFreqHz = stopHz, mode = mode)
                         attachCollectors(sc)

@@ -42,7 +42,10 @@ class AsyncIqRecorder(private val createSink: () -> IqRecordingSink = { IqRecord
                 error="IQ 录制失败（${t.javaClass.simpleName}）";state.accepting=false
                 ready.completeExceptionally(t)
             } finally {
-                state.sink.stop();state.duration=state.sink.capturedDurationMs();state.accepting=false
+                runCatching { state.sink.stop() }.onFailure {
+                    error="IQ 文件未能完成（${it.javaClass.simpleName}）"
+                }
+                state.duration=state.sink.capturedDurationMs();state.accepting=false
             }
         },"radio-iq-recorder").apply { start() }
         try { ready.get(8,TimeUnit.SECONDS);active=state }

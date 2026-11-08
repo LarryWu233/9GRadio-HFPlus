@@ -9,7 +9,7 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
 
 class AsyncIqRecorderTest {
-    private class Sink(private val delayMs:Long=0,private val fail:Boolean=false):IqRecordingSink {
+    private class Sink(private val delayMs:Long=0,private val fail:Boolean=false,private val failClose:Boolean=false):IqRecordingSink {
         @Volatile override var isRecording=false
         val samples=AtomicLong();var stops=0
         override fun start(path:String,rate:Int,format:IqRecorder.Format) { isRecording=true }
@@ -19,7 +19,7 @@ class AsyncIqRecorderTest {
             samples.addAndGet(block.sampleCount.toLong())
         }
         override fun capturedDurationMs()=samples.get()*1000/48000
-        override fun stop() { isRecording=false;stops++ }
+        override fun stop() { isRecording=false;stops++;if(failClose) throw IOException("close failed") }
     }
     @Test fun slowStorageStopsExplicitlyAndDrainsOnlyAcceptedPrefix() {
         val sink=Sink(3);val recorder=AsyncIqRecorder { sink }
@@ -34,6 +34,12 @@ class AsyncIqRecorderTest {
     }
     @Test fun failedWriterIsReportedWithoutCrashingProducer() {
         val sink=Sink(fail=true);val recorder=AsyncIqRecorder { sink }
+        recorder.start("unused",48000,IqRecorder.Format.RAW_UINT8)
+        recorder.write(IqBlock.Unsigned8(ByteArray(960)));recorder.stop()
+        assertNotNull(recorder.error);assertFalse(recorder.isRecording);assertEquals(1,sink.stops)
+    }
+    @Test fun finalFlushFailureCannotBeReportedAsSuccessfulRecording() {
+        val sink=Sink(failClose=true);val recorder=AsyncIqRecorder { sink }
         recorder.start("unused",48000,IqRecorder.Format.RAW_UINT8)
         recorder.write(IqBlock.Unsigned8(ByteArray(960)));recorder.stop()
         assertNotNull(recorder.error);assertFalse(recorder.isRecording);assertEquals(1,sink.stops)

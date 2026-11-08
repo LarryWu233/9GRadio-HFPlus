@@ -62,7 +62,7 @@ class PolyphaseResampler(val inputRate: Int, val outputRate: Int,
     val isDecimating get() = outputRate < inputRate
 }
 
-class ComplexDecimator(inputRate: Int, outputRate: Int, numTaps: Int = 127, cutoffHz: Double? = null) {
+class ComplexDecimator(inputRate: Int, outputRate: Int, numTaps: Int = 127, cutoffHz: Double? = null) : ComplexIqResampler {
     private val iFilter = PolyphaseResampler(inputRate, outputRate, numTaps, cutoffHz)
     private val qFilter = PolyphaseResampler(inputRate, outputRate, numTaps, cutoffHz)
 
@@ -79,7 +79,7 @@ class ComplexDecimator(inputRate: Int, outputRate: Int, numTaps: Int = 127, cuto
      * Process interleaved IQ float array, return decimated interleaved IQ.
      * Returns a view into a reused internal buffer — valid until the next call.
      */
-    fun process(iq: FloatArray): FloatArray {
+    override fun process(iq: FloatArray): FloatArray {
         val n = iq.size / 2
         if (n != scratchIn) {
             iScratch  = FloatArray(n)
@@ -106,5 +106,5 @@ class ComplexDecimator(inputRate: Int, outputRate: Int, numTaps: Int = 127, cuto
         return if (needed == out.size) out else out.copyOf(needed)
     }
 
-    fun reset() { iFilter.reset(); qFilter.reset() }
+    override fun reset() { iFilter.reset(); qFilter.reset() }
 }

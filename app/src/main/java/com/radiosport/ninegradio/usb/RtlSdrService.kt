@@ -71,7 +71,9 @@ class RtlSdrService : Service() {
     private val generation = AtomicLong()
     private var monitorJob: Job? = null
     private var targetsJob: Job? = null
-    private data class Tune(val hz: Long, val generation: Long, val immediate: Boolean)
+    private data class Tune(val hz: Long, val generation: Long, val immediate: Boolean,val sequence:Long)
+    private val tuneIssued=AtomicLong()
+    private val tuneCompleted=AtomicLong()
     private val tunes = Channel<Tune>(Channel.CONFLATED)
     private fun control(action: () -> Unit) {
         val expected = generation.get()
@@ -88,15 +90,17 @@ class RtlSdrService : Service() {
                     request = withTimeoutOrNull(wait) { tunes.receive() } ?: break
                 }
                 while (true) { request = tunes.tryReceive().getOrNull() ?: break }
-                if (request.generation != generation.get()) continue
-                val src = source ?: continue
-                if (!src.capabilities.supportsFrequency(request.hz)) {
-                    if (src.capabilities.supportsBrowsing(request.hz)) dspEngine?.setReceptionAvailable(false)
-                    continue
-                }
-                dspEngine?.setCarrierFrequency(request.hz) ?: src.setCenterFrequency(request.hz)
-                dspEngine?.setReceptionAvailable(true)
-                nextAllowed = SystemClock.uptimeMillis() + 33L
+                try {
+                    if (request.generation != generation.get()) continue
+                    val src = source ?: continue
+                    if (!src.capabilities.supportsFrequency(request.hz)) {
+                        if (src.capabilities.supportsBrowsing(request.hz)) dspEngine?.setReceptionAvailable(false)
+                        continue
+                    }
+                    dspEngine?.setCarrierFrequency(request.hz) ?: src.setCenterFrequency(request.hz)
+                    dspEngine?.setReceptionAvailable(true)
+                    nextAllowed = SystemClock.uptimeMillis() + 33L
+                } finally { tuneCompleted.accumulateAndGet(request.sequence,::maxOf) }
             }
         }
     }
@@ -120,12 +124,12 @@ class RtlSdrService : Service() {
     @Volatile private var pendingIqNbThreshold=8f
     fun setIqNoiseBlankerThreshold(value: Float) {
         pendingIqNbThreshold=value.coerceIn(3f,20f)
-        dspEngine?.setIqNoiseBlankerThreshold(pendingIqNbThreshold)
+        control { dspEngine?.setIqNoiseBlankerThreshold(pendingIqNbThreshold) }
     }
     @Volatile private var pendingListeningAudio=com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings()
     fun setListeningAudio(settings: com.radiosport.ninegradio.dsp.ListeningAudioProcessor.Settings) {
         pendingListeningAudio=settings
-        dspEngine?.setListeningAudio(settings)
+        control { dspEngine?.setListeningAudio(settings) }
     }
     fun setReceiverEnabled(enabled: Boolean) {
         val changed = receiverWanted != enabled
@@ -136,7 +140,7 @@ class RtlSdrService : Service() {
     }
     fun setNoiseReductionStrength(strength: Float) {
         pendingNrStrength = strength
-        dspEngine?.setNoiseReductionStrength(strength)
+        control { dspEngine?.setNoiseReductionStrength(strength) }
     }
     @Volatile private var pendingIfBandwidth: Int   = 0
     @Volatile private var pendingAudioSinkRate: Int = DspEngine.DEFAULT_AUDIO_SINK_RATE
@@ -205,9 +209,11 @@ class RtlSdrService : Service() {
     // ── Connection logic ──────────────────────────────────────────────────────
 
     private fun switchSource(factory: () -> IqSource, rateOverride: Int? = null) {
-        receiverWanted = true
+        if(rateOverride!=null && !receiverWanted) return
+        if(rateOverride==null) receiverWanted = true
         val expected = generation.incrementAndGet()
         controlScope.launch {
+            val restore=if(rateOverride!=null) dspEngine?.controlSnapshot() else null
             disconnectNow()
             if (expected != generation.get()) return@launch
             _connectionState.value = ConnectionState.Connecting
@@ -245,6 +251,8 @@ class RtlSdrService : Service() {
                 engine.setListeningAudio(pendingListeningAudio)
                 if (pendingIfBandwidth > 0) engine.setIfBandwidth(pendingIfBandwidth)
                 engine.setAudioSinkRate(pendingAudioSinkRate)
+                if(restore!=null && next.capabilities.supportsMode(restore.mode)
+                    && next.capabilities.supportsFrequency(restore.dialHz)) engine.restoreControls(restore)
                 targetsJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     engine.aprsDecoder.packets.collect { packet -> control {
                         val lat=packet.latitude; val lon=packet.longitude
@@ -307,7 +315,28 @@ class RtlSdrService : Service() {
         generation.incrementAndGet()
         controlScope.launch { disconnectNow() }
     }
-    suspend fun awaitControls() { withContext(controlDispatcher) { } }
+    suspend fun awaitControls() {
+        val pendingTune=tuneIssued.get()
+        // A rate command can enqueue a source restart behind the first barrier.
+        // Two stable-generation barriers include that nested work as well.
+        withTimeout(15000) {
+            while(true) {
+                val observed=withContext(controlDispatcher) { generation.get() }
+                if(withContext(controlDispatcher) { generation.get()==observed && tuneCompleted.get()>=pendingTune }) return@withTimeout
+                delay(1)
+            }
+        }
+    }
+    fun scannerTuner(expectedSource:IqSource):com.radiosport.ninegradio.pipeline.CaptureTuner {
+        val expectedGeneration=generation.get()
+        return com.radiosport.ninegradio.pipeline.CaptureTuner { hz -> withContext(controlDispatcher) {
+            if(expectedGeneration!=generation.get() || source!==expectedSource || !receiverWanted
+                || !expectedSource.capabilities.supportsFrequency(hz)) false
+            else expectedSource.setCenterFrequency(hz).also { success ->
+                if(success) dspEngine?.scannerCenterApplied(hz)
+            }
+        } }
+    }
 
     fun reconnect(usbDevice: UsbDevice, start: Boolean = true) {
         val manager = getSystemService(USB_SERVICE) as UsbManager
@@ -373,7 +402,9 @@ class RtlSdrService : Service() {
      * the engine will apply the offset via [DspEngine.setDemodMode] on the next connect.
      */
     fun setFrequency(hz: Long, immediate: Boolean = false) {
-        tunes.trySend(Tune(hz, generation.get(), immediate))
+        val sequence=tuneIssued.incrementAndGet()
+        if(tunes.trySend(Tune(hz, generation.get(), immediate,sequence)).isFailure)
+            tuneCompleted.accumulateAndGet(sequence,::maxOf)
     }
     fun setSampleRate(rate: Int) {
         pendingSampleRate = rate
@@ -424,23 +455,24 @@ class RtlSdrService : Service() {
     fun getIfBandwidth(): Int = dspEngine?.getIfBandwidth() ?: pendingIfBandwidth
     fun setNoiseBlanker(enabled: Boolean) {
         pendingNoiseBlanker = enabled
-        dspEngine?.setNoiseBlankerEnabled(enabled)
+        control { dspEngine?.setNoiseBlankerEnabled(enabled) }
     }
     fun setNoiseReducer(enabled: Boolean) {
         pendingNoiseReducer = enabled
-        dspEngine?.setNoiseReducerEnabled(enabled)
+        control { dspEngine?.setNoiseReducerEnabled(enabled) }
     }
     @Volatile private var playbackMonitorMuted=false
     fun setRecordingPlaybackMuted(muted:Boolean) {
-        playbackMonitorMuted=muted;dspEngine?.setRecordingPlaybackMuted(muted)
+        playbackMonitorMuted=muted;control { dspEngine?.setRecordingPlaybackMuted(muted) }
     }
     fun setAudioSinkRate(rate: Int) {
         pendingAudioSinkRate = rate
         control { if(dspEngine?.getAudioSinkRate()!=rate) finishCapture(true); dspEngine?.setAudioSinkRate(rate) }
     }
     fun getAudioSinkRate(): Int    = dspEngine?.getAudioSinkRate() ?: pendingAudioSinkRate
-    fun setExternalDecoderEnabled(enabled: Boolean) { dspEngine?.setExternalDecoderEnabled(enabled) }
-    fun setExternalDecoderTarget(host: String, port: Int) { dspEngine?.setExternalDecoderTarget(host, port) }
+    fun setExternalDecoderEnabled(enabled: Boolean) = control { dspEngine?.setExternalDecoderEnabled(enabled) }
+    fun setExternalDecoderTarget(host: String, port: Int) = control { dspEngine?.setExternalDecoderTarget(host, port) }
+    fun rebuildVocoderDecoder() = control { dspEngine?.rebuildVocoderDecoder() }
     private data class CaptureSession(val id:Long,val path:String,val started:Long,val limitMs:Long)
     @Volatile private var iqSession:CaptureSession?=null
     @Volatile private var audioSession:CaptureSession?=null
@@ -448,7 +480,7 @@ class RtlSdrService : Service() {
     private val capturePrefs by lazy { androidx.preference.PreferenceManager.getDefaultSharedPreferences(this) }
     fun setRecordingSquelch(enabled:Boolean) {
         capturePrefs.edit().putBoolean("pref_record_squelch",enabled).apply()
-        dspEngine?.setRecordingSquelch(enabled)
+        control { dspEngine?.setRecordingSquelch(enabled) }
     }
     fun recordingRemainingMs(audio:Boolean):Long? {
         val session=if(audio) audioSession else iqSession

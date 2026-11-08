@@ -16,6 +16,29 @@ import java.util.concurrent.atomic.AtomicLong
 /** Own-package native/AudioTrack lifecycle; does not open USB or alter saved settings. */
 @RunWith(AndroidJUnit4::class)
 class ArchitectureLifecycleTest {
+    @Test fun resamplerPlansCloseBeforeReplacementAndAfterProcessingStops():Unit=runBlocking {
+        val plans=java.util.concurrent.CopyOnWriteArrayList<com.radiosport.ninegradio.dsp.ComplexIqResampler>()
+        val released=java.util.concurrent.atomic.AtomicInteger()
+        val factory=com.radiosport.ninegradio.dsp.ComplexIqResamplerFactory { input,output,cutoff ->
+            object:com.radiosport.ninegradio.dsp.ComplexIqResampler {
+                val delegate=com.radiosport.ninegradio.dsp.ComplexDecimator(input,output,cutoffHz=cutoff)
+                var closed=false
+                override fun process(iq:FloatArray):FloatArray { check(!closed);return delegate.process(iq) }
+                override fun reset() { check(!closed);delegate.reset() }
+                override fun close() { check(!closed);closed=true;released.incrementAndGet() }
+            }.also { plans+=it }
+        }
+        val source=Source();source.open();val engine=DspEngine(source,iqResamplers=factory)
+        try {
+            engine.setVolume(0f);engine.start()
+            repeat(8) { i ->
+                engine.setDemodMode(if(i%2==0) DemodMode.AM else DemodMode.USB)
+                engine.setIfBandwidth(if(i%2==0) 10000 else 3000);delay(40)
+                assertNull(engine.failure.value)
+            }
+        } finally { engine.stop();source.close() }
+        assertTrue(plans.isNotEmpty());assertEquals(plans.size,released.get())
+    }
     internal class Source : IqSource {
         private val stream = IqStream()
         private val clock = CaptureClock()
@@ -26,14 +49,15 @@ class ArchitectureLifecycleTest {
         override val iqSubscriberCount get() = stream.subscriberCount
         private val state = MutableStateFlow(IqSource.SourceStatus(sampleRate=48000,centerFreqHz=10000000))
         override val statusFlow = state.asStateFlow()
-        override val capabilities = DeviceCapabilities("fixture",listOf(1L..260000000L),listOf(48000),false,false,false,true,480)
+        override val capabilities = DeviceCapabilities("fixture",listOf(1L..260000000L),listOf(48000,96000),false,false,false,true,480)
         override fun open(): Boolean { state.value=state.value.copy(connected=true); return true }
         override fun startStreaming(bufferSize: Int) {
             check(isOpen())
             job=scope.launch {
-                val data=FloatArray(960) { i -> if(i%2==0) 0.1f else 0.02f }
+                val count=getSampleRate()/100
+                val data=FloatArray(count*2) { i -> if(i%2==0) 0.1f else 0.02f }
                 while(isActive) {
-                    val meta=clock.stamp(480,48000,getCenterFrequency())
+                    val meta=clock.stamp(count,getSampleRate(),getCenterFrequency())
                     stream.offer(IqBlock.Float32(data,meta.sequence,meta))
                     produced.incrementAndGet(); delay(10)
                 }
@@ -45,8 +69,11 @@ class ArchitectureLifecycleTest {
         override fun getSourceName()="Lifecycle fixture"
         override fun getCenterFrequency()=state.value.centerFreqHz
         override fun setCenterFrequency(freqHz:Long):Boolean { state.value=state.value.copy(centerFreqHz=freqHz);return true }
-        override fun getSampleRate()=48000
-        override fun setSampleRate(rateHz:Int)=rateHz==48000
+        override fun getSampleRate()=state.value.sampleRate
+        override fun setSampleRate(rateHz:Int):Boolean {
+            if(rateHz !in capabilities.sampleRates) return false
+            state.value=state.value.copy(sampleRate=rateHz);return true
+        }
         override fun setGainMode(mode:Int)=Unit
         override fun setGain(gainIndex:Int)=Unit
         override fun getGainIndex()=0
@@ -68,7 +95,7 @@ class ArchitectureLifecycleTest {
                 val engine=DspEngine(source)
                 try {
                     engine.setDemodMode(DemodMode.AM);engine.setVolume(0f);engine.start()
-                    withTimeout(3000) { while(source.produced.get()==0L) delay(2) }
+                    withTimeout(3000) { while(engine.pipelineDiagnostics().inputSamples==0L) delay(2) }
                     engine.stop();engine.stop()
                     val stopped=source.produced.get()
                     delay(2)

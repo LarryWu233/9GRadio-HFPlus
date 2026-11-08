@@ -162,6 +162,7 @@ class MainActivity : RadioThemedActivity() {
     // is shown/hidden on demand via showScanTab()/hideScanTab(), invoked from
     // the Settings tab's Scanner button and the main FAB.
     private var scanTabScanner: com.radiosport.ninegradio.scanner.FrequencyScanner? = null
+    private var scanTabStartJob: kotlinx.coroutines.Job? = null
     private val scanTabHitLog = mutableListOf<RadioDataTable.Row>()
     private val scanTabHitFreqs = mutableListOf<Long>()
     private var scanTabHitAdapter: RadioDataTable? = null
@@ -5106,6 +5107,7 @@ class MainActivity : RadioThemedActivity() {
         renderScanChannelRows()
 
         fun resetScanTabControls() {
+            scanTabStartJob?.cancel();scanTabStartJob=null
             scanTabScanning = false
             scanTabPaused = false
             scanTabSearching = false
@@ -5280,34 +5282,46 @@ class MainActivity : RadioThemedActivity() {
                 svc.setSquelch(sqlDb)
 
                 configureSpectrumForScan(snappedStartHz, stopHz, stepHz, sqlDb, dwellMs)
-
-                scanTabScanner = com.radiosport.ninegradio.scanner.FrequencyScanner(
-                    source, signalLevelProvider = signalLevelProviderFor(svc, source),
-                    // Keep the live spectrum's frame averaging/smoothing from
-                    // blending frames across the scanner's retunes -- see
-                    // FftEngine.resetSpectrumAveraging() for why that matters
-                    // to Auto dB Range specifically.
-                    onRetune = { svc.dspEngine?.fftEngine?.resetSpectrumAveraging() }
-                ).also { sc ->
-                    sc.startScan(com.radiosport.ninegradio.scanner.FrequencyScanner.ScanConfig(
-                        startFreqHz = snappedStartHz,
-                        stopFreqHz  = stopHz,
-                        stepHz = stepHz,
-                        squelchDb = sqlDb,
-                        adaptiveSquelch = adaptive,
-                        holdOnSignal = holdOnSignal,
-                        dwellTimeMs = dwellMs,
-                        mode = mode,
-                        scanUp = !(ctrlViews.switchScanTabDirection?.isChecked ?: false),
-                        label = "${"%.3f".format(startMhz)}-${"%.3f".format(stopMhz)} MHz"
-                    ))
-                    attachScanTabCollectors(sc)
+                scanTabScanning=true
+                ctrlViews.btnScanTabSearch?.isEnabled=false
+                scanTabStartJob=lifecycleScope.launch {
+                    try {
+                        svc.awaitControls()
+                        val source=svc.source ?: error("接收机连接已改变")
+                        svc.setDemodMode(mode);svc.setSquelch(sqlDb);svc.awaitControls()
+                        scanTabScanner = com.radiosport.ninegradio.scanner.FrequencyScanner(
+                            source, tuner=svc.scannerTuner(source),signalLevelProvider = signalLevelProviderFor(svc, source),
+                            // Keep the live spectrum's frame averaging/smoothing from
+                            // blending frames across the scanner's retunes -- see
+                            // FftEngine.resetSpectrumAveraging() for why that matters
+                            // to Auto dB Range specifically.
+                            onRetune = { svc.dspEngine?.fftEngine?.resetSpectrumAveraging() }
+                        ).also { sc ->
+                            sc.startScan(com.radiosport.ninegradio.scanner.FrequencyScanner.ScanConfig(
+                                startFreqHz = snappedStartHz,
+                                stopFreqHz  = stopHz,
+                                stepHz = stepHz,
+                                squelchDb = sqlDb,
+                                adaptiveSquelch = adaptive,
+                                holdOnSignal = holdOnSignal,
+                                dwellTimeMs = dwellMs,
+                                mode = mode,
+                                scanUp = !(ctrlViews.switchScanTabDirection?.isChecked ?: false),
+                                label = "${"%.3f".format(startMhz)}-${"%.3f".format(stopMhz)} MHz"
+                            ))
+                            attachScanTabCollectors(sc)
+                        }
+                        scanTabScanning = true
+                        ctrlViews.btnScanTabStartStop?.text = "停止"
+                        ctrlViews.btnScanTabPause?.isVisible = true
+                        ctrlViews.progressScanTab?.isVisible = true
+                        ctrlViews.btnScanTabSearch?.isEnabled = false
+                    } catch(cancel:kotlinx.coroutines.CancellationException) { throw cancel }
+                    catch(error:Exception) {
+                        resetScanTabControls()
+                        Snackbar.make(binding.root,"无法开始扫频，请检查接收机连接",Snackbar.LENGTH_SHORT).show()
+                    }
                 }
-                scanTabScanning = true
-                ctrlViews.btnScanTabStartStop?.text = "停止"
-                ctrlViews.btnScanTabPause?.isVisible = true
-                ctrlViews.progressScanTab?.isVisible = true
-                ctrlViews.btnScanTabSearch?.isEnabled = false
             } else {
                 scanTabScanner?.stopScan()
                 scanTabScanner = null
@@ -5360,22 +5374,34 @@ class MainActivity : RadioThemedActivity() {
                 // (or a sane default) purely to size the capture width below.
                 val searchStepHz = ctrlViews.etScanTabStep?.text?.toString()?.toLongOrNull() ?: 12_500L
                 configureSpectrumForScan(startHz, stopHz, searchStepHz, sqlDb, dwellMs = 40L)
-
-                scanTabScanner = com.radiosport.ninegradio.scanner.FrequencyScanner(
-                    source, signalLevelProvider = signalLevelProviderFor(svc, source),
-                    onRetune = { svc.dspEngine?.fftEngine?.resetSpectrumAveraging() }
-                ).also { sc ->
-                    sc.startSearch(
-                        startFreqHz = startHz, stopFreqHz = stopHz, mode = mode,
-                        squelchDb = sqlDb, adaptiveSquelch = adaptive
-                    )
-                    attachScanTabCollectors(sc)
+                scanTabScanning=true;scanTabSearching=true
+                ctrlViews.btnScanTabStartStop?.isEnabled=false
+                scanTabStartJob=lifecycleScope.launch {
+                    try {
+                        svc.awaitControls()
+                        val source=svc.source ?: error("接收机连接已改变")
+                        svc.setDemodMode(mode);svc.setSquelch(sqlDb);svc.awaitControls()
+                        scanTabScanner = com.radiosport.ninegradio.scanner.FrequencyScanner(
+                            source, tuner=svc.scannerTuner(source),signalLevelProvider = signalLevelProviderFor(svc, source),
+                            onRetune = { svc.dspEngine?.fftEngine?.resetSpectrumAveraging() }
+                        ).also { sc ->
+                            sc.startSearch(
+                                startFreqHz = startHz, stopFreqHz = stopHz, mode = mode,
+                                squelchDb = sqlDb, adaptiveSquelch = adaptive
+                            )
+                            attachScanTabCollectors(sc)
+                        }
+                        scanTabSearching = true
+                        scanTabScanning = true
+                        ctrlViews.btnScanTabSearch?.text = "停止搜索"
+                        ctrlViews.btnScanTabStartStop?.isEnabled = false
+                        ctrlViews.progressScanTab?.isVisible = true
+                    } catch(cancel:kotlinx.coroutines.CancellationException) { throw cancel }
+                    catch(error:Exception) {
+                        resetScanTabControls()
+                        Snackbar.make(binding.root,"无法开始搜索，请检查接收机连接",Snackbar.LENGTH_SHORT).show()
+                    }
                 }
-                scanTabSearching = true
-                scanTabScanning = true
-                ctrlViews.btnScanTabSearch?.text = "停止搜索"
-                ctrlViews.btnScanTabStartStop?.isEnabled = false
-                ctrlViews.progressScanTab?.isVisible = true
             } else {
                 scanTabScanner?.stopScan()
                 scanTabScanner = null

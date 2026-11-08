@@ -147,7 +147,8 @@ class EtmController(private val activity: AppCompatActivity,
                 tune(desiredMode, ranges.first().first)
                 svc.awaitControls()
                 svc.dspEngine?.setListeningEnabled(false)
-                sc = FrequencyScanner(source, onRetune = { hz ->
+                val activeSource=svc.source ?: error("接收机连接已改变")
+                sc = FrequencyScanner(activeSource,tuner=svc.scannerTuner(activeSource), onRetune = { hz ->
                     svc.dspEngine?.fftEngine?.resetSpectrumAveraging()
                     activity.runOnUiThread { if (task?.isActive == true) preview(hz) }
                 })
