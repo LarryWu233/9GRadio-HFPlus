@@ -19,7 +19,9 @@ import kotlin.math.*
  * setWindowType) are all @Synchronized so the DSP coroutine and the main thread
  * can safely call them concurrently without data races on the internal buffers.
  */
-class FftEngine(fftSize: Int = 2048) {
+class FftEngine(fftSize: Int = 2048, private val transformFactory: ComplexFftFactory? = null) : AutoCloseable {
+    private var transformBackend = transformFactory?.create(fftSize)
+    private var closed=false
     @Volatile var analysisIntervalSamples=0
     private var samplesSinceTransform=0L
 
@@ -208,7 +210,12 @@ class FftEngine(fftSize: Int = 2048) {
     @Synchronized
     fun setFftSize(size: Int) {
         val n = size.coerceIn(256, 65536)
+        require(n and (n-1)==0) { "FFT size must be a power of two" }
+        check(!closed)
         if (n == fftSize) return
+        val next=transformFactory?.create(n)
+        transformBackend?.close()
+        transformBackend=next
         fftSize = n
         window      = buildWindow(n, windowType)
         windowPower = window.sumOf { it * it.toDouble() }.toFloat()
@@ -235,6 +242,7 @@ class FftEngine(fftSize: Int = 2048) {
      */
     @Synchronized
     fun processUint8(rawIq: ByteArray): FloatArray {
+        check(!closed)
         for (i in 0 until rawIq.size / 2) {
             accumulateSample(((rawIq[2 * i].toInt() and 0xff) - 127.5) / 128.0,
                 ((rawIq[2 * i + 1].toInt() and 0xff) - 127.5) / 128.0)
@@ -245,6 +253,7 @@ class FftEngine(fftSize: Int = 2048) {
     /** Float IQ retains driver precision, including partial decimation groups. */
     @Synchronized
     fun processFloat(floatIq: FloatArray): FloatArray {
+        check(!closed)
         for (i in 0 until floatIq.size / 2)
             accumulateSample(floatIq[2 * i].toDouble(), floatIq[2 * i + 1].toDouble())
         return transformAvailableInput()
@@ -288,7 +297,8 @@ class FftEngine(fftSize: Int = 2048) {
 
     private fun computeFft(re: DoubleArray, im: DoubleArray): FloatArray {
         val n = fftSize
-        fftCooleyTukey(re, im, n)
+        val backend=transformBackend
+        if(backend==null) fftCooleyTukey(re, im, n) else backend.transform(re,im)
 
         val result = scratchResult
         val scale  = 1.0 / windowSum
@@ -472,6 +482,11 @@ class FftEngine(fftSize: Int = 2048) {
             }
             len = len shl 1
         }
+    }
+
+    @Synchronized override fun close() {
+        if(closed) return
+        closed=true;transformBackend?.close();transformBackend=null
     }
 
     // ─── Window functions ─────────────────────────────────────────────────────
