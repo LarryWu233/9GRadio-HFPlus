@@ -489,8 +489,6 @@ class DspEngine(private val device: IqSource,
     @Volatile private var iqNbThreshold=8f
     fun setIqNoiseBlankerThreshold(value: Float) { iqNbThreshold=value.coerceIn(3f,20f) }
     fun getIqNoiseBlankerStats()=iqNoiseBlanker.stats()
-    private val noiseReducer = AudioDsp.NoiseReducer()
-    private val stereoAudio = StereoAudioPath()
     @Volatile private var deemphasisUs = 75
     fun setFmDeemphasis(us: Int) { deemphasisUs = if (us == 50) 50 else 75 }
     @Volatile private var noiseBlankerEnabled = false
@@ -510,7 +508,7 @@ class DspEngine(private val device: IqSource,
      *  the demod mode flips between SSB and non-SSB (see setDemodMode()). */
     @Volatile private var dialFreqHz: Long = 0L
     @Volatile private var cwCenterOffsetHz = 0L
-    private val cwChannelizer=CwChannelizer(AndroidDemodPrimitives)
+    private val cwChannelizer=CwChannelizer(AndroidDemodPrimitives,iqResamplers)
     private fun isCw()=demodMode==DemodMode.CW || demodMode==DemodMode.CWR
     private fun cwWidth()=(ifBandwidthHz.takeIf { it>0 } ?: demodMode.defaultBwHz).coerceAtLeast(100)
 
@@ -565,7 +563,7 @@ class DspEngine(private val device: IqSource,
         else { fftEngine.resetSpectrumAveraging(); audioEngine.setVolume(if(!externalCaptureMuted && !recordingPlaybackMuted) volume.coerceIn(0f, 1f) else 0f) }
     }
     fun setListeningEnabled(enabled: Boolean) { listeningEnabled = enabled }
-    fun setNoiseReductionStrength(strength: Float) { noiseReducer.setStrength(strength); stereoAudio.setStrength(strength) }
+    @Synchronized fun setNoiseReductionStrength(strength: Float) { monitoring.setNoiseStrength(strength) }
 
     // Volume
     @Volatile private var volume = 1.0f
@@ -811,7 +809,6 @@ class DspEngine(private val device: IqSource,
     // Fixed 20 ms stereo packets make the queue budget independent of IQ callback size.
     private val audioQueueDrops = java.util.concurrent.atomic.AtomicLong()
     private var pcmPacketizer=com.radiosport.ninegradio.audio.PcmPacketizer(DEFAULT_AUDIO_SINK_RATE)
-    private val listeningSquelch=ListeningSquelch()
     private val channelSquelchMeter=ChannelSquelchMeter()
     private val _squelchReading=MutableStateFlow(ChannelSquelchMeter.Reading())
     val squelchReading: StateFlow<ChannelSquelchMeter.Reading> = _squelchReading.asStateFlow()
@@ -832,6 +829,7 @@ class DspEngine(private val device: IqSource,
     fun audioRecordingError()=soundCapture.error
     fun isAudioRecording()=soundCapture.isRecording
     private val listeningAudio=ListeningAudioProcessor()
+    private val monitoring=MonitorAudioBranch(listeningAudio)
     fun setListeningAudio(settings: ListeningAudioProcessor.Settings) { listeningAudio.settings=settings }
     private val audioWriteChannel = Channel<com.radiosport.ninegradio.pipeline.AudioBlock>(
         capacity = 6, // 120 ms queue + 120 ms platform buffer, independent of IQ block size
@@ -1180,24 +1178,11 @@ class DspEngine(private val device: IqSource,
         digVoiceAudioJob?.cancel()
         digVoiceAudioJob = scope.launch(Dispatchers.Default,start=CoroutineStart.UNDISPATCHED) {
             val adapter=VocoderAudioAdapter()
-            val voiceSquelch=ListeningSquelch()
             voiceStage.audioFlow.collect { block -> synchronized(this@DspEngine) {
                 if(block.epoch!=session.snapshot.epoch || session.snapshot.closed) return@collect
                 val adapted=adapter.process(block,audioSinkRate) ?: return@collect
-                if(adapted.discontinuity) voiceSquelch.reset()
-                val floatBuf=adapted.samples
-                if(!listeningEnabled) floatBuf.fill(0f)
-                val stereo=StereoAudioPath.duplicateMono(floatBuf)
-                listeningAudio.process(stereo,audioSinkRate,demodMode)
-                // Keep the user's volume after automatic gain compensation.
-                val vol = volume
-                if (vol != 1.0f) {
-                    for (i in stereo.indices) {
-                        stereo[i] = (stereo[i] * vol).coerceIn(-1f, 1f)
-                    }
-                }
-
-                voiceSquelch.apply(stereo,listeningEnabled && squelchOpen,audioSinkRate)
+                val stereo=monitoring.voice(adapted.samples,audioSinkRate,demodMode,
+                    MonitorAudioBranch.Settings(listeningEnabled,noiseReducerEnabled,volume),squelchOpen,adapted.discontinuity)
                 enqueueAudio(stereo,block.epoch)
             } }
         }
@@ -1220,6 +1205,7 @@ class DspEngine(private val device: IqSource,
         synchronized(this) {
             narrowDecimator?.close();narrowDecimator=null
             wfmDecimator?.close();wfmDecimator=null
+            cwChannelizer.close()
         }
         audioEngine.stop()
         soundCapture.stop()
@@ -1227,7 +1213,7 @@ class DspEngine(private val device: IqSource,
         iqRecorder.stop()
         externalDecoderStream.shutdown()
         scope.cancel()
-        listeningAudio.close()
+        monitoring.close()
         iqNoiseBlanker.close()
         DebugBus.setStatus(DebugBus.STAGE_DSP_PROCESS, DebugBus.StageStatus.IDLE, "Engine stopped")
         DebugBus.setStatus(DebugBus.STAGE_FFT_ENGINE, DebugBus.StageStatus.IDLE, "Engine stopped")
@@ -1708,7 +1694,7 @@ class DspEngine(private val device: IqSource,
         aprsDecoder.setSampleRate(DEFAULT_AUDIO_RATE)
         acarsDecoder.resetSignalState(); pocsagDecoder.resetSignalState(); rdsDecoder.resetSignalState()
         voiceStage.configure(session.snapshot.epoch)
-        noiseReducer.reset(); stereoAudio.reset(); listeningAudio.reset(); listeningSquelch.reset()
+        monitoring.reset()
         pcmPacketizer.reset()
         while(audioWriteChannel.tryReceive().isSuccess) { }
         if(iqRecorder.isRecording) {
@@ -1914,7 +1900,7 @@ class DspEngine(private val device: IqSource,
         // Same dBFS bin reference as the trace, restricted to the selected BW.
         // Decoder audio remains upstream of the listening gate; scanner has its own detector.
         val signalDb = squelchSignalDb
-        squelchOpen = listeningEnabled && listeningSquelch.update(signalDb,squelchLevel,block.sampleCount.toDouble()/device.getSampleRate())
+        squelchOpen = listeningEnabled && monitoring.updateSquelch(signalDb,squelchLevel,block.sampleCount.toDouble()/device.getSampleRate())
         DebugBus.tick(DebugBus.STAGE_DSP_PROCESS)
         if (DebugBus.counter(DebugBus.STAGE_DSP_PROCESS) % 10L == 0L) {
             DebugBus.setDetail(DebugBus.STAGE_DSP_PROCESS,
@@ -2177,21 +2163,8 @@ class DspEngine(private val device: IqSource,
         // underrun during the (typically <100 ms) gap between voice frames
         // is far less audible than permanently dropping all decoded audio.
         if (!isDigital && sinkAudio.isNotEmpty()) {
-            val stereo = demodMode == DemodMode.WFM_STEREO
-            val analogNoise=NoiseProcessingPolicy.allows(demodMode)
-            var audioOut = if (stereo) stereoAudio.process(audio,demodRate,audioSinkRate,noiseReducerEnabled && analogNoise,false) else sinkAudio.copyOf()
-            if (!stereo) {
-                if(analogNoise) audioOut = noiseReducer.processListening(audioOut, noiseReducerEnabled, audioSinkRate)
-                audioOut = StereoAudioPath.duplicateMono(audioOut)
-            }
-            listeningAudio.process(audioOut,audioSinkRate,demodMode)
-            listeningSquelch.apply(audioOut,listeningEnabled && squelchOpen,audioSinkRate)
-            val vol = volume
-            if (vol > 1.001f) {
-                for (i in audioOut.indices) {
-                    audioOut[i] = (audioOut[i] * vol).coerceIn(-1f, 1f)
-                }
-            }
+            val audioOut=monitoring.analog(audio,demodRate,sinkAudio,audioSinkRate,demodMode,
+                MonitorAudioBranch.Settings(listeningEnabled,noiseReducerEnabled,volume),squelchOpen)
             if (receptionAvailable) enqueueAudio(audioOut)
             DebugBus.tick(DebugBus.STAGE_AUDIO_TRACK)
             if (DebugBus.counter(DebugBus.STAGE_AUDIO_TRACK) % 15L == 0L) {

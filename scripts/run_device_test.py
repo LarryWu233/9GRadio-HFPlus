@@ -33,7 +33,19 @@ with destination.open('wb') as log:
         subprocess.run(adb+['shell','am','start','-W','-a','android.intent.action.MAIN',
             '-c','android.intent.category.LAUNCHER','-n',
             args.package+'/com.radiosport.ninegradio.ui.MainActivity'],check=True,capture_output=True)
-    process.wait(timeout=args.timeout)
+    try:
+        process.wait(timeout=args.timeout)
+    except subprocess.TimeoutExpired:
+        # A timed-out adb client does not stop Android instrumentation. Stop only
+        # the explicitly selected application, so it cannot keep receiving or
+        # competing with the next run after this runner has reported failure.
+        subprocess.run(adb+['shell','am','force-stop',args.package],capture_output=True,timeout=15)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        raise SystemExit('Android test timed out; selected application was stopped')
 data=destination.read_text(encoding='utf-8',errors='replace')
 print(data)
 if 'OK (' not in data or 'FAILURES!!!' in data or 'INSTRUMENTATION_FAILED' in data:

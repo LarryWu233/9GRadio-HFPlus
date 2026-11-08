@@ -39,3 +39,26 @@ Public artifacts exclude device IDs, network/location details, personal paths, c
 ## 中文说明
 
 本分支按上述阶段推进，预览版与现有 HF+ 版本并存。当前阶段交付不表示完整重构完成；逐阶段验证记录说明实际完成范围。监听和解码分流、数据连续性、停止顺序和录制独立性是核心目标；不改变地图方案，不新增协议，不迁移 Compose。
+
+## Implemented ownership boundaries (preview 08)
+
+| Responsibility | Owner / platform boundary | Congestion and shutdown |
+| --- | --- | --- |
+| Source production / capture metadata | Android source adapter; portable `CaptureClock` / `IqStream` | Live sample-budgeted subscriber queues; file delivery waits; producer joins before resource release |
+| Configuration and USB control | Application service controller; portable `PipelineSession` | Serialized commands, conflated tuning; old generations rejected; device monitor requests manual recovery |
+| Display | Portable `SpectrumBranch` with an injected FFT | Independent bounded display queue; skipped display blocks do not change measurements |
+| SQL / scan measurements | Portable `SignalAnalyzer` / channel meter | Runs independently of display subscriptions and presentation scaling |
+| Raw IQ recording | Application `AsyncIqRecorder` | Before correction and IQ NB; explicitly aborts on input or storage gaps |
+| Channel processing | Existing demodulation primitives / resampler ports; `CwChannelizer` | Stateful serial processing; CW factory plans close on reset/reconfiguration/stop and partial construction failure |
+| Raw IQ ADS-B | Application `ReadsbReceiver` adapter around pinned readsb | Its own child, pipe and observers; typed continuity; joined reset; final snapshot on normal EOF |
+| Internal / microphone / WAV audio decoding | Portable `AudioDecoderInput` and `AudioContinuity`; application `AudioContentReceiver` | Explicit epoch barrier; reset/join on gaps; owned copy for in-place Robot36 |
+| Digital voice | Application `DigitalVoiceStage`; portable `VocoderAudioAdapter` | Ordered decoder worker, typed 8 kHz PCM output; separate input/output losses and gap recovery |
+| External audio decoder | Service-owned `ExternalDecoderStream` adapter | Bounded session queue; sender/socket/DNS ownership survives DSP replacement until truly released |
+| Monitoring | Portable `MonitorAudioBranch`; injected `ListeningPostProcessor` | Existing NR, L/R processing, native notch/leveling, gain and SQL fade; never mutates decoder PCM |
+| Sound recording | Application `SoundCapture` | Forks processed monitor audio before the playback queue; storage failure and finishing ownership explicit |
+| Playback | Portable `AudioOutput` port; Android `AudioEngine` / AudioTrack | Fixed-duration PCM packets, interruptible write and joined shutdown; reports drops and underruns |
+| Map / database / UI | Application services and collectors | Decoder emits results; map target and persistence updates stay outside portable DSP |
+
+The monitor extraction preserves the prior analog and digital-voice operation ordering and gain behavior; it is not a new noise algorithm. Frozen pre-extraction comparisons check exact samples with irregular chunks, NR toggles, stereo, mute and gain changes. Recording format/settings and the Views UI remain unchanged.
+
+`DspEngine` still orchestrates several channel/protocol paths and retains compatibility accessors. It is not yet a thin final facade. Further extraction of channel rate/configuration policy and the dual-APRS/protocol router, integrated monitor clock adaptation, complete controlled component decisions, and the remaining acceptance matrix are still required. A stage APK or passing unit suite does not establish those gates.
