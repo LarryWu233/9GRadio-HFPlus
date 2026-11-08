@@ -20,8 +20,10 @@ Static APK checks pass for all 24 libraries: 16 arm64/x86_64 ELF files meet 16 K
 
 The device runner requests a stop of its explicitly selected application on a whole-run timeout, rather than leaving instrumentation receiving after its adb client exits. Disconnected-device stop failures are reported as unconfirmed, and client cleanup stays bounded. Two host mock fault simulations pass for confirmed and unconfirmed stop paths. The normal execution path is in use for the current RF run; those mocks are not a claimed injected device-timeout pass.
 
-HF+ USB/SSB 30-minute reception is the final active nightly test. Its result and the nightly stop record are added after it finishes. No merge is authorized by this document.
+**HF+ USB/SSB 30-minute reception passes** at 768 kS/s, after a five-second warm-up (total test time 1805.749 s). The stable window has zero increments in application IQ loss, driver-reported loss, playback packet drops and underruns. There are two playback packet drops during warm-up, with final cumulative two; they are not hidden or labelled zero total loss. Final processed input is 1,386,602,496 complex samples; driver/application missing samples and underruns are zero. CPU time during the stable window is 1,536,975 ms and maximum observed allocated heap is 81,937,824 bytes. This headless check does not measure UI frame times, matched CPU/memory regression, a memory-growth trend or human assessment of received speech.
+
+This was the last already-running test at the requested nightly stop point. No additional receiver tests or development are started after it. The approximately 75% engineering checkpoint is saved separately from the incomplete acceptance matrix; see [remaining work](remaining-acceptance.md) and [nightly checkpoint](nightly-checkpoint.md). No merge is authorized by this document.
 
 The unresolved high-rate CW realtime gate from preview 07 remains pending until a controlled run passes its original decoding, exact-frame and 15% timing assertions. Oboe, liquid-dsp and SpeexDSP remain isolated experiments; no new backend is enabled. Android 16, actual 16 KB-page runtime, RTL long runs and matched UI/CPU/memory validation remain separate pending gates.
 
-中文：本阶段将监听处理和原生声音处理适配器分开，并补齐 CW 滤波计划的所有权与释放，保持现有算法及界面。构建和主机测试已通过；真机与长测结果按实际完成情况补记，未通过的门槛继续保留。
+中文：本阶段将监听处理和原生声音处理适配器分开，并补齐 CW 滤波计划的所有权与释放，保持现有算法及界面。132 项主机测试通过，真机整组回归为 35/36；高采样率 CW 未达标继续保留。HF+ SSB 30 分钟长测通过，稳定窗口内各项损失增量为零，预热期间 2 个播放包丢弃单独记录。按用户要求在约 75% 工程停点暂停，主干未合并。
