@@ -12,6 +12,8 @@
         android:layout_height="wrap_content"
         android:background="?attr/radioSurface"
         app:elevation="0dp"
+        app:liftOnScroll="false"
+        app:liftOnScrollColor="@null"
         android:stateListAnimator="@null"
         app:statusBarForeground="?attr/radioSurface"
         >
@@ -295,9 +297,6 @@
         </androidx.core.widget.NestedScrollView>
 
         </LinearLayout>
-        <View android:layout_width="match_parent" android:layout_height="12dp"
-            android:background="@drawable/control_panel_edge" android:importantForAccessibility="no"
-            android:clickable="false" android:focusable="false"/>
     </FrameLayout>
 
 

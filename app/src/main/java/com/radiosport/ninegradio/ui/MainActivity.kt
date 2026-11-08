@@ -768,6 +768,8 @@ class MainActivity : RadioThemedActivity() {
         // Apply top inset (status bar) to the AppBarLayout so content isn't hidden
         // behind the status bar when running edge-to-edge.
         val appBar = binding.toolbar.parent as? android.view.ViewGroup ?: binding.toolbar
+        // Keep the inset and toolbar one fixed surface, independent of nested-scroll lift.
+        appBar.setBackgroundColor(UiThemes.color(this,R.attr.radioSurface))
         ViewCompat.setOnApplyWindowInsetsListener(appBar) { view, insets ->
             val statusBar = insets.getInsets(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout())
             view.setPadding(view.paddingLeft, statusBar.top, view.paddingRight, view.paddingBottom)
@@ -2545,7 +2547,7 @@ class MainActivity : RadioThemedActivity() {
         binding.panelEdgeBlur.setupWith(binding.panelBlurTarget)
             .setFrameClearDrawable(android.graphics.drawable.ColorDrawable(UiThemes.color(this,R.attr.radioMain)))
             .setBlurRadius(12f)
-            .setOverlayColor(androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(this,R.attr.radioSurface),184))
+            .setOverlayColor(androidx.core.graphics.ColorUtils.setAlphaComponent(UiThemes.color(this,R.attr.radioSurface),171))
         binding.btnToolbarSettings.setOnClickListener {
             bookmarkLauncher.launch(Intent(this,SettingsActivity::class.java))
         }

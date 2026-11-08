@@ -65,3 +65,11 @@ Material 3 Views 主题与控件已经包含在项目现有依赖中，无需升
 频率精调与 Step 轮使用一层 16 dp 圆角色调刻度槽、主题细轮廓，去掉整个 View 的外层底板和中央读数小框。保留刻度透视、中心指示及惯性；在读数区域避让刻度，避免文字被穿过。该刻度槽是现有自定义 View 对色调容器与 shape token 的适配，并非声称 Material 提供了专用 SDR 轮控件。
 
 模拟、数字、SSTV／SAT／EiBi 使用同一 `ModeChoiceUi`：三列、48 dp 高、12 dp 圆角、8 dp 水平／垂直间距，同一选中及禁用配色。末行留白不绘制假按钮。ETM 开始／停止／清空之间留 8 dp 间距；原值域与动作保持。
+
+## Alpha25 边缘与系统栏
+
+顶栏和状态栏 inset 使用固定的 `radioSurface`，关闭 AppBarLayout 的 lift-on-scroll 及其色调动画。保留 edge-to-edge 和已有 inset 高度；不通过硬编码系统状态栏颜色规避 Android 新版本的绘制规则。[MDC 1.12 AppBarLayout 实现](https://github.com/material-components/material-components-android/blob/1.12.0/lib/java/com/google/android/material/appbar/AppBarLayout.java)。
+
+共享分段选择器在加入 MaterialButtonToggleGroup 前使用 `RelativeCornerSize(0.5f)`，由组件保留最外两端圆角、处理内部分段连接；不在 44 dp 高的控件上沿用 24 dp 固定圆角。取消子按钮装饰投影，避免外侧微小折线及阴影。布局和单选逻辑仍由 Material 控件负责。[分组实现](https://github.com/material-components/material-components-android/blob/1.12.0/lib/java/com/google/android/material/button/MaterialButtonToggleGroup.java)。
+
+控制面板不再绘制顶部额外 12 dp 渐变覆盖层。BlurView 的模糊半径保持 12，色调遮罩 alpha 由 184/255 调至 171/255：不透明度约 72.2% → 67.1%，即透出背景增加约 5.1 个百分点。保留上方圆角裁切及清晰的前景控件。

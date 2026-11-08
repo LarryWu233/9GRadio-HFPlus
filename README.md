@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.24.0-hfplus-alpha24` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.25.0-hfplus-alpha25` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha25 fixes the scrolling status-bar colour change, makes segmented-control end caps follow half the actual height, removes the panel-top gradient, and lowers the blur tint opacity by about 5 percentage points. See [alpha25 validation](docs/validation/2026-11-08-alpha25.md).
 
 Alpha24 refines Tune with a single tonal wheel channel and unboxed readouts, removes the rate-slider end arrows, separates ETM actions, and gives RF/digital/content choices one shared shape and 8 dp gaps. It retains all tuning and decoding behaviour. See [alpha24 validation](docs/validation/2026-11-08-alpha24.md).
 
@@ -80,7 +82,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.24.0-hfplus-alpha24` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.25.0-hfplus-alpha25` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha25 固定滚动时的状态栏颜色；分段选项圆角按实际高度的一半计算，移除菜单顶部渐变，并将模糊色调遮罩的不透明度降低约 5 个百分点。详见 [alpha25 验证](docs/validation/2026-11-08-alpha25.md)。
 
 Alpha24 将 Tune 精调与 Step 轮整理为单层色调刻度槽，读数不再单独套框；移除快调滑块两端箭头，拉开 ETM 操作按钮间距，并统一模拟／数字／内容选项的形状和 8 dp 间距。保留调谐、解码及既有内容。详见 [alpha24 验证](docs/validation/2026-11-08-alpha24.md)。
 
