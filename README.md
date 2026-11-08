@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.26.0-hfplus-alpha26` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.27.0-hfplus-alpha27` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+Alpha27 extends the Settings surface through the status-bar inset, makes menu icons follow all seven themes, rounds both edges of the menu header at 16 dp, separates compact band ranges, and spaces audio-content actions. It removes the mode-label backing and adds an original text-free adaptive launcher icon with monochrome artwork. See [alpha27 validation](docs/validation/2026-11-08-alpha27.md).
 
 Alpha26 adds a quick bookmark editor beside graph tuning and a searchable My Bookmarks picker below band presets, reusing the existing store. Recording format/depth/bitrate live directly in Settings → Recording. It fixes initial category emphasis and secondary-screen cutout insets, animates the panel's full-height expansion using the native Material settle, and simplifies the display icon. See [alpha26 validation](docs/validation/2026-11-08-alpha26.md).
 
@@ -84,7 +86,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.26.0-hfplus-alpha26` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.27.0-hfplus-alpha27` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+Alpha27 将设置顶栏表面延伸至状态栏，菜单图标跟随七套主题，图标栏上下统一为 16 dp 圆角；频段范围单独紧凑显示，内容页按钮留出间距。移除模式文字底块，并加入无文字的原创自适应图标及单色版本。详见 [alpha27 验证](docs/validation/2026-11-08-alpha27.md)。
 
 Alpha26 增加首页快捷收藏及 Tune 频段预设下方的“我的收藏”，复用原收藏库；录音格式／位深／码率直接放在“设置 → 录制”。修正分类标题初次强调色及二级页面刘海避让，使用 Material 原生动画展开到频率区下方，并精简显示图标。详见 [alpha26 验证](docs/validation/2026-11-08-alpha26.md)。
 

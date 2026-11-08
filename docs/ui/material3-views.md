@@ -83,3 +83,17 @@ Material 3 Views 主题与控件已经包含在项目现有依赖中，无需升
 二级 Activity 在统一基类里按 systemBars 与 displayCutout 添加内容留白；主接收页继续使用自己已有的频谱和面板 inset 规则。展开到频率数字下方时，在一次布局完成后的 pre-draw 中，先让 Material BottomSheetBehavior 进入原生 settling，再改变内容尺寸；避免 expandedOffset 的新布局先跳到终点。未另写面板动画引擎。[所用 MDC 1.12 实现](https://github.com/material-components/material-components-android/blob/1.12.0/lib/java/com/google/android/material/bottomsheet/BottomSheetBehavior.java)。
 
 频谱／瀑布菜单图标保留波形和下方两条横线。
+
+## Alpha27 顶栏、主题图标与标识
+
+设置根布局使用 `radioSurface`，正文容器使用 `radioMain`。保留已有系统 inset 留白，状态栏空白区与设置工具栏因此同色，标题／返回仍在安全区域内。
+
+菜单图标状态列表不再写死青蓝色：选中使用 `radioAccent`，未选中使用 `radioSecondary`，由主题提供。图标栏完整裁切为 16 dp 圆角，与外层面板上沿一致；较原 28 dp 更克制。用 45% 的高层色调叠在原模糊上，让底部圆角可见；模糊半径和此前透明度保持。
+
+频段名称和范围分成两个相邻 TextView，中间以留白分隔。名称维持 12 sp，范围 10 sp；跨度至少 1 MHz 的范围显示一位小数，窄频段保留必要精度，单位 MHz。名称可省略，范围优先保留完整；原接收范围及调谐精度不改。模式／速率／场强栏的模式文字背景透明，文字继续用主题色。
+
+CW／CWR、SSTV、SAT、EiBi 等内容页的共享并排操作行使用 48 dp 高度与 8 dp 间距，保留原动作及顺序。
+
+应用标识为本衍生项目新绘制的矢量图形：开放的调谐环、窄信号峰与橙色指示点，不含字母或数字。深海军蓝背景、浅青绿环与浅色信号线取自现有配色体系。图形位于自适应图标安全区域，提供 Android 8+ adaptive-icon，以及 Android 13+ monochrome 前景。桌面标识保持固定品牌色，系统主题图标可使用系统色；应用内部控件仍跟随用户所选皮肤。矢量素材随项目源码许可提供，不冒用原版图标。
+
+图标分层、安全区域与单色资源参考 [Android 官方自适应图标规范](https://developer.android.com/develop/ui/compose/system/icon_design_adaptive)；该规范使用 XML/vector 资源实现，不构成 Compose 迁移。

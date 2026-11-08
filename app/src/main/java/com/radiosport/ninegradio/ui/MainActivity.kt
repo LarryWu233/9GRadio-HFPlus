@@ -2559,6 +2559,7 @@ class MainActivity : RadioThemedActivity() {
     }
     private fun setupBottomSheet() {
         binding.controlsBottomSheet.clipToOutline = true
+        binding.controlsHeader.clipToOutline = true
         binding.panelEdgeBlur.setupWith(binding.panelBlurTarget)
             .setFrameClearDrawable(android.graphics.drawable.ColorDrawable(UiThemes.color(this,R.attr.radioMain)))
             .setBlurRadius(12f)
@@ -2873,10 +2874,21 @@ class MainActivity : RadioThemedActivity() {
 
         lifecycleScope.launch {
             combine(viewModel.centerFreqHz, viewModel.autoDemod, viewModel.capabilities) { hz, auto, caps ->
-                if (!caps.supportsFrequency(hz)) return@combine "HF+ \u76f2\u533a \u00b7 31\u201364 MHz"
-                val band = com.radiosport.ninegradio.dsp.ReceiverBandPlan.at(hz)
-                "${band.name}${if (band.end > band.start) " · ${"%.3f".format(band.start / 1e6)}–${"%.3f".format(band.end / 1e6)} MHz" else ""}${if (auto) " · AUTO" else ""}"
-            }.distinctUntilChanged().collect { binding.tvBandContext.text = it }
+                if (!caps.supportsFrequency(hz)) return@combine "HF+ 盲区" to "31–64 MHz"
+                val band=com.radiosport.ninegradio.dsp.ReceiverBandPlan.at(hz)
+                val label=band.name.replace(" · "," ")+if(auto) " AUTO" else ""
+                val range=if(band.end>band.start) {
+                    // Compact broad bands, but keep meaningful precision for narrow ham bands.
+                    if(band.end-band.start>=1_000_000) String.format(java.util.Locale.ROOT,"%.1f–%.1f MHz",band.start/1e6,band.end/1e6)
+                    else "${band.start.toExactMhzString()}–${band.end.toExactMhzString()} MHz"
+                } else ""
+                label to range
+            }.distinctUntilChanged().collect { (label,range) ->
+                binding.tvBandContext.text=label
+                binding.tvBandContext.contentDescription="$label $range".trim()
+                binding.tvBandRange.text=range
+                binding.tvBandRange.visibility=if(range.isEmpty()) View.GONE else View.VISIBLE
+            }
         }
         binding.tvSquelchStatus.contentDescription = getString(R.string.receiver_power_hint)
         binding.tvSquelchStatus.setOnClickListener {

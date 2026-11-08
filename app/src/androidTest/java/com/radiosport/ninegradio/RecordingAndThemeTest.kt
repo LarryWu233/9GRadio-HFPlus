@@ -49,6 +49,9 @@ class RecordingAndThemeTest {
                 main.recreate(); Thread.sleep(600)
                 main.onActivity { a ->
                     assertEquals(expected[index].toInt(),UiThemes.color(a,R.attr.radioMain))
+                    val tint=a.findViewById<com.google.android.material.tabs.TabLayout>(R.id.controlTabLayout).tabIconTint!!
+                    assertEquals("Selected icons follow ${preset.id}",UiThemes.color(a,R.attr.radioAccent),tint.getColorForState(intArrayOf(android.R.attr.state_selected),0))
+                    assertEquals("Inactive icons follow ${preset.id}",UiThemes.color(a,R.attr.radioSecondary),tint.defaultColor)
                     a.findViewById<View>(R.id.btnToolbarSettings).performClick()
                 }
                 Thread.sleep(500)
@@ -73,6 +76,20 @@ class RecordingAndThemeTest {
                     a.finish()
                 }
                 Thread.sleep(1100); screen("alpha17-theme-${preset.id}-main.png")
+              }
+              main.onActivity { a ->
+                fun render(drawable:android.graphics.drawable.Drawable,name:String) {
+                    val bitmap=Bitmap.createBitmap(324,324,Bitmap.Config.ARGB_8888)
+                    drawable.setBounds(0,0,324,324);drawable.draw(android.graphics.Canvas(bitmap))
+                    File(context.cacheDir,name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle()
+                }
+                val icon=a.getDrawable(R.mipmap.ic_launcher)!!
+                render(icon,"alpha27-launcher.png")
+                if(android.os.Build.VERSION.SDK_INT>=33) {
+                    val monochrome=(icon as android.graphics.drawable.AdaptiveIconDrawable).monochrome
+                    assertNotNull("Themed launcher artwork included",monochrome)
+                    render(monochrome!!,"alpha27-launcher-mono.png")
+                }
               }
             }
         }

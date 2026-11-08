@@ -57,7 +57,12 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     }
     private fun row(vararg views: View)=LinearLayout(activity).apply {
         orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL
-        views.forEach { addView(it,LinearLayout.LayoutParams(0,dp(44),1f)) }
+        views.forEachIndexed { index,view ->
+            addView(view,LinearLayout.LayoutParams(0,dp(48),1f).apply {
+                marginStart=if(index==0) 0 else dp(4)
+                marginEnd=if(index==views.lastIndex) 0 else dp(4)
+            })
+        }
     }
     private fun column()=LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(16),dp(8),dp(16),dp(16)) }
     fun setup() {

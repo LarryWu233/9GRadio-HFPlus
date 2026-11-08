@@ -106,7 +106,7 @@
                 android:textColor="?attr/radioLink"
                 android:textSize="12sp"
                 android:fontFamily="monospace"
-                android:background="#22004488"
+                android:background="@android:color/transparent"
                 android:paddingHorizontal="6dp"
                 android:paddingVertical="2dp"/>
 
@@ -158,8 +158,12 @@
         <TextView android:id="@+id/tvBandContext"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
             android:singleLine="true" android:ellipsize="end"
-            android:gravity="center_vertical" android:paddingHorizontal="12dp"
+            android:gravity="center_vertical" android:paddingStart="12dp" android:paddingEnd="4dp"
             android:textColor="?attr/radioSecondary" android:textSize="12sp" android:background="?attr/radioSurface"/>
+        <TextView android:id="@+id/tvBandRange" android:layout_width="wrap_content"
+            android:layout_height="match_parent" android:gravity="center_vertical" android:paddingEnd="6dp"
+            android:singleLine="true" android:textSize="10sp" android:textColor="?attr/radioSecondary"
+            android:fontFamily="sans-serif-condensed" android:importantForAccessibility="no"/>
         <TextView android:id="@+id/btnGraphGesture" android:layout_width="wrap_content"
             android:layout_height="match_parent" android:gravity="center" android:paddingHorizontal="10dp"
             android:text="拖动调谐 ▾" android:textColor="?attr/radioLink" android:textSize="12sp"
@@ -244,7 +248,7 @@
         <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
             android:orientation="vertical">
 
-        <LinearLayout android:id="@+id/controlsHeader" android:layout_width="match_parent"
+        <LinearLayout android:id="@+id/controlsHeader" android:background="@drawable/control_menu_header" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:orientation="vertical">
             <com.radiosport.ninegradio.ui.PanelToggleView android:id="@+id/sheetToggle"
                 android:layout_width="64dp" android:layout_height="24dp" android:layout_gravity="center_horizontal"
