@@ -59,9 +59,6 @@ enum class DemodMode(
     // voice traffic without knowing the protocol in advance.
     DIG  ("Dig",       12_500,   136_000_000L, 1_766_000_000L);
 
-    val requiresDirectSampling: Boolean
-        get() = maxFreqHz <= RtlSdrDevice_CONSTS.HF_CUTOFF_HZ
-
     /**
      * Default intermediate rate (Hz) used for the ComplexDecimator that narrows
      * the device bandwidth to a per-mode channel width before demodulation.
@@ -184,11 +181,6 @@ enum class DemodMode(
             DMR, YSF, DSTAR   -> 8
             else              -> 1        // Off / unclassified -- full bandwidth
         }
-}
-
-// Reference constants to avoid circular import
-private object RtlSdrDevice_CONSTS {
-    const val HF_CUTOFF_HZ = 28_800_000L
 }
 
 /**

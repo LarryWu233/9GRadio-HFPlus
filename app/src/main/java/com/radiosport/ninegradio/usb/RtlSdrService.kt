@@ -17,6 +17,7 @@ import com.radiosport.ninegradio.RtlSdrApplication
 import com.radiosport.ninegradio.dsp.DspEngine
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.source.IqSource
+import com.radiosport.ninegradio.source.applyModeHardwarePolicy
 import com.radiosport.ninegradio.source.RtlSdrDeviceSource
 import com.radiosport.ninegradio.source.RtlTcpSource
 import com.radiosport.ninegradio.ui.MainActivity
@@ -58,7 +59,26 @@ class RtlSdrService : Service() {
     }
 
     private val binder = LocalBinder()
-    val audioContent by lazy { com.radiosport.ninegradio.content.AudioContentReceiver(this) { receiverWanted } }
+    val audioContent by lazy { com.radiosport.ninegradio.content.AudioContentReceiver(this,
+        softwareAvailable={ receiverWanted },
+        dispatchCleanup={ action -> controlScope.launch { action() }; Unit }) }
+    private val audioCommandGeneration=AtomicLong()
+    @Volatile private var pendingAudioConfig:com.radiosport.ninegradio.content.ContentConfig?=null
+    fun startAudioContent(config:com.radiosport.ninegradio.content.ContentConfig,uri:android.net.Uri?=null) {
+        val expected=audioCommandGeneration.incrementAndGet()
+        pendingAudioConfig=config
+        controlScope.launch { if(expected==audioCommandGeneration.get()) audioContent.start(config,uri) }
+    }
+    fun stopAudioContent(reason:String="已停止") {
+        val expected=audioCommandGeneration.incrementAndGet()
+        pendingAudioConfig=null
+        audioContent.requestStop(reason)
+        controlScope.launch { if(expected==audioCommandGeneration.get()) audioContent.stop(reason) }
+    }
+    fun stopMicrophoneContent() {
+        if((pendingAudioConfig ?: audioContent.state.value.config)?.input==com.radiosport.ninegradio.content.ContentInput.MICROPHONE)
+            stopAudioContent("麦克风已暂停")
+    }
     val adsbReceiver by lazy { com.radiosport.ninegradio.dsp.ReadsbReceiver(this) }
     private var requestedMode: DemodMode?=null
     private val scope  = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -195,10 +215,13 @@ class RtlSdrService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        audioContent.stop()
+        audioCommandGeneration.incrementAndGet()
+        pendingAudioConfig=null
+        audioContent.requestStop()
         generation.incrementAndGet()
         controlScope.launch {
             disconnectNow()
+            audioContent.stop()
             controlScope.cancel()
             controlDispatcher.close()
         }
@@ -252,7 +275,9 @@ class RtlSdrService : Service() {
                 if (pendingIfBandwidth > 0) engine.setIfBandwidth(pendingIfBandwidth)
                 engine.setAudioSinkRate(pendingAudioSinkRate)
                 if(restore!=null && next.capabilities.supportsMode(restore.mode)
-                    && next.capabilities.supportsFrequency(restore.dialHz)) engine.restoreControls(restore)
+                    && next.capabilities.supportsFrequency(restore.dialHz)) {
+                    next.applyModeHardwarePolicy(restore.mode);engine.restoreControls(restore)
+                }
                 targetsJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     engine.aprsDecoder.packets.collect { packet -> control {
                         val lat=packet.latitude; val lon=packet.longitude
@@ -296,14 +321,15 @@ class RtlSdrService : Service() {
         }
     }
     private fun disconnectNow() {
-        finishCapture(false); finishCapture(true)
         captureMonitor?.cancel(); captureMonitor=null
         monitorJob?.cancel()
         targetsJob?.cancel(); targetsJob=null
         monitorJob = null
+        // Stop the producer before waiting for encoders, decoders or database I/O.
+        dspEngine?.stop()
+        finishCapture(false); finishCapture(true)
         adsbReceiver.stop()
         audioContent.attach(null)
-        dspEngine?.stop()
         dspEngine = null
         source?.close()
         source = null
@@ -432,6 +458,7 @@ class RtlSdrService : Service() {
     fun setDemodMode(mode: DemodMode) = control {
         if (capabilities.supportsMode(mode)) {
             requestedMode=mode
+            source?.applyModeHardwarePolicy(mode)
             dspEngine?.setDemodMode(mode)
             updateAdsbReceiver()
         }

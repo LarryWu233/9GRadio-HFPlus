@@ -8,6 +8,10 @@ import android.media.MediaRecorder
 import android.net.Uri
 import com.radiosport.ninegradio.dsp.DspEngine
 import com.radiosport.ninegradio.dsp.PolyphaseResampler
+import com.radiosport.ninegradio.pipeline.AudioBlock
+import com.radiosport.ninegradio.pipeline.AudioBlockClock
+import com.radiosport.ninegradio.pipeline.AudioDecoderInput
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import xdsopl.robot36.AudioSource
@@ -30,36 +34,62 @@ data class ContentState(val config: ContentConfig? = null, val running: Boolean 
     val lines: Int = 0, val totalLines: Int = 0, val mode: String = "", val sampleCount: Long = 0)
 
 /** Service-owned, bounded streaming glue. No decoding or blocking I/O on the receiver/DSP thread. */
-class AudioContentReceiver(private val context: Context, private val softwareAvailable: () -> Boolean = { true }) {
+class AudioContentReceiver(private val context: Context, private val softwareAvailable: () -> Boolean = { true },
+    private val dispatchCleanup: ((()->Unit)->Unit)? = null) {
+    private val lifecycleLock=Any()
+    private val cleanupScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val mutable = MutableStateFlow(ContentState())
     val state = mutable.asStateFlow()
     @Volatile private var engine: DspEngine? = null
     @Volatile private var session: Session? = null
+    @Volatile private var finishing:Session?=null
+    val hasPendingRelease get()=finishing!=null
     private val output = File(context.getExternalFilesDir(null), "decoded").apply { mkdirs() }
-    @Synchronized fun attach(next: DspEngine?) {
-        engine?.setContentAudioSink(null); engine?.setExternalCaptureMuted(false)
+    fun attach(next: DspEngine?):Unit = synchronized(lifecycleLock) {
+        engine?.setAudioDecoderInput(null); engine?.setExternalCaptureMuted(false)
         if (next == null && session?.config?.input == ContentInput.SOFTWARE) stop("接收机已关闭")
         engine = next
         next?.setExternalCaptureMuted(session?.config?.input == ContentInput.MICROPHONE)
-        if (session?.config?.input == ContentInput.SOFTWARE) next?.setContentAudioSink { data -> session?.offer(data, 48000, false) }
+        if (session?.config?.input == ContentInput.SOFTWARE) next?.setAudioDecoderInput(session)
     }
-    @Synchronized fun start(config: ContentConfig, uri: Uri? = null) {
+    fun start(config: ContentConfig, uri: Uri? = null):Unit = synchronized(lifecycleLock) {
         stop()
+        if(finishing!=null) {
+            mutable.value=ContentState(config,status="解码组件仍在关闭，请稍候");return@synchronized
+        }
         if (config.input == ContentInput.SOFTWARE && (engine == null || !softwareAvailable())) {
-            mutable.value = ContentState(config, status = "请先打开接收机"); return
+            mutable.value = ContentState(config, status = "请先打开接收机"); return@synchronized
         }
         val next = Session(config)
-        session = next
-        mutable.value = ContentState(config, true, "等待音频", mode = if(config.apt) "APT" else config.sstvMode)
-        if (config.input == ContentInput.SOFTWARE) engine?.setContentAudioSink { next.offer(it, 48000, false) }
+        synchronized(this) {
+            session = next
+            mutable.value = ContentState(config, true, "等待音频", mode = if(config.apt) "APT" else config.sstvMode)
+        }
+        if (config.input == ContentInput.SOFTWARE) engine?.setAudioDecoderInput(next)
         engine?.setExternalCaptureMuted(config.input == ContentInput.MICROPHONE)
         next.launch(uri)
     }
-    @Synchronized fun stop(reason: String = "已停止") {
-        val old = session; session = null
-        engine?.setContentAudioSink(null); engine?.setExternalCaptureMuted(false)
-        old?.cancel()
-        if (mutable.value.running) mutable.value = mutable.value.copy(running = false, status = reason)
+    fun stop(reason: String = "已停止"):Unit = synchronized(lifecycleLock) {
+        val old=synchronized(this) {
+            val previous=session ?: finishing;session=null;finishing=previous
+            if(mutable.value.running) mutable.value=mutable.value.copy(running=false,status=reason)
+            previous
+        }
+        engine?.setAudioDecoderInput(null); engine?.setExternalCaptureMuted(false)
+        old?.cancel();old?.process?.destroy()
+        if(old==null || old.awaitReleased(5000)) finishing=null
+        else mutable.value=mutable.value.copy(running=false,status="解码组件仍在关闭，请稍候")
+    }
+    /** UI-safe signal; joining is dispatched by the owning controller. */
+    fun requestStop(reason:String="已停止") {
+        val old=synchronized(this) {
+            session?.also { if(mutable.value.running) mutable.value=mutable.value.copy(running=false,status=reason) }
+        } ?: return
+        old.cancel()
+        scheduleCleanup { synchronized(lifecycleLock) { if(session===old || finishing===old) stop(reason) } }
+    }
+    private fun scheduleCleanup(action:()->Unit) {
+        if(dispatchCleanup!=null) dispatchCleanup.invoke(action) else cleanupScope.launch { action() }
     }
     fun stopMicrophone() { if(session?.config?.input == ContentInput.MICROPHONE) stop("麦克风已暂停") }
     /** Software-file EOF: drain decoder input before detaching the receiver. */
@@ -85,30 +115,47 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
             }
         }
     }
-    private data class Block(val pcm: FloatArray, val rate: Int)
-    private inner class Session(val config: ContentConfig) {
+    private inner class Session(val config: ContentConfig):AudioDecoderInput {
         val alive = AtomicBoolean(true)
-        val queue = ArrayBlockingQueue<Block>(96)
+        val queue = ArrayBlockingQueue<AudioBlock>(96)
+        private val inputClock=AudioBlockClock()
         @Volatile var source: AudioSource? = null
         @Volatile var process: Process? = null
         @Volatile var worker: Thread? = null
+        @Volatile var resultReader:Thread?=null
+        private val closed=java.util.concurrent.CountDownLatch(1)
         @Volatile var eof = false
         @Volatile var reachedLimit = false
         private fun publish(change: (ContentState) -> ContentState) {
             synchronized(this@AudioContentReceiver) { if (session === this && alive.get()) mutable.value = change(mutable.value) }
         }
-        fun offer(pcm: FloatArray, rate: Int, file: Boolean) {
-            if(!alive.get() || pcm.isEmpty()) return
-            val block = Block(pcm.copyOf(), rate)
-            if(file) { while(alive.get() && !queue.offer(block, 100, java.util.concurrent.TimeUnit.MILLISECONDS)) { } }
+        override fun accept(block:AudioBlock) {
+            if(!alive.get() || block.frameCount==0) return
+            require(block.channels==1) { "Decoder input must be mono" }
+            if(config.input==ContentInput.WAV) { while(alive.get() && !queue.offer(block, 100, java.util.concurrent.TimeUnit.MILLISECONDS)) { } }
             else if(!queue.offer(block)) fail("音频处理跟不上，已停止；请重新开始")
         }
         fun fail(message: String) {
+            if(!alive.get()) return
             publish { it.copy(running = false, status = message) }
-            synchronized(this@AudioContentReceiver) { if(session === this) stop(message) }
+            cancel()
+            scheduleCleanup { synchronized(lifecycleLock) { if(session===this || finishing===this) stop(message) } }
         }
         fun cancel() {
-            alive.set(false); source?.release(); process?.destroy(); worker?.interrupt(); queue.clear()
+            if(!alive.compareAndSet(true,false)) return
+            source?.release(); worker?.interrupt(); queue.clear()
+        }
+        fun awaitReleased(timeoutMs:Long):Boolean {
+            val deadline=System.nanoTime()+timeoutMs*1_000_000
+            fun remaining()=((deadline-System.nanoTime())/1_000_000).coerceAtLeast(0)
+            if(Thread.currentThread()===worker || Thread.currentThread()===resultReader) return false
+            if(!closed.await(remaining(),java.util.concurrent.TimeUnit.MILLISECONDS)) return false
+            worker?.let { if(it.isAlive) it.join(remaining().coerceAtLeast(1)) }
+            resultReader?.let { if(it.isAlive) { it.interrupt();it.join(remaining().coerceAtLeast(1)) } }
+            process?.let { if(it.isAlive && remaining()>0) it.waitFor(remaining(),java.util.concurrent.TimeUnit.MILLISECONDS) }
+            while(source?.state!=null && source?.state!=AudioSource.AudioSourceState.RELEASED && remaining()>0) Thread.sleep(5)
+            return worker?.isAlive!=true && resultReader?.isAlive!=true && process?.isAlive!=true &&
+                (source==null || source?.state==AudioSource.AudioSourceState.RELEASED)
         }
         fun launch(uri: Uri?) {
             worker = thread(name="content-${config.kind}") {
@@ -128,6 +175,7 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
                         }
                         catch(e: Exception) { if(alive.get()) fail("解码器读取失败") }
                     } }
+                    resultReader=reader
                     if(config.input != ContentInput.SOFTWARE) openSource(uri)
                     var rate = 48000; var resampler: PolyphaseResampler? = null
                     val cwResampler = if(config.kind == AudioContentKind.CW) PolyphaseResampler(48000,22050) else null
@@ -137,8 +185,8 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
                         while(alive.get()) {
                             val block = queue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                             if(block == null) { if(eof) break; continue }
-                            if(rate != block.rate) { rate = block.rate; resampler = if(rate == 48000) null else PolyphaseResampler(rate,48000) }
-                            val pcm = resampler?.process(block.pcm) ?: block.pcm
+                            if(rate != block.sampleRate) { rate = block.sampleRate; resampler = if(rate == 48000) null else PolyphaseResampler(rate,48000) }
+                            val pcm = resampler?.process(block.samples) ?: block.samples
                             samples += pcm.size
                             if(sstv != null) {
                                 sstv.process(pcm)
@@ -175,8 +223,22 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
                     }
                 } catch(e: InterruptedException) { /* canceled */ }
                 catch(e: Exception) { if(alive.get()) fail("无法解码音频：${e.message?.take(100)}") }
-                finally { source?.release(); process?.destroy();
-                    synchronized(this@AudioContentReceiver) { if(session === this) { engine?.setContentAudioSink(null); engine?.setExternalCaptureMuted(false) } }
+                finally {
+                    // Cancellation may arrive during a blocking native write. Cleanup must
+                    // still complete and acknowledge ownership even if this thread was interrupted.
+                    Thread.interrupted()
+                    try {
+                        source?.release();process?.destroy()
+                        process?.let { if(!it.waitFor(300,java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                            it.destroyForcibly();it.waitFor(2000,java.util.concurrent.TimeUnit.MILLISECONDS)
+                        } }
+                        resultReader?.let { if(it!==Thread.currentThread()) { it.interrupt();it.join(1000) } }
+                    } catch(_:InterruptedException) {
+                        process?.destroyForcibly()
+                    } finally {
+                        synchronized(this@AudioContentReceiver) { if(session === this) { engine?.setAudioDecoderInput(null); engine?.setExternalCaptureMuted(false) } }
+                        closed.countDown()
+                    }
                 }
             }
         }
@@ -198,7 +260,7 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
             src.setAudioDataListener(object: AudioSource.AudioDataListener {
                 override fun onAudioDataAvailable(buffer: FloatArray, frameCount: Int, sampleRate: Int, channels: Int) {
                     val mono = if(channels == 1) buffer.copyOf(frameCount) else FloatArray(frameCount) { (buffer[it*2]+buffer[it*2+1])*0.5f }
-                    offer(mono, sampleRate, config.input == ContentInput.WAV)
+                    accept(inputClock.publish(mono,sampleRate,1,1))
                 }
                 override fun onStatusChanged(state: AudioSource.AudioSourceState, message: String) {
                     if(state == AudioSource.AudioSourceState.COMPLETED) eof = true

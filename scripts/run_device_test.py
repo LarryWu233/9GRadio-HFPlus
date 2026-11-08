@@ -12,6 +12,7 @@ parser.add_argument('--package',default='com.radiosport.ninegradio.hfplus',help=
 parser.add_argument('--class-name',required=True)
 parser.add_argument('--output',required=True)
 parser.add_argument('--extra',action='append',default=[],help='instrumentation key=value')
+parser.add_argument('--headless',action='store_true',help='Do not launch the receiver UI; isolates non-UI benchmarks from automatic USB connection and display work')
 args=parser.parse_args()
 assert args.class_name.startswith('com.radiosport.ninegradio.')
 destination=Path(args.output).resolve()
@@ -25,10 +26,11 @@ command=adb+['shell','am','instrument','-w','-e','class',args.class_name]+extra+
     args.package+'.test/androidx.test.runner.AndroidJUnitRunner']
 with destination.open('wb') as log:
     process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT)
-    time.sleep(2)
-    subprocess.run(adb+['shell','am','start','-W','-a','android.intent.action.MAIN',
-        '-c','android.intent.category.LAUNCHER','-n',
-        args.package+'/com.radiosport.ninegradio.ui.MainActivity'],check=True,capture_output=True)
+    if not args.headless:
+        time.sleep(2)
+        subprocess.run(adb+['shell','am','start','-W','-a','android.intent.action.MAIN',
+            '-c','android.intent.category.LAUNCHER','-n',
+            args.package+'/com.radiosport.ninegradio.ui.MainActivity'],check=True,capture_output=True)
     process.wait(timeout=240)
 data=destination.read_text(encoding='utf-8',errors='replace')
 print(data)

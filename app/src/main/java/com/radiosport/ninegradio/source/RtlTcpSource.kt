@@ -143,14 +143,14 @@ class RtlTcpSource(
     // ── IqSource : open / close ───────────────────────────────────────────────
 
     override fun open(): Boolean {
+        var opening:Socket?=null
         return try {
             Log.i(TAG, "Connecting to rtl_tcp at $host:$port")
             DebugBus.setStatus(DebugBus.STAGE_USB_OPEN, DebugBus.StageStatus.OK, "Connecting to $host:$port…")
 
-            val s = Socket()
+            val s = Socket().also { opening=it }
             s.connect(InetSocketAddress(host, port), connectTimeoutMs)
             s.tcpNoDelay = true
-              s.soTimeout = 500 // bounded reads let stop cancel/join without releasing the socket early
 
             val ins  = s.getInputStream()
             val outs = s.getOutputStream()
@@ -158,8 +158,9 @@ class RtlTcpSource(
             // Read and parse the 12-byte magic header
             val magic = ByteArray(MAGIC_SIZE)
             var read = 0
-            val deadline = System.currentTimeMillis() + 5_000L
-            while (read < MAGIC_SIZE && System.currentTimeMillis() < deadline) {
+            val deadline = System.nanoTime() + 5_000_000_000L
+            while (read < MAGIC_SIZE && System.nanoTime() < deadline) {
+                s.soTimeout=((deadline-System.nanoTime())/1_000_000).coerceIn(1,5000).toInt()
                 val n = ins.read(magic, read, MAGIC_SIZE - read)
                 if (n < 0) {
                     Log.e(TAG, "Connection closed before magic received")
@@ -191,6 +192,8 @@ class RtlTcpSource(
                 "Connected to $host:$port  tuner=$tunerType gains=$serverGainCount")
 
             socket       = s
+            s.soTimeout = 500 // cancellation budget applies after the handshake
+            opening=null
             outputStream = outs
             inputStream  = ins
             _isOpen      = true
@@ -209,6 +212,7 @@ class RtlTcpSource(
             )
             true
         } catch (e: Exception) {
+            runCatching { opening?.close() }
             Log.e(TAG, "open() failed", e)
             DebugBus.setError(DebugBus.STAGE_USB_OPEN, "TCP connect failed: ${e.message}")
             _statusFlow.value = _statusFlow.value.copy(connected = false, error = e.message)
@@ -240,9 +244,14 @@ class RtlTcpSource(
                         catch (_: java.net.SocketTimeoutException) { continue }
                         if (n < 0) {
                             Log.w(TAG, "TCP stream EOF")
+                            val validBytes=filled-filled%2
+                            if(validBytes>0) {
+                                val meta=captureClock.stamp(validBytes/2,_sampleRate,_centerFreqHz)
+                                _iqFlow.offer(IqBlock.Unsigned8(readBuf.copyOf(validBytes),meta))
+                            }
                             _statusFlow.value = _statusFlow.value.copy(
                                 streamRestartRequired = true,
-                                error = "TCP stream closed by server"
+                                error = if(filled%2==0) "TCP stream closed by server" else "TCP stream ended with a truncated IQ sample"
                             )
                             return@launch
                         }
@@ -304,7 +313,6 @@ class RtlTcpSource(
         if (!sendCommand(CMD_SET_FREQ, freqHz)) return false
         _centerFreqHz = freqHz
         _statusFlow.value = _statusFlow.value.copy(centerFreqHz = freqHz)
-        // Dispatch socket write off the calling thread (may be main thread).
         return true
     }
 

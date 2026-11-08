@@ -6,7 +6,6 @@ import com.radiosport.ninegradio.audio.AudioEngine
 import com.radiosport.ninegradio.recording.IqRecorder
 import com.radiosport.ninegradio.source.IqSource
 import com.radiosport.ninegradio.source.IqBlock
-import com.radiosport.ninegradio.usb.RtlSdrDevice
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -519,13 +518,27 @@ class DspEngine(private val device: IqSource,
     @Volatile private var squelchLevel = -200f
     @Volatile private var squelchOpen = true
     @Volatile private var contentAudioSink: ((FloatArray) -> Unit)? = null
+    private data class DecoderAttachment(val input:com.radiosport.ninegradio.pipeline.AudioDecoderInput?=null,
+        val legacy:((FloatArray)->Unit)?=null)
+    @Volatile private var contentAttachment=DecoderAttachment()
+    private val decoderAudioClock=com.radiosport.ninegradio.pipeline.AudioBlockClock()
     @Volatile private var externalCaptureMuted = false
     @Volatile private var recordingPlaybackMuted=false
     fun setRecordingPlaybackMuted(muted:Boolean) {
         recordingPlaybackMuted=muted
         audioEngine.setVolume(if(receptionAvailable && !externalCaptureMuted && !muted) volume.coerceIn(0f,1f) else 0f)
     }
-    fun setContentAudioSink(sink: ((FloatArray) -> Unit)?) { contentAudioSink = sink }
+    /** Legacy synchronous compatibility hook. New decoder adapters use typed blocks. */
+    fun setContentAudioSink(sink: ((FloatArray) -> Unit)?) {
+        contentAudioSink=sink;contentAttachment=DecoderAttachment(legacy=sink)
+    }
+    fun setAudioDecoderInput(input:com.radiosport.ninegradio.pipeline.AudioDecoderInput?) {
+        // Keep the existing test/facade hook; it stamps explicit injected PCM as well.
+        contentAudioSink=input?.let { target -> { pcm ->
+            target.accept(decoderAudioClock.publish(pcm,DEFAULT_AUDIO_RATE,1,session.snapshot.epoch))
+        } }
+        contentAttachment=DecoderAttachment(input=input)
+    }
     fun setExternalCaptureMuted(muted: Boolean) {
         externalCaptureMuted = muted
         audioEngine.setVolume(if(receptionAvailable && !recordingPlaybackMuted && !muted) volume.coerceIn(0f,1f) else 0f)
@@ -584,6 +597,12 @@ class DspEngine(private val device: IqSource,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val audioFlow: SharedFlow<FloatArray> = _audioFlow.asSharedFlow()
+    private val _decoderAudioBlocks=MutableSharedFlow<com.radiosport.ninegradio.pipeline.AudioBlock>(
+        replay=0,extraBufferCapacity=8,onBufferOverflow=BufferOverflow.DROP_OLDEST)
+    /** Optional diagnostic observation; protocol decoding does not depend on this lossy flow. */
+    val decoderAudioBlocks:Flow<com.radiosport.ninegradio.pipeline.AudioBlock> = _decoderAudioBlocks.filter {
+        !session.snapshot.closed && it.epoch==session.snapshot.epoch
+    }
 
     /**
      * Raw IQ float samples — consumed by ADS-B decoder which needs magnitude at sample-rate.
@@ -1324,12 +1343,6 @@ class DspEngine(private val device: IqSource,
             narrowDecimatorInputRate  = 0
             narrowDecimatorOutputRate = 0
         }
-        // Auto-configure direct sampling for HF modes
-        if (mode.requiresDirectSampling && device.capabilities.directSampling) {
-            device.setDirectSampling(RtlSdrDevice.DIRECT_SAMPLING_Q)  // = 2
-        } else if (device.getDirectSampling() != RtlSdrDevice.DIRECT_SAMPLING_OFF) {  // != 0
-            device.setDirectSampling(RtlSdrDevice.DIRECT_SAMPLING_OFF) // = 0
-        }
         // Reapply the carrier-offset hardware frequency whenever the mode changes
         // into or out of USB/LSB.  setCarrierFrequency() applies ±SSB_BFO_OFFSET_HZ
         // for USB/LSB and passes dialFreqHz straight through for all other modes.
@@ -1355,7 +1368,7 @@ class DspEngine(private val device: IqSource,
         }
         updateStats()
         DebugBus.setStatus(DebugBus.STAGE_DEMODULATOR, DebugBus.StageStatus.OK,
-            "Mode: ${mode.displayName}  directSamp: ${mode.requiresDirectSampling}")
+            "Mode: ${mode.displayName}")
         Log.i(TAG, "Demod mode: $mode")
         configurationChanged()
     }
@@ -1709,6 +1722,7 @@ class DspEngine(private val device: IqSource,
         }
     }
     @Synchronized private fun processIqBlock(block: IqBlock) {
+        val decoderAttachment=contentAttachment
         if (!session.admits(block.metadata)) { staleInputBlocks.incrementAndGet();return }
         if (block.metadata.streamId != 0L && (block.metadata.sampleRate != device.getSampleRate()
                 || block.metadata.centerHz != device.getCenterFrequency())) { staleInputBlocks.incrementAndGet();return }
@@ -1929,7 +1943,7 @@ class DspEngine(private val device: IqSource,
         //     cleanly: e.g. to 32 kHz directly (÷80) for a 32 kHz sink.
         // Raw IQ recording, spectrum, magnitude and dual-data consumers above
         // retain the source data. Analog IQ is repaired before channel filtering.
-        iqNoiseBlanker.process(floatIq,device.getSampleRate(),demodMode,device.getCenterFrequency(),noiseBlankerEnabled && contentAudioSink == null,iqNbThreshold)
+        iqNoiseBlanker.process(floatIq,device.getSampleRate(),demodMode,device.getCenterFrequency(),noiseBlankerEnabled && decoderAttachment.input==null && decoderAttachment.legacy==null,iqNbThreshold)
         if(DebugBus.counter(DebugBus.STAGE_DSP_PROCESS)%30L==0L) {
             val nb=iqNoiseBlanker.stats()
             DebugBus.setExtra(DebugBus.STAGE_DSP_PROCESS,"NB_DOMAIN","pre-demod wideband IQ")
@@ -2131,9 +2145,12 @@ class DspEngine(private val device: IqSource,
         }
 
         // ── Publish 48 kHz audio baseband for APRS / other subscribers ────────
-        if (decoderAudio.isNotEmpty()) contentAudioSink?.invoke(decoderAudio)
-        if (decoderAudio.isNotEmpty() && _audioFlow.subscriptionCount.value > 0) {
-            _audioFlow.tryEmit(decoderAudio)
+        if (decoderAudio.isNotEmpty()) {
+            val published=decoderAudioClock.publish(decoderAudio,DEFAULT_AUDIO_RATE,1,session.snapshot.epoch)
+            val input=decoderAttachment.input
+            if(input!=null) input.accept(published) else decoderAttachment.legacy?.invoke(published.samples)
+            if(_decoderAudioBlocks.subscriptionCount.value>0) _decoderAudioBlocks.tryEmit(published)
+            if(_audioFlow.subscriptionCount.value>0) _audioFlow.tryEmit(published.samples)
         }
 
         // ── Pipe the same pre-vocoder audio to an external decoder app ────────

@@ -107,7 +107,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         if(restoring) return
         selected=if(mode in listOf(DemodMode.CW,DemodMode.CWR)) 15 else null
         prefs.edit().putInt("selected",selected ?: 0).apply()
-        if(getService()?.audioContent?.state?.value?.config?.input == ContentInput.SOFTWARE) getService()?.audioContent?.stop()
+        if(getService()?.audioContent?.state?.value?.config?.input == ContentInput.SOFTWARE) getService()?.stopAudioContent()
         refreshVisibility()
         if(selected==15) showModule(15)
     }
@@ -165,7 +165,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val kind=when(selected) { 16 -> AudioContentKind.SSTV; 17 -> AudioContentKind.SAT; else -> null }
         if(enabled && kind!=null && panels[kind]?.microphone?.isChecked==false) prepareRf(kind)
     }
-    fun onBackground() { getService()?.audioContent?.stopMicrophone() }
+    fun onBackground() { getService()?.stopMicrophoneContent() }
     fun microphoneResult(granted: Boolean) {
         val kind=permissionKind ?: return; permissionKind=null
         val panel=panels[kind] ?: return
@@ -186,7 +186,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val status=label("未启动")
         val details=label("",11f)
         val action=button("开始") { val state=getService()?.audioContent?.state?.value
-            if(state?.running==true && state.config?.kind==kind) getService()?.audioContent?.stop() else start() }
+            if(state?.running==true && state.config?.kind==kind) getService()?.stopAudioContent() else start() }
         val option=button("Auto") { chooseOptions() }
         val transcript=label("",14f).apply { typeface=Typeface.MONOSPACE; setTextIsSelectable(true); gravity=Gravity.TOP; setPadding(dp(8),dp(8),dp(8),dp(8)); setBackgroundResource(R.drawable.compact_section_card) }
         val image=ImageView(activity).apply { scaleType=ImageView.ScaleType.FIT_CENTER; setBackgroundColor(0xff000000.toInt()); contentDescription="接收图像" }
@@ -219,7 +219,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
             history.onRowClick={ index -> files.getOrNull(index)?.let { openFile(it) } }
             microphone.setOnCheckedChangeListener { _, checked ->
                 if(!ignore) {
-                    getService()?.audioContent?.stop()
+                    getService()?.stopAudioContent()
                     if(checked && ContextCompat.checkSelfPermission(activity,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
                         permissionKind=kind; permissionStart=false; requestMicrophone()
                     }
@@ -235,7 +235,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
             val service=getService() ?: run { status.text="服务尚未就绪"; return }
             selected=id(kind)
             val input=if(uri!=null) ContentInput.WAV else if(microphone.isChecked) ContentInput.MICROPHONE else ContentInput.SOFTWARE
-            service.audioContent.start(ContentConfig(kind,input,kind==AudioContentKind.SAT && apt,mode,wpm),uri)
+            service.startAudioContent(ContentConfig(kind,input,kind==AudioContentKind.SAT && apt,mode,wpm),uri)
         }
         fun render(state: ContentState) {
             if(state.config?.kind!=kind) { action.text="开始"; return }
@@ -268,7 +268,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
                 else listOf("Auto","Robot 36 Color","Robot 72 Color","PD 50","PD 90","PD 120","PD 160","PD 180","PD 240","PD 290","Martin 1","Martin 2","Scottie 1","Scottie 2","Scottie DX","Wraase SC2–180")+if(kind==AudioContentKind.SAT) listOf("APT（历史）") else emptyList()
             val checked=values.indexOf(if(kind==AudioContentKind.CW) if(wpm==0) "Auto WPM" else "$wpm WPM" else if(apt && kind==AudioContentKind.SAT) "APT（历史）" else mode)
             AlertDialog.Builder(activity).setTitle(if(kind==AudioContentKind.CW) "速度" else "图像模式").setSingleChoiceItems(values.toTypedArray(),checked) { dialog,which ->
-                getService()?.audioContent?.stop()
+                getService()?.stopAudioContent()
                 if(kind==AudioContentKind.CW) { wpm=if(which==0) 0 else values[which].substringBefore(' ').toInt(); prefs.edit().putInt("cw_wpm",wpm).apply() }
                 else { apt=values[which]=="APT（历史）"; if(!apt) mode=values[which]; prefs.edit().putString("${kind}_sstv",mode).putBoolean("sat_apt",apt).apply() }
                 updateOption(); dialog.dismiss()

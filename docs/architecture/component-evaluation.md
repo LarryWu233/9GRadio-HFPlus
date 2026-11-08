@@ -44,3 +44,15 @@ Three instrumentation cases pass: calibrated complex-tone spectra from 256 to 65
 | 8192 | 592.875 | 448.447 | 24.36% |
 
 Decision: **retain the existing default backend**. The 256/2048 cases do not reach 20%; 19.61% is not rounded up to a pass. The 8192 case clears only the timing threshold; full application memory/latency and all-ABI checks remain prerequisites for enabling it. The native adapter is available to instrumentation, with no UI comparison toggle or changed reception default. Additional candidates remain pending, not implicitly rejected.
+
+## Isolated resampling experiments (not enabled in reception)
+
+`benchmarks/receiver-components` builds standalone Android executables. It is not linked into the application. SpeexDSP uses its floating-point resampler at quality 5, with architecture SIMD, `-O3` and no additional fast-math. liquid-dsp uses a static build, its multistage complex resampler with 80 dB requested attenuation, and NEON on arm64. Examples, benchmarks, tests, logging, timestamps, FFTW and automatic host SIMD detection are disabled for that cross-build.
+
+The clock experiment additionally uses the unmodified control equations from PipeWire 1.4.8's MIT-licensed `spa/utils/dll.h`, pinned to `8b43ed5c910e892d53de5a96aa01e9280a5b6650`. The generated standalone header removes only the unused `spa/utils/defs.h` include; no PipeWire runtime is added. Original header SHA-256: `5dd6a467ff661f0e1ed1b59fa2e0b32db270f8c56b4ebbbdce700e47b0ee26ee`; COPYING: `8909c319a7e27dbb33a15b9035f89ab3b7b2f6a12f8bcddc755206a8db1ada44`.
+
+Two accelerated simulations each cover 1800 seconds of sample time with a known output clock and 20 ms stereo packets. With +100 ppm drift, queue duration stays between 199.5095 and 200.0788 ms; with -100 ppm it stays between 199.9217 and 200.4922 ms. Both end at 200 ms without packet drops or periodic zero insertion. Uncorrected controls would end at 20 and 380 ms. These are simulations, **not** 30-minute Android playback or proof of a production clock estimator. The initial adapter used an unnecessarily large fractional denominator and encountered Speex's checked integer overflow; using the bounded 48 kHz ratio fixes the adapter without changing upstream code.
+
+The liquid-dsp probe converts 2.4 MS/s to 48 kS/s with irregular input chunks. A 9 kHz tone measures +0.001920 dB, and a 59 kHz alias probe measures -151.516 dB at its expected 11 kHz alias. This single-tone result is not a full stopband specification. Five kernel trials measure 26.896, 28.103, 28.118, 27.438 and 28.145 ns/input sample. The existing 127-tap reference response at those two frequencies is -0.545 and -26.373 dB, identifying an alias-rejection case worth evaluating in the complete path. JNI overhead, full-chain performance, decoder/monitor continuity and lifecycle/ABI gates remain pending. Neither resampler is selected by the application from these results alone.
+
+中文：以上为独立实验，不代表已替换应用组件。时钟测试使用已知偏差的模拟播放时钟；实际 Android 输出时钟接入、完整链路比较和所有 ABI 验证仍需继续。
