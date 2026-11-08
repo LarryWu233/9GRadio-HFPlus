@@ -124,13 +124,10 @@ class RtlTcpSource(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var streamingJob: Job? = null
 
-    private val _iqFlow = MutableSharedFlow<IqBlock>(
-        replay = 1,
-        extraBufferCapacity = 16,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-    override val iqFlow: SharedFlow<IqBlock> = _iqFlow.asSharedFlow()
-    override val iqSubscriberCount: Int get() = _iqFlow.subscriptionCount.value
+    private val _iqFlow = com.radiosport.ninegradio.pipeline.IqStream()
+    private val captureClock = com.radiosport.ninegradio.pipeline.CaptureClock()
+    override val iqFlow = _iqFlow.flow
+    override val iqSubscriberCount: Int get() = _iqFlow.subscriberCount
 
     private val _statusFlow = MutableStateFlow(IqSource.SourceStatus())
     override val statusFlow: StateFlow<IqSource.SourceStatus> = _statusFlow.asStateFlow()
@@ -223,6 +220,7 @@ class RtlTcpSource(
         if (!_isOpen) { Log.e(TAG, "startStreaming() called on closed source"); return }
         if (_isStreaming) { Log.w(TAG, "startStreaming() called while already streaming"); return }
         _isStreaming = true
+        captureClock.restart()
 
         DebugBus.setStatus(DebugBus.STAGE_IQ_STREAM, DebugBus.StageStatus.OK,
             "TCP stream started  $host:$port  ${_sampleRate/1000} kS/s")
@@ -249,7 +247,8 @@ class RtlTcpSource(
                         filled += n
                     }
                     // Emit a copy — the pool isn't needed for TCP (no DMA constraints)
-                    _iqFlow.tryEmit(IqBlock.Unsigned8(readBuf.copyOf()))
+                    val meta = captureClock.stamp(readBuf.size / 2, _sampleRate, _centerFreqHz)
+                    _iqFlow.offer(IqBlock.Unsigned8(readBuf.copyOf(), meta))
                 }
             } catch (e: SocketException) {
                 if (_isStreaming) {  // not a deliberate close

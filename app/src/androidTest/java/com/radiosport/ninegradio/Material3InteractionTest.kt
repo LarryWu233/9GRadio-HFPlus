@@ -72,7 +72,7 @@ class Material3InteractionTest {
                 val stopped=ticks.get();Thread.sleep(350)
                 assertEquals("Background cannot keep tuning",stopped,ticks.get())
                 send(MotionEvent.ACTION_CANCEL,center)
-                inst.uiAutomation.executeShellCommand("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.radiosport.ninegradio.hfplus/com.radiosport.ninegradio.ui.MainActivity").use { descriptor ->
+                inst.uiAutomation.executeShellCommand("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${inst.targetContext.packageName}/com.radiosport.ninegradio.ui.MainActivity").use { descriptor ->
                     android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
                 }
                 Thread.sleep(500)

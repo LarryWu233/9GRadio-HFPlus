@@ -8,6 +8,7 @@ from android_tools import find_adb
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--adb', help='ADB executable (otherwise PATH or Android SDK environment)')
 parser.add_argument('--serial',required=True)
+parser.add_argument('--package',default='com.radiosport.ninegradio.hfplus',help='Target application ID; use .arch for the architecture preview')
 parser.add_argument('--class-name',required=True)
 parser.add_argument('--output',required=True)
 parser.add_argument('--extra',action='append',default=[],help='instrumentation key=value')
@@ -21,13 +22,13 @@ for item in args.extra:
     key,value=item.split('=',1)
     extra+=['-e',key,value]
 command=adb+['shell','am','instrument','-w','-e','class',args.class_name]+extra+[
-    'com.radiosport.ninegradio.hfplus.test/androidx.test.runner.AndroidJUnitRunner']
+    args.package+'.test/androidx.test.runner.AndroidJUnitRunner']
 with destination.open('wb') as log:
     process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT)
     time.sleep(2)
     subprocess.run(adb+['shell','am','start','-W','-a','android.intent.action.MAIN',
         '-c','android.intent.category.LAUNCHER','-n',
-        'com.radiosport.ninegradio.hfplus/com.radiosport.ninegradio.ui.MainActivity'],check=True,capture_output=True)
+        args.package+'/com.radiosport.ninegradio.ui.MainActivity'],check=True,capture_output=True)
     process.wait(timeout=240)
 data=destination.read_text(encoding='utf-8',errors='replace')
 print(data)

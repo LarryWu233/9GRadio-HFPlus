@@ -40,7 +40,7 @@ class RecordingAndThemeTest {
             val prefs=PreferenceManager.getDefaultSharedPreferences(context)
             val expected=listOf(0xff071018,0xff0c2340,0xff171c17,0xff000000,0xff0d1117,0xff091521,0xff22252a)
             context.getSharedPreferences("rtlsdr_prefs",0).edit().putBoolean("receiverEnabled",false).commit()
-            inst.uiAutomation.executeShellCommand("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n com.radiosport.ninegradio.hfplus/com.radiosport.ninegradio.ui.MainActivity").close()
+            inst.uiAutomation.executeShellCommand("am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n ${inst.targetContext.packageName}/com.radiosport.ninegradio.ui.MainActivity").close()
             Thread.sleep(1000)
             ActivityScenario.launch(MainActivity::class.java).use { main ->
               for((index,preset) in UiThemes.presets.withIndex()) {

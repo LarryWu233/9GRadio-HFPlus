@@ -36,7 +36,7 @@ interface IqSource : Closeable {
     fun open(): Boolean
 
     /** Start emitting IQ data on [iqFlow]. */
-    fun startStreaming(bufferSize: Int = com.radiosport.ninegradio.dsp.DspEngine.USB_STREAMING_BUF)
+    fun startStreaming(bufferSize: Int = 32_768)
 
     /** Stop streaming; the source remains open (tunable). */
     fun stopStreaming()

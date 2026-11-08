@@ -1,4 +1,5 @@
 rootProject.name = "9GRadio"
 include ':app'
+include ':radio-core'
 include ':blurview'
 project(':blurview').projectDir = file('third_party/blurview')

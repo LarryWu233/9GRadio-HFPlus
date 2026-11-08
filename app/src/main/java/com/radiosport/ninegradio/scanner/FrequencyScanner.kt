@@ -1,5 +1,7 @@
 package com.radiosport.ninegradio.scanner
 
+import com.radiosport.ninegradio.dsp.spectrum
+
 import android.util.Log
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.dsp.FftEngine

@@ -372,14 +372,11 @@ class RtlSdrDevice(
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private val _iqFlow = MutableSharedFlow<ByteArray>(
-        replay = 1,
-        extraBufferCapacity = 16,
-        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
-    )
-    val iqFlow: SharedFlow<ByteArray> = _iqFlow.asSharedFlow()
+    private val _iqFlow = com.radiosport.ninegradio.pipeline.IqStream()
+    private val captureClock = com.radiosport.ninegradio.pipeline.CaptureClock()
+    val iqFlow = _iqFlow.flow
 
-    val iqSubscriberCount: Int get() = _iqFlow.subscriptionCount.value
+    val iqSubscriberCount: Int get() = _iqFlow.subscriberCount
 
     private val _statusFlow = MutableStateFlow(DeviceStatus())
     val statusFlow: StateFlow<DeviceStatus> = _statusFlow.asStateFlow()
@@ -1557,7 +1554,7 @@ class RtlSdrDevice(
     //  STREAMING
     // ─────────────────────────────────────────────────────────────────────────
 
-    fun startStreaming(bufferSize: Int = com.radiosport.ninegradio.dsp.DspEngine.USB_STREAMING_BUF) {
+    fun startStreaming(bufferSize: Int = 32_768) {
         if (!isOpen || isStreaming) return
         isStreaming = true
 
@@ -1566,7 +1563,8 @@ class RtlSdrDevice(
 
         streamingJob = scope.launch {
             val subscribeDeadline = System.currentTimeMillis() + 2_000L
-            while (_iqFlow.subscriptionCount.value == 0) {
+            captureClock.restart()
+            while (_iqFlow.subscriberCount == 0) {
                 if (System.currentTimeMillis() > subscribeDeadline) {
                     Log.w(TAG, "startStreaming: no subscriber after 2 s — proceeding")
                     break
@@ -1666,9 +1664,9 @@ class RtlSdrDevice(
                             System.arraycopy(buf, chunkStart, chunk, 0, chunkBytes)
                             chunkPoolIdx   = (chunkPoolIdx + 1) % NUM_CHUNK_BUFS
                             chunkStart     = chunkEnd
-                            if (!_iqFlow.tryEmit(chunk)) {
-                                DebugBus.incrementIqFlowDrops()
-                            }
+                            val meta = captureClock.stamp(chunkBytes / 2, _sampleRate, _centerFreqHz)
+                            // Own only the valid transfer bytes; pooled storage cannot escape.
+                            _iqFlow.offer(com.radiosport.ninegradio.source.IqBlock.Unsigned8(chunk.copyOf(chunkBytes), meta))
                             DebugBus.tick(DebugBus.STAGE_IQ_STREAM)
                             // yield() between chunks: gives Dispatchers.Default a scheduling
                             // slot to run processIqBlock() on chunk N before chunk N+1 is

@@ -16,9 +16,10 @@ class FileIqSource(private val file: File, private val rate: Int, private val fr
     private val info=com.radiosport.ninegradio.recording.IqRecordingInfo.read(file,frequency,mode)
     val mode=info.mode
     val dialFrequencyHz=info.dialHz
-    private val samples = MutableSharedFlow<IqBlock>(extraBufferCapacity = 16, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    override val iqFlow = samples.asSharedFlow()
-    override val iqSubscriberCount get() = samples.subscriptionCount.value
+    private val samples = com.radiosport.ninegradio.pipeline.IqStream(lossless = true)
+    private val captureClock = com.radiosport.ninegradio.pipeline.CaptureClock()
+    override val iqFlow = samples.flow
+    override val iqSubscriberCount get() = samples.subscriberCount
     private val status = MutableStateFlow(IqSource.SourceStatus(centerFreqHz = info.hardwareHz, sampleRate = rate))
     override val statusFlow = status.asStateFlow()
     private val floating = info.floating
@@ -50,17 +51,18 @@ class FileIqSource(private val file: File, private val rate: Int, private val fr
                     }
                     if (count == 0) break
                     require(count % bytesPerSample == 0) { "Truncated IQ sample" }
+                    val meta = captureClock.stamp(count / bytesPerSample, rate, info.hardwareHz)
                     val block = if (floating) {
                         val values = FloatArray(count / 4)
                         ByteBuffer.wrap(buffer, 0, count).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(values)
                         require(values.all { it.isFinite() }) { "Invalid float IQ sample" }
-                        IqBlock.Float32(values)
-                    } else IqBlock.Unsigned8(buffer.copyOf(count))
-                    samples.emit(block)
+                        IqBlock.Float32(values, meta.sequence, meta)
+                    } else IqBlock.Unsigned8(buffer.copyOf(count), meta)
+                    samples.send(block)
                     deadline += block.sampleCount * 1_000_000_000L / rate
                     delay(((deadline - System.nanoTime()) / 1_000_000).coerceAtLeast(0))
                 }
-                status.value = status.value.copy(connected = false)
+                samples.complete()
             } catch (error: Exception) {
                 if (isActive) status.value = status.value.copy(connected = false, error = error.message)
             }

@@ -527,7 +527,7 @@ class DspEngine(private val device: IqSource) {
         if (receptionAvailable == available) return
         audioEngine.setVolume(0f)
         receptionAvailable = available
-        lastFloatSequence = -1
+        iqContinuity.reset()
         while (audioWriteChannel.tryReceive().isSuccess) { }
         pcmPacketizer.reset()
         audioEngine.clearPendingAudio()
@@ -1629,15 +1629,14 @@ class DspEngine(private val device: IqSource) {
         }
     }
 
-    @Volatile private var lastFloatSequence = -1L
+    private val iqContinuity = com.radiosport.ninegradio.pipeline.IqContinuity()
     @Synchronized private fun processIqBlock(block: IqBlock) {
         if (!receptionAvailable) return
-        val sequence = (block as? IqBlock.Float32)?.sequence ?: -1
-        if (sequence >= 0) {
-            if (lastFloatSequence >= 0 && sequence > lastFloatSequence + 1)
-                DebugBus.incrementIqFlowDrops(sequence - lastFloatSequence - 1)
-            lastFloatSequence = sequence
-        }
+        val continuity = iqContinuity.accept(block.metadata, block.sampleCount)
+        if (continuity.change == com.radiosport.ninegradio.pipeline.IqContinuity.Change.STALE) return
+        if (continuity.missingBlocks > 0) DebugBus.incrementIqFlowDrops(continuity.missingBlocks)
+        if (continuity.missingSamples > 0) DebugBus.setExtra(DebugBus.STAGE_IQ_STREAM,
+            "CONSUMER_MISSING_SAMPLES", continuity.missingSamples.toString())
         val rawIq = (block as? IqBlock.Unsigned8)?.bytes
         // ── Zero-content guard ────────────────────────────────────────────────
         // The async URB path in RtlSdrUsbHelper can produce all-zero buffers

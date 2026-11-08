@@ -23,9 +23,10 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
     private external fun nativeAttenuation(handle: Long, index: Int): Boolean
     private external fun nativePpm(handle: Long, ppm: Int): Boolean
 
-    private val samples = MutableSharedFlow<IqBlock>(extraBufferCapacity = 128, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    override val iqFlow = samples.asSharedFlow()
-    override val iqSubscriberCount get() = samples.subscriptionCount.value
+    private val samples = com.radiosport.ninegradio.pipeline.IqStream()
+    private val clock = com.radiosport.ninegradio.pipeline.CaptureClock()
+    override val iqFlow = samples.flow
+    override val iqSubscriberCount get() = samples.subscriberCount
     private val status = MutableStateFlow(IqSource.SourceStatus(centerFreqHz = 10_000_000, sampleRate = 768000))
     override val statusFlow = status.asStateFlow()
     private var connection: UsbDeviceConnection? = null
@@ -33,12 +34,13 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
     @Volatile private var streaming = false
     @Volatile private var caps = DeviceCapabilities.airspy()
     override val capabilities get() = caps
-    private var sequence = 0L
 
     // Called from the driver's consumer thread. JNI supplies a fresh owned array.
     @Suppress("unused")
     private fun onIq(values: FloatArray, dropped: Long) {
-        samples.tryEmit(IqBlock.Float32(values, sequence++))
+        val state = status.value
+        val meta = clock.stamp(values.size / 2, state.sampleRate, state.centerFreqHz, driverLostSamples = dropped)
+        samples.offer(IqBlock.Float32(values, meta.sequence, meta))
         DebugBus.recordIqTransfer(values.size * 4, values.size * 4, 0L)
         DebugBus.tick(DebugBus.STAGE_IQ_STREAM)
         if (dropped > 0) DebugBus.setExtra(DebugBus.STAGE_IQ_STREAM, "HF_DRIVER_DROPPED_SAMPLES", dropped.toString())
@@ -51,7 +53,7 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
         if (opened == 0L) { conn.close(); return false }
         connection = conn
         handle = opened
-        sequence = 0
+        clock.restart()
         val rates = nativeRates(handle).filter { it > 0 }.distinct().sorted()
         if (rates.isEmpty()) { close(); return false }
         caps = DeviceCapabilities.airspy(rates)
@@ -80,6 +82,7 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
         connection?.close()
         connection = null
         status.value = status.value.copy(connected = false)
+        samples.complete()
     }
     @Synchronized override fun setCenterFrequency(freqHz: Long): Boolean {
         if (handle == 0L || !caps.supportsFrequency(freqHz)) return false
