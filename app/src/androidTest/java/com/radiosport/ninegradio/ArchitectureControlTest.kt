@@ -16,6 +16,51 @@ import org.junit.runner.RunWith
 /** Controller fault/regression test. Synthetic source; no USB, UI or saved settings. */
 @RunWith(AndroidJUnit4::class)
 class ArchitectureControlTest {
+    @Test fun driverFailureStopsTheSessionAndRequiresManualRecovery():Unit=runBlocking {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val bound=CompletableDeferred<RtlSdrService>()
+        val connection=object:ServiceConnection {
+            override fun onServiceConnected(name:ComponentName,binder:IBinder) {
+                bound.complete((binder as RtlSdrService.LocalBinder).getService())
+            }
+            override fun onServiceDisconnected(name:ComponentName)=Unit
+        }
+        assertTrue(context.bindService(Intent(context,RtlSdrService::class.java),connection,Context.BIND_AUTO_CREATE))
+        val service=withTimeout(5000) { bound.await() }
+        val failOnce=java.util.concurrent.atomic.AtomicBoolean(true)
+        val latePolls=java.util.concurrent.atomic.AtomicLong()
+        try {
+            val factory:()->IqSource={
+                val delegate=ArchitectureLifecycleTest.Source()
+                val status=kotlinx.coroutines.flow.MutableStateFlow(IqSource.SourceStatus(connected=true))
+                object:IqSource by delegate {
+                    override val statusFlow=status
+                    override fun pollStreamingStatus() {
+                        if(!delegate.isOpen()) latePolls.incrementAndGet()
+                        if(failOnce.compareAndSet(true,false)) status.value=status.value.copy(
+                            error="simulated driver stream termination",streamRestartRequired=true)
+                    }
+                }
+            }
+            RtlSdrService::class.java.getDeclaredField("selectedFactory").apply { isAccessible=true }.set(service,factory)
+            RtlSdrService::class.java.getDeclaredMethod("switchSource",Function0::class.java,java.lang.Integer::class.java)
+                .apply { isAccessible=true }.invoke(service,factory,null)
+            withTimeout(10000) { service.connectionState.first { it is RtlSdrService.ConnectionState.Connected } }
+            val first=service.source!!
+            withTimeout(7000) { service.connectionState.first { it is RtlSdrService.ConnectionState.Error } }
+            service.awaitControls()
+            assertFalse(first.isOpen());assertNull(service.source)
+            assertTrue("Closed session keeps a diagnostic summary",service.pipelineDiagnostics()!=null)
+            delay(1200)
+            assertTrue("Driver errors must not oscillate OPEN/CLOSED",service.connectionState.value is RtlSdrService.ConnectionState.Error)
+            service.setReceiverEnabled(true);service.awaitControls()
+            assertTrue(service.connectionState.value is RtlSdrService.ConnectionState.Connected)
+            assertNotSame(first,service.source)
+            assertEquals("Obsolete poll work cannot access a closed source",0L,latePolls.get())
+        } finally {
+            service.disconnectSource();service.awaitControls();context.unbindService(connection)
+        }
+    }
     @Test fun rateRestartRestoresControlsAndRejectsOldScannerLease():Unit=runBlocking {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val bound=CompletableDeferred<RtlSdrService>()

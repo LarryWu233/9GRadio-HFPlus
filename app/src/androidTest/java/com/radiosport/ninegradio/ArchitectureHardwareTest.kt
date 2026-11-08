@@ -47,11 +47,16 @@ class ArchitectureHardwareTest {
             val before=engine.pipelineDiagnostics()
             val start=SystemClock.elapsedRealtime();val cpu=Process.getElapsedCpuTime()
             var maxMemory=0L;var reports=0
+            var lastProgress=SystemClock.elapsedRealtime();var lastSamples=before.inputSamples
             while(SystemClock.elapsedRealtime()-start<seconds*1000L) {
                 delay(1000)
+                source.pollStreamingStatus()
+                assertNull("Driver stream state",source.statusFlow.value.error)
                 assertNull("Receiver failure",engine.failure.value)
                 assertTrue("USB remains open",source.isOpen())
                 val current=engine.pipelineDiagnostics()
+                if(current.inputSamples!=lastSamples) { lastSamples=current.inputSamples;lastProgress=SystemClock.elapsedRealtime() }
+                assertTrue("IQ processing has stalled for five seconds",SystemClock.elapsedRealtime()-lastProgress<5000)
                 assertEquals("Application IQ gaps",before.inputMissingSamples,current.inputMissingSamples)
                 assertEquals("Driver IQ losses; locate and rerun rather than hiding them",before.driverMissingSamples,current.driverMissingSamples)
                 assertEquals("Playback queue drops",before.playbackDroppedPackets,current.playbackDroppedPackets)

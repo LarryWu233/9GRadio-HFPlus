@@ -1,7 +1,11 @@
 package com.radiosport.ninegradio.pipeline
 
 /** A selected decoder adapter owns delivery policy: live input must never wait for decoding. */
-fun interface AudioDecoderInput { fun accept(block:AudioBlock) }
+fun interface AudioDecoderInput {
+    fun accept(block:AudioBlock)
+    /** Nonblocking admission barrier. Reset native/stateful work on the decoder worker. */
+    fun configure(epoch:Long) = Unit
+}
 
 /** Serial software audio publication clock. Positions count samples, not callback wall time. */
 class AudioBlockClock {

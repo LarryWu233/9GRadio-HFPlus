@@ -100,11 +100,23 @@ class AudioContentPipelineTest {
         override fun close() { scope.cancel() }
     }
     private fun cwMode(mode: DemodMode,carrierHz: Int=100,rate: Int=240000) = runBlocking {
-        val source=MorseIq(true,carrierHz,rate,rate>1_000_000); val engine=DspEngine(source)
+        val source=MorseIq(true,carrierHz,rate,rate>1_000_000)
+        // Keep one identical fixture binary usable on the archived preview. Optional
+        // dependency-injection constructor parameters are not binary-compatible.
+        val compatibility=InstrumentationRegistry.getArguments().getString("baselineCompatibility")=="1"
+        val engine=if(compatibility) {
+            val ctor=DspEngine::class.java.constructors.first { it.parameterCount in 3..4 }
+            val args=if(ctor.parameterCount==3) arrayOf(source,null,ReferenceIqResamplers)
+                else arrayOf(source,null,ReferenceIqResamplers,ExternalDecoderStream())
+            // Supply the same production AudioTrack adapter rather than substituting
+            // a faster silent output in a receiver-throughput comparison.
+            args[1]=com.radiosport.ninegradio.pipeline.AudioOutputFactory { com.radiosport.ninegradio.audio.AudioEngine(it) }
+            ctor.newInstance(*args) as DspEngine
+        } else DspEngine(source)
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         // Reuse this exact test binary with the archived reference APK. The additional
         // optional cleanup dispatcher changed only the receiver constructor's JVM signature.
-        val receiver=if(InstrumentationRegistry.getArguments().getString("baselineCompatibility")=="1") {
+        val receiver=if(compatibility) {
             val ctor=AudioContentReceiver::class.java.constructors.first { it.parameterCount in 2..3 }
             val args=if(ctor.parameterCount==2) arrayOf(context,{ true }) else arrayOf(context,{ true },null)
             ctor.newInstance(*args) as AudioContentReceiver
@@ -119,7 +131,9 @@ class AudioContentPipelineTest {
             engine.setContentAudioSink { data -> chunks.add(data.copyOf()); sink(data) }
             engine.start()
             val decoded=withTimeoutOrNull(12000) { while(!receiver.state.value.text.replace(Regex("\\s+"),"").contains("TEST")) delay(100); true } ?: false
-            assertTrue("$mode: ${receiver.state.value}",decoded)
+            assertTrue("$mode: ${receiver.state.value}; sourceElapsedMs=${source.elapsedMs}; " +
+                "audioFrames=${chunks.sumOf { it.size }}; generatorMs=${source.generationNanos/1_000_000}; " +
+                "deliveryMs=${source.deliveryNanos/1_000_000}",decoded)
             val snapshot=chunks.toList()
             val samples=FloatArray(snapshot.sumOf { it.size }); var index=0
             snapshot.forEach { block -> block.copyInto(samples,index); index+=block.size }

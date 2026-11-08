@@ -1624,7 +1624,7 @@ class DebugPanelActivity : RadioThemedActivity() {
     }
 
     private fun buildExportText(): String {
-        val snapshot=sdrService?.dspEngine?.pipelineDiagnostics()
+        val snapshot=sdrService?.pipelineDiagnostics()
             ?: com.radiosport.ninegradio.pipeline.ReceiverDiagnostics()
         return snapshot.report(com.radiosport.ninegradio.BuildConfig.VERSION_NAME)
     }

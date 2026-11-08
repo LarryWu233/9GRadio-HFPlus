@@ -13,8 +13,10 @@ parser.add_argument('--class-name',required=True)
 parser.add_argument('--output',required=True)
 parser.add_argument('--extra',action='append',default=[],help='instrumentation key=value')
 parser.add_argument('--headless',action='store_true',help='Do not launch the receiver UI; isolates non-UI benchmarks from automatic USB connection and display work')
+parser.add_argument('--timeout',type=int,default=240,help='Whole instrumentation timeout in seconds; long RF runs need their duration plus startup/shutdown allowance')
 args=parser.parse_args()
 assert args.class_name.startswith('com.radiosport.ninegradio.')
+assert 1<=args.timeout<=7200
 destination=Path(args.output).resolve()
 assert destination.is_relative_to(Path.cwd().resolve())
 adb=[find_adb(args.adb),'-s',args.serial]
@@ -31,7 +33,7 @@ with destination.open('wb') as log:
         subprocess.run(adb+['shell','am','start','-W','-a','android.intent.action.MAIN',
             '-c','android.intent.category.LAUNCHER','-n',
             args.package+'/com.radiosport.ninegradio.ui.MainActivity'],check=True,capture_output=True)
-    process.wait(timeout=240)
+    process.wait(timeout=args.timeout)
 data=destination.read_text(encoding='utf-8',errors='replace')
 print(data)
 if 'OK (' not in data or 'FAILURES!!!' in data or 'INSTRUMENTATION_FAILED' in data:

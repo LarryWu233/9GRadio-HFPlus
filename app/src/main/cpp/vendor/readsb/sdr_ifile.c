@@ -54,6 +54,9 @@
 
 #include "readsb.h"
 #include "sdr_ifile.h"
+#ifdef __ANDROID__
+#include <poll.h>
+#endif
 
 static struct {
     input_format_t input_format;
@@ -222,6 +225,23 @@ void ifileRun() {
         toread = Modes.sdr_buf_samples * ifile.bytes_per_sample;
         r = ifile.readbuf;
         while (toread) {
+            #ifdef __ANDROID__
+            // The Android adapter feeds a live pipe. Bound the wait so a normal
+            // shutdown request can be observed even when the producer is idle.
+            // Process.destroyForcibly() may use destroy() on Android; it is not
+            // a substitute for making this reader cancellable.
+            if (ifile.fd == STDIN_FILENO) {
+                struct pollfd input = { .fd = ifile.fd, .events = POLLIN };
+                int ready = poll(&input, 1, 100);
+                if (Modes.exit || Modes.exitSoon) break;
+                if (ready < 0 && errno != EINTR) {
+                    fprintf(stderr, "ifile: poll failed: %s\n", strerror(errno));
+                    eof = 1;
+                    break;
+                }
+                if (ready <= 0) continue;
+            }
+            #endif
             nread = read(ifile.fd, r, toread);
             if (nread <= 0) {
                 if (nread < 0) {

@@ -39,6 +39,10 @@ class ReadsbReplayTest {
             assertTrue("Native CRC-valid message count: $messages",messages>=85)
             assertTrue("Native callsign decode",callsign); assertTrue("Native altitude decode",altitude)
             assertEquals(fixture.length()/2,receiver.status.value.inputSamples)
+            while(receiver.status.value.running && SystemClock.elapsedRealtime()<deadline) Thread.sleep(20)
+            assertFalse("Normal file EOF drains and exits",receiver.status.value.running)
+            assertNull("Successful native EOF is not an input error",receiver.status.value.error)
+            assertTrue("Final JSON is read after native exit",receiver.status.value.messages>=85)
             if(InstrumentationRegistry.getArguments().getString("tablePreview")=="1") {
                 val tracks=receiver.aircraft.value.sortedBy { it.icao24 }
                 InstrumentationRegistry.getInstrumentation().runOnMainSync {

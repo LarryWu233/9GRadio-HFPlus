@@ -80,6 +80,8 @@ class RtlSdrService : Service() {
             stopAudioContent("麦克风已暂停")
     }
     val adsbReceiver by lazy { com.radiosport.ninegradio.dsp.ReadsbReceiver(this) }
+    private val externalDecoder=com.radiosport.ninegradio.dsp.ExternalDecoderStream()
+    @Volatile private var stoppedDiagnostics:com.radiosport.ninegradio.pipeline.ReceiverDiagnostics?=null
     private var requestedMode: DemodMode?=null
     private val scope  = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
@@ -91,6 +93,7 @@ class RtlSdrService : Service() {
     private val generation = AtomicLong()
     private var monitorJob: Job? = null
     private var targetsJob: Job? = null
+    private var adsbTargetsJob: Job? = null
     private data class Tune(val hz: Long, val generation: Long, val immediate: Boolean,val sequence:Long)
     private val tuneIssued=AtomicLong()
     private val tuneCompleted=AtomicLong()
@@ -181,6 +184,19 @@ class RtlSdrService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // Decoder results are data. Map adaptation belongs to the application,
+        // and obsolete snapshots cannot overwrite a newer decoder session.
+        adsbTargetsJob=scope.launch(start=CoroutineStart.UNDISPATCHED) {
+            adsbReceiver.aircraft.collect { frames -> control {
+                if(adsbReceiver.aircraft.value===frames)
+                    com.radiosport.ninegradio.data.RadioTargets.aircraft.value=frames.mapNotNull { item ->
+                        val lat=item.latitude ?: return@mapNotNull null
+                        val lon=item.longitude ?: return@mapNotNull null
+                        com.radiosport.ninegradio.data.RadioTarget(item.icao24,item.callsign ?: item.icao24,lat,lon,
+                            "${item.callsign ?: item.icao24}\n${item.altitude?.let { "$it ft" } ?: "高度未知"} · ${item.velocity?.let { "$it kt" } ?: "速度未知"}\n$lat, $lon",item.timestamp)
+                    }
+            } }
+        }
         Log.i(TAG, "RtlSdrService created")
     }
 
@@ -222,6 +238,7 @@ class RtlSdrService : Service() {
         controlScope.launch {
             disconnectNow()
             audioContent.stop()
+            externalDecoder.shutdown()
             controlScope.cancel()
             controlDispatcher.close()
         }
@@ -257,7 +274,8 @@ class RtlSdrService : Service() {
                 if (expected != generation.get()) { next.close(); return@launch }
                 selectedCapabilities = next.capabilities
                 source = next
-                val engine = DspEngine(next)
+                externalDecoder.beginStream()
+                val engine = DspEngine(next,externalDecoderStream=externalDecoder)
                 engine.setFmDeemphasis(androidx.preference.PreferenceManager.getDefaultSharedPreferences(this@RtlSdrService)
                     .getString("pref_deemph_us","75")?.toIntOrNull() ?: 75)
                 dspEngine = engine
@@ -292,6 +310,12 @@ class RtlSdrService : Service() {
                 _connectionState.value = ConnectionState.Connected(next.getSourceName())
                 updateNotification("Connected: ${next.getSourceName()}")
                 monitorJob = scope.launch {
+                    launch {
+                        while(isActive) {
+                            delay(1000)
+                            control { if(source===next) next.pollStreamingStatus() }
+                        }
+                    }
                     combine(next.statusFlow,engine.failure,engine.inputComplete) { status,failure,complete ->
                         when {
                             failure!=null -> status.copy(error=failure,streamRestartRequired=true)
@@ -327,8 +351,10 @@ class RtlSdrService : Service() {
         monitorJob = null
         // Stop the producer before waiting for encoders, decoders or database I/O.
         dspEngine?.stop()
+        stoppedDiagnostics=pipelineDiagnostics()
         finishCapture(false); finishCapture(true)
         adsbReceiver.stop()
+        com.radiosport.ninegradio.data.RadioTargets.aircraft.value=emptyList()
         audioContent.attach(null)
         dspEngine = null
         source?.close()
@@ -352,6 +378,13 @@ class RtlSdrService : Service() {
                 delay(1)
             }
         }
+    }
+    fun pipelineDiagnostics():com.radiosport.ninegradio.pipeline.ReceiverDiagnostics? {
+        val raw=adsbReceiver.status.value
+        val current=dspEngine?.pipelineDiagnostics()?.copy(rawDecoderInputMissingSamples=raw.inputMissingSamples,
+            rawDecoderDriverMissingSamples=raw.driverMissingSamples) ?: stoppedDiagnostics
+        return current?.copy(externalDecoderPendingRelease=externalDecoder.hasPendingRelease,
+            externalDecoderDroppedPackets=externalDecoder.packetsDropped,externalDecoderStalePackets=externalDecoder.stalePackets)
     }
     fun scannerTuner(expectedSource:IqSource):com.radiosport.ninegradio.pipeline.CaptureTuner {
         val expectedGeneration=generation.get()

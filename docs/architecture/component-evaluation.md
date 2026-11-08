@@ -56,3 +56,9 @@ Two accelerated simulations each cover 1800 seconds of sample time with a known 
 The liquid-dsp probe converts 2.4 MS/s to 48 kS/s with irregular input chunks. A 9 kHz tone measures +0.001920 dB, and a 59 kHz alias probe measures -151.516 dB at its expected 11 kHz alias. This single-tone result is not a full stopband specification. Five kernel trials measure 26.896, 28.103, 28.118, 27.438 and 28.145 ns/input sample. The existing 127-tap reference response at those two frequencies is -0.545 and -26.373 dB, identifying an alias-rejection case worth evaluating in the complete path. JNI overhead, full-chain performance, decoder/monitor continuity and lifecycle/ABI gates remain pending. Neither resampler is selected by the application from these results alone.
 
 中文：以上为独立实验，不代表已替换应用组件。时钟测试使用已知偏差的模拟播放时钟；实际 Android 输出时钟接入、完整链路比较和所有 ABI 验证仍需继续。
+
+## Candidate ABI build gate
+
+All three pinned candidates cross-build for **arm64-v8a, armeabi-v7a and x86_64** using NDK r28c, CMake 3.22.1 and Android API 26. The standalone resampling tools retain the flags listed above. Oboe is compiled from its unmodified CMake project with `BUILD_SHARED_LIBS=ON`, `ANDROID_STL=c++_shared` and Release configuration; its upstream Release option is `-Ofast`, and its own linker setting requests a 16384-byte maximum page size.
+
+LLVM program-header inspection passes for the nine resulting evaluation ELFs. The six arm64/x86_64 artifacts satisfy 16 KB static alignment; the three 32-bit artifacts are checked against 4 KB and are not labelled 16 KB-ready. These are build/static checks, not nine runtime tests. Oboe stream lifecycle, callback safety, output-clock behavior, full-path timing and fallback behavior remain untested. Candidate libraries and standalone tools are not packaged into the application by this build gate.

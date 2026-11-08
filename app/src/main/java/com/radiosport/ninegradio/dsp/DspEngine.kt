@@ -22,7 +22,8 @@ import kotlinx.coroutines.flow.*
 class DspEngine(private val device: IqSource,
     private val outputFactory: com.radiosport.ninegradio.pipeline.AudioOutputFactory =
         com.radiosport.ninegradio.pipeline.AudioOutputFactory { AudioEngine(it) },
-    private val iqResamplers:ComplexIqResamplerFactory = ReferenceIqResamplers) {
+    private val iqResamplers:ComplexIqResamplerFactory = ReferenceIqResamplers,
+    val externalDecoderStream:ExternalDecoderStream = ExternalDecoderStream()) {
     @Volatile private var tuningCorrectionHz = 0L
 
     // Centre frequency used for dual-APRS NCO calculation.
@@ -468,7 +469,6 @@ class DspEngine(private val device: IqSource,
      * decoder app (dsd-neo, DSD-FME, DSDPlus, etc.) to consume. Disabled by
      * default; see [ExternalDecoderStream] for the wire format and rationale.
      */
-    val externalDecoderStream = ExternalDecoderStream()
 
     /** Enable/disable piping [digitalVoiceDecoder]'s input audio to the configured external decoder. */
     fun setExternalDecoderEnabled(enabled: Boolean) = externalDecoderStream.setEnabled(enabled)
@@ -522,6 +522,7 @@ class DspEngine(private val device: IqSource,
         val legacy:((FloatArray)->Unit)?=null)
     @Volatile private var contentAttachment=DecoderAttachment()
     private val decoderAudioClock=com.radiosport.ninegradio.pipeline.AudioBlockClock()
+    private val legacyDecoderAudioClock=com.radiosport.ninegradio.pipeline.AudioBlockClock()
     @Volatile private var externalCaptureMuted = false
     @Volatile private var recordingPlaybackMuted=false
     fun setRecordingPlaybackMuted(muted:Boolean) {
@@ -533,11 +534,16 @@ class DspEngine(private val device: IqSource,
         contentAudioSink=sink;contentAttachment=DecoderAttachment(legacy=sink)
     }
     fun setAudioDecoderInput(input:com.radiosport.ninegradio.pipeline.AudioDecoderInput?) {
+        input?.configure(session.snapshot.epoch)
         // Keep the existing test/facade hook; it stamps explicit injected PCM as well.
         contentAudioSink=input?.let { target -> { pcm ->
-            target.accept(decoderAudioClock.publish(pcm,DEFAULT_AUDIO_RATE,1,session.snapshot.epoch))
+            target.accept(legacyDecoderAudioClock.publish(pcm,DEFAULT_AUDIO_RATE,1,session.snapshot.epoch))
         } }
         contentAttachment=DecoderAttachment(input=input)
+    }
+    private fun configureDecoderEpoch() {
+        contentAttachment.input?.configure(session.snapshot.epoch)
+        externalDecoderStream.configure(session.snapshot.epoch)
     }
     fun setExternalCaptureMuted(muted: Boolean) {
         externalCaptureMuted = muted
@@ -779,6 +785,7 @@ class DspEngine(private val device: IqSource,
     private fun configurationChanged() {
         val old=session.snapshot.epoch
         if(session.configure(receiverConfiguration()).epoch!=old) {
+            configureDecoderEpoch()
             audioEngine.configureEpoch(session.snapshot.epoch)
             voiceStage.configure(session.snapshot.epoch)
             pcmPacketizer.reset(); audioFramePosition=0; packetFramePosition=0
@@ -838,8 +845,8 @@ class DspEngine(private val device: IqSource,
     private var packetFramePosition=0L
     fun getPlaybackQueueDrops()=audioQueueDrops.get()
     fun getListeningFrameCount()=audioFramePosition
-    @Synchronized private fun enqueueAudio(samples: FloatArray) {
-        if(session.snapshot.closed) return
+    @Synchronized private fun enqueueAudio(samples: FloatArray,expectedEpoch:Long=session.snapshot.epoch) {
+        if(session.snapshot.closed || expectedEpoch!=session.snapshot.epoch) return
         val epoch=session.snapshot.epoch
         val block=com.radiosport.ninegradio.pipeline.AudioBlock(samples,audioSinkRate,2,epoch,audioFramePosition)
         audioFramePosition+=block.frameCount
@@ -1172,33 +1179,14 @@ class DspEngine(private val device: IqSource,
     private fun startDigVoiceAudio() {
         digVoiceAudioJob?.cancel()
         digVoiceAudioJob = scope.launch(Dispatchers.Default,start=CoroutineStart.UNDISPATCHED) {
-            voiceStage.audioFlow.collect { frame ->
-                if(frame.pipelineEpoch!=session.snapshot.epoch) return@collect
-                val pcm = frame.pcmAudio
-                if (pcm.isEmpty()) return@collect
-
-                // Upsample 8 kHz → audioSinkRate using linear interpolation.
-                //
-                // mbelib (built-in): setUpsampling() is intentionally NOT called in
-                // createDecoder(), so mbelib outputs raw 8 kHz frames (160 samples).
-                // ratio is therefore audioSinkRate/8000 (= 6 for the default 48 kHz sink).
-                val ratio    = audioSinkRate / 8000
-                val outLen   = pcm.size * ratio
-                val floatBuf = FloatArray(outLen)
-                val scale    = if (listeningEnabled) 1.0f / 32768.0f else 0f
-
-                for (i in pcm.indices) {
-                    val s0 = pcm[i].toFloat() * scale
-                    val s1 = if (i + 1 < pcm.size) pcm[i + 1].toFloat() * scale else s0
-                    for (r in 0 until ratio) {
-                        // FIX: use floating-point division for the interpolation weight.
-                        // The previous code used integer `r / ratio` which always
-                        // evaluated to 0 for r < ratio, making every interpolated point
-                        // equal to s0 (nearest-neighbour, not linear interpolation).
-                        floatBuf[i * ratio + r] = s0 + (s1 - s0) * r.toFloat() / ratio
-                    }
-                }
-
+            val adapter=VocoderAudioAdapter()
+            val voiceSquelch=ListeningSquelch()
+            voiceStage.audioFlow.collect { block -> synchronized(this@DspEngine) {
+                if(block.epoch!=session.snapshot.epoch || session.snapshot.closed) return@collect
+                val adapted=adapter.process(block,audioSinkRate) ?: return@collect
+                if(adapted.discontinuity) voiceSquelch.reset()
+                val floatBuf=adapted.samples
+                if(!listeningEnabled) floatBuf.fill(0f)
                 val stereo=StereoAudioPath.duplicateMono(floatBuf)
                 listeningAudio.process(stereo,audioSinkRate,demodMode)
                 // Keep the user's volume after automatic gain compensation.
@@ -1209,14 +1197,15 @@ class DspEngine(private val device: IqSource,
                     }
                 }
 
-                listeningSquelch.apply(stereo,listeningEnabled && squelchOpen,audioSinkRate)
-                enqueueAudio(stereo)
-            }
+                voiceSquelch.apply(stereo,listeningEnabled && squelchOpen,audioSinkRate)
+                enqueueAudio(stereo,block.epoch)
+            } }
         }
     }
 
     fun stop() {
         if (!session.close()) return
+        configureDecoderEpoch()
         voiceStage.stopAccepting()
         runBlocking { producerStartJob?.cancelAndJoin() }
         device.stopStreaming()
@@ -1262,7 +1251,8 @@ class DspEngine(private val device: IqSource,
         if(session.snapshot.closed) return
         val modeChanged = (mode != demodMode)
         if(!modeChanged) return
-        session.discontinuity();audioEngine.configureEpoch(session.snapshot.epoch);voiceStage.configure(session.snapshot.epoch)
+        session.discontinuity();configureDecoderEpoch()
+        audioEngine.configureEpoch(session.snapshot.epoch);voiceStage.configure(session.snapshot.epoch)
         cwChannelizer.reset()
         pcmPacketizer.reset()
         while(audioWriteChannel.tryReceive().isSuccess) { }
@@ -1698,9 +1688,14 @@ class DspEngine(private val device: IqSource,
     fun pipelineDiagnostics()=com.radiosport.ninegradio.pipeline.ReceiverDiagnostics(
         session.snapshot.epoch,device.getSampleRate(),audioSinkRate,inputSamples.get(),
         DebugBus.getIqFlowDropCount(),inputMissingSamples.get(),driverMissingSamples,staleInputBlocks.get(),
-        display.skipped.get(),voiceStage.droppedPackets.get(),audioQueueDrops.get(),audioEngine.underruns)
+        display.skipped.get(),voiceStage.droppedPackets.get(),audioQueueDrops.get(),audioEngine.underruns,
+        decoderOutputDroppedPackets=voiceStage.droppedOutputPackets.get(),
+        externalDecoderDroppedPackets=externalDecoderStream.packetsDropped,
+        externalDecoderStalePackets=externalDecoderStream.stalePackets,
+        externalDecoderPendingRelease=externalDecoderStream.hasPendingRelease)
     private fun recoverDiscontinuity() {
         session.discontinuity()
+        configureDecoderEpoch()
         audioEngine.configureEpoch(session.snapshot.epoch)
         measurement.reset()
         soundCapture.abort("输入信号出现缺口，录制已停止")
@@ -2151,6 +2146,7 @@ class DspEngine(private val device: IqSource,
             if(input!=null) input.accept(published) else decoderAttachment.legacy?.invoke(published.samples)
             if(_decoderAudioBlocks.subscriptionCount.value>0) _decoderAudioBlocks.tryEmit(published)
             if(_audioFlow.subscriptionCount.value>0) _audioFlow.tryEmit(published.samples)
+            externalDecoderStream.accept(published)
         }
 
         // ── Pipe the same pre-vocoder audio to an external decoder app ────────
@@ -2160,9 +2156,6 @@ class DspEngine(private val device: IqSource,
         // raw discriminator feed exactly as-is, not just the subset already
         // routed to DigitalVoiceDecoder. No-op when disabled (see
         // ExternalDecoderStream.send()).
-        if (decoderAudio.isNotEmpty()) {
-            externalDecoderStream.send(decoderAudio)
-        }
 
         // ── Write to AudioTrack ───────────────────────────────────────────────
         // Digital voice modes: decoded speech comes from the DSD-Neo/AMBE

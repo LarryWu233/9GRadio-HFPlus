@@ -47,6 +47,30 @@ data class AudioBlock(val samples: FloatArray, val sampleRate: Int, val channels
     val frameCount get() = samples.size / channels
 }
 
+/** Per audio consumer. Rejected metadata cannot move its expected sample position. */
+class AudioContinuity {
+    enum class Change { FIRST, CONTINUOUS, GAP, RECONFIGURED, STALE }
+    data class Observation(val change:Change,val missingFrames:Long=0)
+    private var previous:AudioBlock?=null
+    private var end=0L
+    fun accept(block:AudioBlock):Observation {
+        val old=previous
+        if(old!=null && (block.epoch<old.epoch || (block.epoch==old.epoch && block.firstFrame<end)))
+            return Observation(Change.STALE)
+        if(old!=null && block.epoch==old.epoch)
+            require(block.sampleRate==old.sampleRate && block.channels==old.channels) { "Audio format changed without a configuration epoch" }
+        val change=when {
+            old==null -> Change.FIRST
+            block.epoch!=old.epoch -> Change.RECONFIGURED
+            block.firstFrame!=end -> Change.GAP
+            else -> Change.CONTINUOUS
+        }
+        val missing=if(change==Change.GAP) block.firstFrame-end else 0L
+        previous=block;end=block.firstFrame+block.frameCount
+        return Observation(change,missing)
+    }
+}
+
 /** Per consumer: a slow display is not counted as a decoder or driver failure. */
 class IqContinuity {
     enum class Change { FIRST, CONTINUOUS, GAP, RECONFIGURED, STALE }

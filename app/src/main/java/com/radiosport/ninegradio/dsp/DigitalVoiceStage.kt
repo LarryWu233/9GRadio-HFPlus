@@ -2,6 +2,7 @@ package com.radiosport.ninegradio.dsp
 
 import com.radiosport.ninegradio.audio.PcmPacketizer
 import com.radiosport.ninegradio.pipeline.AudioBlock
+import com.radiosport.ninegradio.pipeline.AudioBlockClock
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -11,16 +12,24 @@ import java.util.concurrent.atomic.AtomicLong
 /** Ordered 48 kHz decoder input; expensive native decoding cannot stall IQ processing. */
 class DigitalVoiceStage(scope:CoroutineScope, private val onFailure:(Long,Exception)->Unit):AutoCloseable {
     private data class Work(val audio:AudioBlock,val mode:DemodMode,val rfDb:Float)
-    private val audioQueue=Channel<DigitalFrame>(16,BufferOverflow.DROP_OLDEST)
+    @Volatile private var epoch=0L
+    @Volatile private var closing=false
+    val droppedOutputPackets=AtomicLong()
+    private val outputClock=AudioBlockClock()
+    private val audioQueue=Channel<AudioBlock>(16,BufferOverflow.DROP_OLDEST,
+        onUndeliveredElement={ if(!closing) droppedOutputPackets.incrementAndGet() })
     val audioFlow=audioQueue.receiveAsFlow()
-    val decoder=DigitalVoiceDecoder { if(it.pcmAudio.isNotEmpty()) audioQueue.trySend(it) }
+    val decoder=DigitalVoiceDecoder { frame ->
+        if(!closing && frame.pipelineEpoch==epoch && frame.pcmAudio.isNotEmpty()) {
+            val pcm=FloatArray(frame.pcmAudio.size) { frame.pcmAudio[it].toFloat()/32768f }
+            audioQueue.trySend(outputClock.publish(pcm,8000,1,frame.pipelineEpoch))
+        }
+    }
     val droppedPackets=AtomicLong()
     private val packets=PcmPacketizer(48000,1)
     private var firstFrame=0L
     private var lastMode=DemodMode.DMR
     private var lastRfDb=Float.NaN
-    @Volatile private var epoch=0L
-    @Volatile private var closing=false
     private val queue=Channel<Work>(8,BufferOverflow.DROP_OLDEST,
         onUndeliveredElement={ if(!closing) droppedPackets.incrementAndGet() })
     private val job=scope.launch(Dispatchers.Default) {
@@ -41,6 +50,7 @@ class DigitalVoiceStage(scope:CoroutineScope, private val onFailure:(Long,Except
     fun configure(nextEpoch:Long) {
         epoch=nextEpoch;decoder.acceptEpoch(nextEpoch);packets.reset();firstFrame=0
         while(queue.tryReceive().isSuccess) { }
+        while(audioQueue.tryReceive().isSuccess) { }
     }
     fun offer(audio:FloatArray,mode:DemodMode,rfDb:Float,currentEpoch:Long) {
         if(closing) return

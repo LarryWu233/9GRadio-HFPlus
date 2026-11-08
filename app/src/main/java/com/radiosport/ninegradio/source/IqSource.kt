@@ -80,6 +80,8 @@ interface IqSource : com.radiosport.ninegradio.pipeline.IqInput, Closeable {
 
     /** True once [open] has succeeded and [close] has not been called. */
     fun isOpen(): Boolean
+    /** Invoked on the receiver control executor, never from an IQ callback or UI thread. */
+    fun pollStreamingStatus() = Unit
 
     // ── Status data class ─────────────────────────────────────────────────────
 
