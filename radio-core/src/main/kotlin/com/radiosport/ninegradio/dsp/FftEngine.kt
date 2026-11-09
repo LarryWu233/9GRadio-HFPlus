@@ -270,8 +270,9 @@ class FftEngine(fftSize: Int = 2048, private val transformFactory: ComplexFftFac
         decimationCount = 0
         decimationI = 0.0
         decimationQ = 0.0
-        inputCount = (inputCount + 1) % fftSize
-        validInputCount = (validInputCount + 1).coerceAtMost(fftSize)
+        inputCount++
+        if(inputCount==fftSize) inputCount=0
+        if(validInputCount<fftSize) validInputCount++
     }
 
     // At most one transform per source block; large USB blocks must not trigger

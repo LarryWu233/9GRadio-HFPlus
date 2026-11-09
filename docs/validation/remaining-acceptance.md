@@ -15,6 +15,8 @@ The revised scope supersedes the blanket full-matrix/long-run wording below. Kee
 
 ## Current checkpoint — preview 10
 
+Follow-up: [preview 11](architecture-11.md) records the actual 60-second high-rate RTL failure, its sampling diagnosis and an output-equivalent idle-NB/FFT-bookkeeping optimization. The same scenario passes on preview 11; prior failures remain visible. A failed baseline is not qualified for CPU/PSS percentage comparison. An additional matched continuous 1.024 MS/s headless pair, with aligned ART verification state, reports CPU/PSS changes of +3.067%/+1.031%, satisfying the resource bound in that representative case. Full-UI/all-mode evidence and actual output-clock adaptation remain separate. The observations below remain historical evidence rather than a claim that every subsequent configuration passes.
+
 - Channel rate policy, dual-APRS computation and channel filtering/demodulation/resampling are now portable core boundaries. Raw ADS-B implements the generic IQ module contract; audio decoder admission remains a selected typed port. Application selection/result routing is still explicit. See [decoder extension boundaries](../architecture/decoder-extension.md).
 - The unchanged high-rate CW case passes all ten controlled paired preview 09/10 runs, including exact output counts and its original realtime limit. CPU difference is about 1%; no speedup or thermal-cause claim. Earlier hot/contended failures remain recorded rather than reclassified.
 - HF+ affected WFM/AM/USB paths pass short stable checks; the 60-second live UI check reports 0.80% janky frames and a highest occupied duration bucket of 44 ms. These are not a matched main-versus-preview CPU/memory comparison.
