@@ -6,7 +6,8 @@ data class ReceiverDiagnostics(val epoch:Long=0,val sampleRate:Int=0,val audioRa
     val driverMissingSamples:Long=0,val staleInputBlocks:Long=0,val displaySkippedBlocks:Long=0,
     val decoderDroppedPackets:Long=0,val playbackDroppedPackets:Long=0,val playbackUnderruns:Int=0,
     val decoderOutputDroppedPackets:Long=0,val rawDecoderInputMissingSamples:Long=0,val rawDecoderDriverMissingSamples:Long=0,
-    val externalDecoderDroppedPackets:Long=0,val externalDecoderStalePackets:Long=0,val externalDecoderPendingRelease:Boolean=false) {
+    val externalDecoderDroppedPackets:Long=0,val externalDecoderStalePackets:Long=0,val externalDecoderPendingRelease:Boolean=false,
+    val dualAprsDroppedPairs:Long=0) {
     fun report(version:String):String = buildString {
         appendLine("9GRadio HF+ 接收链路诊断")
         appendLine("Version: ${version.take(80)}")
@@ -24,6 +25,7 @@ data class ReceiverDiagnostics(val epoch:Long=0,val sampleRate:Int=0,val audioRa
         appendLine("外部解码发送丢弃: $externalDecoderDroppedPackets packets")
         appendLine("外部解码旧配置丢弃: $externalDecoderStalePackets packets")
         appendLine("外部解码等待释放: $externalDecoderPendingRelease")
+        appendLine("双路 APRS 音频丢弃: $dualAprsDroppedPairs pairs")
         appendLine("播放队列丢弃: $playbackDroppedPackets packets")
         appendLine("播放欠载: $playbackUnderruns")
         appendLine("此摘要不包含位置、频率、网络地址、本机路径、接收内容或原始日志。")

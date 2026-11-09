@@ -141,215 +141,13 @@ class DspEngine(private val device: IqSource,
         }
         private const val SPECTRUM_MIN_INTERVAL_MS = 1000L / SPECTRUM_MAX_FPS
 
-        /**
-         * Target WFM IF bandwidth (Hz).
-         *
-         * The actual WFM intermediate rate is chosen per-device-rate to land as
-         * close as possible to this target while never exceeding
-         * [WFM_MAX_DEMOD_RATE] (the hard 250 kS/s ceiling the WFM demodulator's
-         * filters — pilot PLL, stereo BPF, de-emphasis IIR, RDS BPF — are
-         * designed/validated for).
-         *
-         * The WfmDemodulator receives the actual wfmIfRate via the sampleRate
-         * parameter of demodulate(), so its de-emphasis IIR, pilot NCO step, and
-         * stereo BPF coefficients are always recomputed for the true IF rate.
-         *
-         * The pre-demodulator decimation from deviceRate → wfmIfRate is performed
-         * by [ComplexDecimator], which wraps [PolyphaseResampler] — a fully
-         * RATIONAL (L/M) polyphase resampler (interpFactor/decimFactor derived via
-         * GCD). It is NOT restricted to integer decimation, so wfmIfRate no longer
-         * needs to be an exact divisor of deviceRate.
-         *
-         * The audio stage then uses a second PolyphaseResampler(wfmIfRate → 48 kHz)
-         * to bridge whatever rational ratio results.
-         *
-         * References: SDR++ dsp/demod/fm.h rational-decimator design;
-         * GnuRadio rational_resampler_xxx.
-         */
-        private const val WFM_TARGET_BW = 200_000
-
-        /**
-         * Hard ceiling on the WFM demodulator input (IF) rate, in Hz.
-         *
-         * The WFM/WFM-Stereo demodulator's pilot-tone PLL, 19 kHz/38 kHz stereo
-         * band-pass filters, de-emphasis IIR and the RDS 57 kHz decoder all have
-         * their coefficients (and numerical stability margins) validated up to
-         * 250 kS/s. [wfmIfRate] therefore NEVER returns a value above this rate —
-         * any deviceRate above 250 000 Hz is brought down to ≤ 250 000 Hz via the
-         * rational [PolyphaseResampler] in [ComplexDecimator], rather than being
-         * passed through unchanged.
-         */
-        const val WFM_MAX_DEMOD_RATE = 250_000
-
-        /**
-         * Compute the WFM intermediate (demodulator input) rate for a given
-         * device sample rate, via RATIONAL resampling.
-         *
-         * Goals, in priority order:
-         *   1. wfmIfRate ≤ [WFM_MAX_DEMOD_RATE] (250 000 Hz) — ALWAYS, even for
-         *      device rates below 250 kHz (e.g. 256 000 / 264 000 / 272 000 /
-         *      286 000 / 288 000 / 300 000 are all > 250 000 and must be
-         *      decimated, however slightly).
-         *   2. wfmIfRate as close as possible to [WFM_TARGET_BW] (200 000 Hz),
-         *      which sits comfortably inside the 150–250 kHz window needed to
-         *      pass the FM stereo multiplex (0–53 kHz) plus RDS (57 kHz).
-         *   3. Prefer ratios with a small GCD-reduced decimFactor/interpFactor
-         *      (i.e. prefer exact-integer divisors of deviceRate when one exists
-         *      near the target) to minimise [PolyphaseResampler] CPU cost — but
-         *      this is now a *preference*, not a requirement: when no good exact
-         *      divisor exists, a fractional ratio is used instead of falling back
-         *      to a poorly-placed IF rate.
-         *
-         * Algorithm:
-         *   - If deviceRate ≤ WFM_TARGET_BW (200 000 Hz): return deviceRate
-         *     unchanged (N=1 / 1:1, no decimation needed — already below target
-         *     and ≤ 250 000).
-         *   - Otherwise, search integer divisors N of deviceRate (N = 1..) for
-         *     one whose quotient lies in [WFM_TARGET_BW, WFM_MAX_DEMOD_RATE]
-         *     (i.e. deviceRate/N ∈ [200 000, 250 000]), preferring the quotient
-         *     closest to WFM_TARGET_BW.
-         *   - If no exact divisor lands in that window, fall back to the
-         *     RATIONAL target: the largest integer ≤ WFM_MAX_DEMOD_RATE that is
-         *     ≥ WFM_TARGET_BW where possible, computed as
-         *     deviceRate scaled down by a rational factor — concretely,
-         *     pick ifRate = WFM_TARGET_BW when deviceRate > WFM_TARGET_BW and no
-         *     better exact divisor exists; [ComplexDecimator]/[PolyphaseResampler]
-         *     then perform the resulting rational (deviceRate : ifRate) decimation.
-         *   - Final safety clamp: ifRate = min(ifRate, WFM_MAX_DEMOD_RATE).
-         *
-         * Examples:
-         *   240 000 → 240 000  (≤ target, N=1, no decimation)
-         *   250 000 → 250 000  (≤ target, N=1, no decimation)
-         *   256 000 → 200 000  (no exact divisor in [200k,250k]; rational target)
-         *   272 000 → 200 000  (no exact divisor in [200k,250k]; rational target)
-         *   286 000 → 200 000  (rational target — exceeds 250k otherwise)
-         *   300 000 → 200 000  (rational target — exact ÷1.5 not in window)
-         *   912 000 → 228 000  (÷4, exact divisor closest to target)
-         *   960 000 → 240 000  (÷4, exact divisor)
-         * 1 024 000 → 204 800  (÷5, exact divisor in [200k,250k])
-         * 1 440 000 → 240 000  (÷6, exact divisor in [200k,250k])
-         * 1 920 000 → 240 000  (÷8, exact divisor in [200k,250k])
-         * 2 048 000 → 204 800  (÷10, exact divisor in [200k,250k])
-         * 2 160 000 → 216 000  (÷10, exact divisor in [200k,250k])
-         * 2 400 000 → 200 000  (÷12, exact divisor in [200k,250k])
-         */
-        fun wfmIfRate(deviceRate: Int, bandwidthHz: Int = 0): Int {
-            val defaultRate=defaultWfmIfRate(deviceRate)
-            if(bandwidthHz<=defaultRate*0.9) return defaultRate
-            val required=kotlin.math.ceil(bandwidthHz/0.9).toInt().coerceAtMost(deviceRate)
-            // An explicitly wide filter needs enough complex IF samples. Keep
-            // the efficient broadcast path for Auto and ordinary 200 kHz FM.
-            return (1..(deviceRate/required.coerceAtLeast(1)).coerceAtLeast(1))
-                .filter { deviceRate%it==0 }.map { deviceRate/it }.minOrNull() ?: deviceRate
-        }
-        private fun defaultWfmIfRate(deviceRate: Int): Int {
-            // Already within the WFM demodulator's operating range: no decimation
-            // required.  Pass the device rate straight through (1:1 ComplexDecimator).
-            // This covers the full low-rate band (240 000–300 000 Hz) and any device
-            // rate that happens to land at or below the 250 kS/s ceiling.
-            if (deviceRate <= WFM_MAX_DEMOD_RATE) {
-                return deviceRate
-            }
-
-            // Search exact integer divisors of deviceRate whose quotient lands
-            // in the [WFM_TARGET_BW, WFM_MAX_DEMOD_RATE] window, preferring the
-            // quotient closest to WFM_TARGET_BW.
-            var bestRate = -1
-            var bestDist = Int.MAX_VALUE
-            val nMax = deviceRate / WFM_TARGET_BW
-            for (n in 1..maxOf(1, nMax + 1)) {
-                if (deviceRate % n != 0) continue
-                val ifRate = deviceRate / n
-                if (ifRate < WFM_TARGET_BW || ifRate > WFM_MAX_DEMOD_RATE) continue
-                val dist = kotlin.math.abs(ifRate - WFM_TARGET_BW)
-                if (dist < bestDist) { bestDist = dist; bestRate = ifRate }
-            }
-            if (bestRate > 0) return bestRate
-
-            // No exact divisor landed in the window — use a RATIONAL decimation
-            // target. WFM_TARGET_BW (200 000 Hz) is itself ≤ WFM_MAX_DEMOD_RATE,
-            // so this is always safely within the ceiling; ComplexDecimator's
-            // PolyphaseResampler reduces (deviceRate : WFM_TARGET_BW) via GCD to
-            // the appropriate rational interp/decim ratio.
-            return minOf(WFM_TARGET_BW, WFM_MAX_DEMOD_RATE, deviceRate)
-        }
-
-        /**
-         * Minimum demodulator input rate (Hz).
-         *
-         * The demodulators' internal filters (NFM biquad at 5 kHz, AM biquad at 8 kHz,
-         * SSB LPF at 3 kHz) require at least 2× their highest audio frequency to satisfy
-         * Nyquist.  ACARS occupies a 25 kHz channel (±12.5 kHz), so 25 kHz is the
-         * broadest per-mode minimum.  Rounding up to 30 kHz gives a comfortable margin.
-         *
-         * This floor is enforced by [narrowIfRateFor] so no mode ever receives an IF
-         * rate too low for its audio bandwidth, regardless of what [audioSinkRate] the
-         * user has selected.
-         */
-        private const val MIN_DEMOD_RATE = 30_000
-
-        /**
-         * Compute the narrow-mode intermediate (IF) sample rate for a given device
-         * rate and audio-sink rate.
-         *
-         * This replaces the old [narrowIfRate] which unconditionally targeted 48 kHz,
-         * forcing an unnecessary two-stage chain (deviceRate → ~48 k → sinkRate) even
-         * when a direct single-stage decimation to sinkRate is possible.  GnuRadio's
-         * rational_resampler_xxx block uses exactly this single-stage approach.
-         *
-         * Algorithm — find the SMALLEST exact divisor of [deviceRate] that is
-         * ≥ max([sinkRate], [MIN_DEMOD_RATE]):
-         *
-         *   1. Compute N_max = deviceRate / max(sinkRate, MIN_DEMOD_RATE).
-         *   2. Walk N from 1 to N_max (largest-to-smallest IF rate):
-         *        if (deviceRate % N == 0) AND (deviceRate/N ≥ floor), record it.
-         *   3. The last recorded rate is the smallest exact-divisor IF ≥ floor.
-         *
-         * This guarantees:
-         *   • PURE INTEGER ComplexDecimator factor (deviceRate / ifRate is an integer).
-         *   • The IF rate is never smaller than the sink rate (no audio aliasing).
-         *   • The IF rate is as small as possible, minimising the final resampler
-         *     ratio and therefore maximising audio quality and minimising CPU cost.
-         *
-         * When [sinkRate] is itself an exact divisor of [deviceRate] and ≥ MIN_DEMOD_RATE,
-         * the returned IF rate equals [sinkRate] — the PolyphaseResampler is trivially
-         * 1:1 (no-op) and the demodulator runs at the final audio rate, identical to
-         * GnuRadio's direct-decimation path.
-         *
-         * Examples:
-         *   250 000, sinkRate=32 000:  smallest divisor ≥ 32 000 → 50 000 (÷5)
-         *   250 000, sinkRate=24 000:  smallest divisor ≥ 24 000 → 25 000 (÷10)
-         * 1 024 000, sinkRate=32 000:  smallest divisor ≥ 32 000 → 32 000 (÷32, direct!)
-         * 2 560 000, sinkRate=32 000:  smallest divisor ≥ 32 000 → 32 000 (÷80, direct!)
-         * 2 560 000, sinkRate=48 000:  smallest divisor ≥ 48 000 → 51 200 (÷50)
-         *
-         * Note: 2 560 000 has NO exact divisor near 48 000 Hz (old hardcoded target),
-         * causing the old [narrowIfRate] to fall back to a fractional-ratio decimation
-         * that produced distorted audio.  This function has no such failure mode.
-         */
-        fun narrowIfRateFor(deviceRate: Int, sinkRate: Int, minimumRate: Int = MIN_DEMOD_RATE): Int {
-            val floor = maxOf(sinkRate, minimumRate)
-            val nMax = deviceRate / floor   // largest N that keeps ifRate >= floor
-            var bestRate = deviceRate       // fallback: no-decimation (N=1)
-            for (n in 1..maxOf(1, nMax)) {
-                if (deviceRate % n == 0) {
-                    val ifRate = deviceRate / n
-                    if (ifRate >= floor) bestRate = ifRate
-                }
-            }
-            return bestRate
-        }
-
-        /**
-         * Backward-compatible single-argument overload — uses [DEFAULT_AUDIO_RATE]
-         * (48 000 Hz) as the sink rate.  Retained for the dual-APRS path which
-         * always needs 48 kHz output for the protocol decoders, and for any callers
-         * outside the main audio chain.
-         */
-        fun narrowIfRate(deviceRate: Int): Int = narrowIfRateFor(deviceRate, DEFAULT_AUDIO_RATE)
-
-        /** Backward-compat alias — kept so existing log strings compile unchanged. */
-        private const val NARROW_INTERMEDIATE_RATE = DEFAULT_AUDIO_RATE   // 48 000 Hz
+        private const val WFM_TARGET_BW=ChannelRatePolicy.WFM_TARGET_BW
+        const val WFM_MAX_DEMOD_RATE=ChannelRatePolicy.WFM_MAX_DEMOD_RATE
+        fun wfmIfRate(deviceRate:Int,bandwidthHz:Int=0):Int =
+            ChannelRatePolicy.wfmIfRate(deviceRate,bandwidthHz)
+        fun narrowIfRateFor(deviceRate:Int,sinkRate:Int,minimumRate:Int=ChannelRatePolicy.MIN_DEMOD_RATE):Int =
+            ChannelRatePolicy.narrowIfRateFor(deviceRate,sinkRate,minimumRate)
+        fun narrowIfRate(deviceRate:Int):Int = narrowIfRateFor(deviceRate,DEFAULT_AUDIO_RATE)
 
         /**
          * DC-blocker leaky-integrator coefficient.
@@ -540,6 +338,7 @@ class DspEngine(private val device: IqSource,
         contentAttachment=DecoderAttachment(input=input)
     }
     private fun configureDecoderEpoch() {
+        dualAprsChannels.invalidate()
         contentAttachment.input?.configure(session.snapshot.epoch)
         externalDecoderStream.configure(session.snapshot.epoch)
     }
@@ -643,108 +442,11 @@ class DspEngine(private val device: IqSource,
     )
     val dualAprsFlow: SharedFlow<Pair<FloatArray, FloatArray>> = _dualAprsFlow.asSharedFlow()
 
-    // Per-channel NCO phase accumulators — persist across IQ blocks for glitch-free rotation.
-    private var dualAprsPhaseNA = 0.0
-    private var dualAprsPhaseEU = 0.0
-
-    // Per-channel ComplexDecimators and resamplers for the dual-APRS path.
-    // Recreated whenever the device sample rate changes.
-    private var dualAprsDecimNA: ComplexDecimator? = null
-    private var dualAprsDecimEU: ComplexDecimator? = null
-    private var dualAprsResampNA: PolyphaseResampler? = null
-    private var dualAprsResampEU: PolyphaseResampler? = null
-    private var dualAprsDeviceRate = 0
-
-    // Per-channel FM discriminator state (previous I/Q sample)
-    private var dualAprsPrevINa = 0f; private var dualAprsPrevQNa = 0f
-    private var dualAprsPrevIEu = 0f; private var dualAprsPrevQEu = 0f
-
-    /** Recreate dual-APRS DSP objects whenever the device sample rate changes. */
-    private fun ensureDualAprsChain(deviceRate: Int) {
-        if (deviceRate == dualAprsDeviceRate) return
-        val aprsIfRate = narrowIfRate(deviceRate)   // dynamic: 48 kHz for most rates, 50 kHz at 250 kS/s
-        dualAprsDecimNA = ComplexDecimator(deviceRate, aprsIfRate)
-        dualAprsDecimEU = ComplexDecimator(deviceRate, aprsIfRate)
-        dualAprsResampNA = PolyphaseResampler(aprsIfRate, DEFAULT_AUDIO_RATE)
-        dualAprsResampEU = PolyphaseResampler(aprsIfRate, DEFAULT_AUDIO_RATE)
-        dualAprsDeviceRate = deviceRate
-        dualAprsPhaseNA = 0.0; dualAprsPhaseEU = 0.0
-        dualAprsPrevINa = 0f; dualAprsPrevQNa = 0f
-        dualAprsPrevIEu = 0f; dualAprsPrevQEu = 0f
-        Log.d(TAG, "DualAPRS chain created: $deviceRate → $aprsIfRate → $DEFAULT_AUDIO_RATE Hz")
-    }
-
-    /**
-     * Mix a full-rate interleaved IQ block by [offsetHz] using a continuous NCO,
-     * updating [phaseRef] in place.  Returns a new FloatArray (does not modify input).
-     */
-    private fun ncoMix(iq: FloatArray, deviceRate: Int, offsetHz: Double,
-                       phaseRef: DoubleArray): FloatArray {
-        val n = iq.size / 2
-        val out = FloatArray(iq.size)
-        val step = -2.0 * Math.PI * offsetHz / deviceRate   // negate: shift signal down to 0 Hz
-        // Phasor-recurrence: same optimisation as the main NCO path — 4 muls instead
-        // of 2 transcendentals per sample.
-        val stepRe = Math.cos(step)
-        val stepIm = Math.sin(step)
-        var pRe = Math.cos(phaseRef[0])
-        var pIm = Math.sin(phaseRef[0])
-        for (i in 0 until n) {
-            val cosP = pRe.toFloat()
-            val sinP = pIm.toFloat()
-            val re = iq[2 * i]; val im = iq[2 * i + 1]
-            out[2 * i]     = re * cosP - im * sinP
-            out[2 * i + 1] = re * sinP + im * cosP
-            val nextRe = pRe * stepRe - pIm * stepIm
-            val nextIm = pRe * stepIm + pIm * stepRe
-            pRe = nextRe; pIm = nextIm
-        }
-        val mag = Math.sqrt(pRe * pRe + pIm * pIm)
-        if (mag > 0.0) { pRe /= mag; pIm /= mag }
-        phaseRef[0] = Math.atan2(pIm, pRe)
-        return out
-    }
-
-    /**
-     * Run a single NFM FM discriminator pass on a decimated IQ block.
-     * [prevState] in/out via single-element arrays for continuity.
-     * [ifRate] is the sample rate of [iq] (used to scale the discriminator gain).
-     * Returns audio at [ifRate].
-     *
-     * Uses atan2-based phase differentiation (same approach as gnuradio_dsp.cpp /
-     * NativeDsp.fmDemodulateStateful) instead of the differential-phase formula
-     * (I·dQ−Q·dI)/(I²+Q²).  The old formula divides by instantaneous signal power
-     * which approaches zero at carrier nulls, producing spikes of magnitude >> 1.0
-     * that manifest as crackling / jittery audio — especially at non-integer IF ratios
-     * where block boundaries cause the null to realign differently each block.
-     * atan2f is bounded to (−π, π] regardless of signal level — no division, no spike.
-     */
-    private fun nfmDiscriminate(iq: FloatArray, prevState: FloatArray,
-                                 ifRate: Int = DEFAULT_AUDIO_RATE): FloatArray {
-        val n = iq.size / 2
-        val out = FloatArray(n)
-        val gain = ifRate / (2f * Math.PI.toFloat() * 5_000f)
-        val pi2 = (2.0 * Math.PI).toFloat()
-
-        // prevState[0] = previous I, prevState[1] = previous Q
-        var prevPhase = Math.atan2(prevState[1].toDouble(), prevState[0].toDouble()).toFloat()
-
-        for (i in 0 until n) {
-            val ci = iq[2 * i]; val cq = iq[2 * i + 1]
-            val phase = Math.atan2(cq.toDouble(), ci.toDouble()).toFloat()
-            var diff = phase - prevPhase
-            // Phase unwrap to (−π, π]
-            if (diff >  Math.PI)  diff -= pi2
-            if (diff < -Math.PI)  diff += pi2
-            out[i] = diff * gain
-            prevPhase = phase
-        }
-        // Store last sample so phase is continuous across USB block boundaries
-        val lastI = iq[(n - 1) * 2]
-        val lastQ = iq[(n - 1) * 2 + 1]
-        prevState[0] = lastI; prevState[1] = lastQ
-        return out
-    }
+    private val dualAprsChannels=DualAprsChannels(iqResamplers)
+    private val _dualAprsAudioBlocks=MutableSharedFlow<DualAprsChannels.Audio>(extraBufferCapacity=8)
+    val dualAprsAudioBlocks:SharedFlow<DualAprsChannels.Audio> = _dualAprsAudioBlocks.asSharedFlow()
+    val dualAprsGeneration:Long get()=dualAprsChannels.currentGeneration
+    private val dualAprsDroppedPairs=java.util.concurrent.atomic.AtomicLong()
 
     // DSP statistics
     private val _stats = MutableStateFlow(DspStats())
@@ -942,82 +644,8 @@ class DspEngine(private val device: IqSource,
     private var narrowDecimatorInputRate = 0
     private var narrowDecimatorOutputRate = 0
 
-    /**
-     * Resolve the effective narrow IF rate for [deviceRate] and the current
-     * [audioSinkRate].
-     *
-     * When [ifBandwidthHz] == -1 (auto), delegates to [narrowIfRateFor](deviceRate,
-     * audioSinkRate): the smallest exact-integer-divisor of deviceRate that is ≥
-     * audioSinkRate (and ≥ MIN_DEMOD_RATE).  This is the GnuRadio-style single-stage
-     * approach — when deviceRate is a multiple of audioSinkRate the IF rate equals
-     * the sink rate exactly and the final PolyphaseResampler is a trivial no-op.
-     *
-     * When [ifBandwidthHz] > 0 (user override), the value is clamped to
-     * [MIN_IF_BANDWIDTH_HZ, narrowIfRateFor(deviceRate, audioSinkRate)] so it never
-     * exceeds the dynamic IF ceiling for the current device rate and sink rate.
-     */
-    private fun resolveNarrowIfRate(deviceRate: Int): Int {
-        // FIX 23: APRS decoder must receive audio at EXACTLY DEFAULT_AUDIO_RATE (48 kHz).
-        //
-        // FIX 22 used DEFAULT_AUDIO_RATE as the FLOOR for narrowIfRateFor(), but that
-        // function returns the SMALLEST EXACT DIVISOR of deviceRate that is ≥ the floor.
-        // For deviceRate = 2 048 000:
-        //
-        //   narrowIfRateFor(2_048_000, 48_000) returns 51_200 Hz
-        //   (51 200 is the smallest exact divisor of 2 048 000 that is ≥ 48 000,
-        //    because 2 048 000 / 40 = 51 200 and 2 048 000 is NOT a multiple of 48 000)
-        //
-        // So the ComplexDecimator still outputs at 51.2 kHz, resampleForDecoder() still
-        // runs a 51.2 → 48 kHz PolyphaseResampler (ratio 15/16), and that resampler
-        // introduces the same group-delay / phase distortion on the 1200/2200 Hz AFSK
-        // tones that causes 99.8% FCS failures — exactly what the debug panel shows:
-        //   decode_attempts  1 027
-        //   fcs_failed       1 025
-        //   decoded              0
-        //
-        // The root fix: for APRS, bypass the divisor search entirely and target
-        // EXACTLY DEFAULT_AUDIO_RATE (48 000 Hz) as the ComplexDecimator output rate.
-        // ComplexDecimator wraps PolyphaseResampler, which accepts any rational ratio
-        // (L/M = GCD-reduced interpFactor/decimFactor), so 2 048 000 → 48 000 is a
-        // valid rational decimation (ratio = 128:3 after GCD=16 000 reduction, interp=3, decim=128).
-        // resampleForDecoder() then gets inRate == DEFAULT_AUDIO_RATE and returns the
-        // input array unchanged — a true no-op — so the AFSK tones reach AprsDecoder
-        // with no post-discriminator resampling artefacts at all.
-        //
-        // Rate analysis for common RTL-SDR device rates with audioSinkRate = 16 kHz:
-        //   OLD (FIX 22): narrowIfRateFor(deviceRate, 48_000) → divisor search
-        //     2 048 000 → 51 200 (÷40)  ← 51.2→48 kHz resampler fires  ← BUG
-        //     1 920 000 → 48 000 (÷40)  ← no-op ✓
-        //     1 024 000 → 64 000 (÷16)  ← 64→48 kHz resampler fires  ← BUG
-        //       960 000 → 48 000 (÷20)  ← no-op ✓
-        //
-        //   NEW (FIX 23): force exactly 48 000, rational ComplexDecimator for all rates
-        //     2 048 000 → 48 000 (rational 128:3 via PolyphaseResampler)  ← no-op ✓
-        //     1 920 000 → 48 000 (integer ÷40, same as before)            ← no-op ✓
-        //     1 024 000 → 48 000 (rational 64:3 via PolyphaseResampler)   ← no-op ✓
-        //       960 000 → 48 000 (integer ÷20, same as before)            ← no-op ✓
-        //
-        // The dual-APRS path (ensureDualAprsChain) already uses narrowIfRate(deviceRate)
-        // = narrowIfRateFor(deviceRate, DEFAULT_AUDIO_RATE) → same divisor-search flaw,
-        // but adds a second explicit PolyphaseResampler(aprsIfRate → 48 kHz) stage.
-        // That path is unaffected by this change and is corrected separately.
-        //
-        // All other narrow modes continue to use narrowIfRateFor(deviceRate, audioSinkRate)
-        // (the GnuRadio single-stage direct-decimation approach) — no change there.
-        if (demodMode == DemodMode.APRS) {
-            // Force the ComplexDecimator to output at exactly 48 kHz.
-            // PolyphaseResampler handles the rational deviceRate:48000 ratio via GCD.
-            // resampleForDecoder() sees inRate == DEFAULT_AUDIO_RATE → returns input
-            // array unchanged (zero-copy, zero group delay, zero phase distortion).
-            val aprsIfRate = DEFAULT_AUDIO_RATE
-            return if (ifBandwidthHz <= 0) aprsIfRate
-                   else ifBandwidthHz.coerceIn(MIN_IF_BANDWIDTH_HZ, aprsIfRate)
-        }
-        if(isCw()) return narrowIfRateFor(deviceRate,maxOf(8000,kotlin.math.ceil(cwWidth()/0.8).toInt()),8000)
-        val auto = narrowIfRateFor(deviceRate, audioSinkRate)
-        return if (ifBandwidthHz <= 0) auto
-               else ifBandwidthHz.coerceIn(MIN_IF_BANDWIDTH_HZ, auto)
-    }
+    private fun resolveNarrowIfRate(deviceRate:Int):Int =
+        ChannelRatePolicy.narrow(deviceRate,audioSinkRate,demodMode,ifBandwidthHz,cwWidth())
 
     private fun getNarrowDecimator(deviceRate: Int): ComplexIqResampler {
         // Rebuild when the device rate OR the resolved IF rate changes.
@@ -1205,7 +833,7 @@ class DspEngine(private val device: IqSource,
         synchronized(this) {
             narrowDecimator?.close();narrowDecimator=null
             wfmDecimator?.close();wfmDecimator=null
-            cwChannelizer.close()
+            cwChannelizer.close();dualAprsChannels.close()
         }
         audioEngine.stop()
         soundCapture.stop()
@@ -1612,18 +1240,18 @@ class DspEngine(private val device: IqSource,
      * Has no effect if [centreHz] is 0 or if the device sample rate is less than
      * [DUAL_APRS_MIN_SAMPLE_RATE].
      */
-    fun enableDualAprs(centreHz: Long) {
+    @Synchronized fun enableDualAprs(centreHz: Long) {
+        if(session.snapshot.closed) return
+        if(dualAprsCentreHz!=centreHz) dualAprsChannels.invalidate()
         dualAprsCentreHz = centreHz
         Log.i(TAG, "Dual-APRS enabled, centre: ${centreHz / 1e6} MHz")
     }
 
     /** Deactivate the dual-APRS path and release its DSP objects. */
-    fun disableDualAprs() {
-        dualAprsCentreHz = 0L
-        dualAprsDecimNA = null; dualAprsDecimEU = null
-        dualAprsResampNA = null; dualAprsResampEU = null
-        dualAprsDeviceRate = 0
-        Log.i(TAG, "Dual-APRS disabled")
+    @Synchronized fun disableDualAprs() {
+        dualAprsCentreHz=0L
+        if(!session.snapshot.closed) dualAprsChannels.reset()
+        Log.i(TAG,"Dual-APRS disabled")
     }
 
     // ─── Processing Pipeline ─────────────────────────────────────────────────
@@ -1678,7 +1306,8 @@ class DspEngine(private val device: IqSource,
         decoderOutputDroppedPackets=voiceStage.droppedOutputPackets.get(),
         externalDecoderDroppedPackets=externalDecoderStream.packetsDropped,
         externalDecoderStalePackets=externalDecoderStream.stalePackets,
-        externalDecoderPendingRelease=externalDecoderStream.hasPendingRelease)
+        externalDecoderPendingRelease=externalDecoderStream.hasPendingRelease,
+        dualAprsDroppedPairs=dualAprsDroppedPairs.get())
     private fun recoverDiscontinuity() {
         session.discontinuity()
         configureDecoderEpoch()
@@ -1686,7 +1315,7 @@ class DspEngine(private val device: IqSource,
         measurement.reset()
         soundCapture.abort("输入信号出现缺口，录制已停止")
         demodulator=DemodulatorFactory.create(demodMode,AndroidDemodPrimitives)
-        dcState.fill(0f); freqShiftPhase=0.0; cwChannelizer.reset()
+        dcState.fill(0f); freqShiftPhase=0.0; cwChannelizer.reset();dualAprsChannels.reset()
         iqNoiseBlanker.reset()
         narrowDecimator?.close();narrowDecimator=null
         wfmDecimator?.close();wfmDecimator=null
@@ -1861,38 +1490,12 @@ class DspEngine(private val device: IqSource,
         // channels are within the passband; it reads centreFreq from the ViewModel
         // and supplies it via enableDualAprs().  If the sample rate is too narrow
         // to cover both channels the flow is simply not emitted (no exception).
-        if (_dualAprsFlow.subscriptionCount.value > 0 && dualAprsCentreHz != 0L) {
-            val deviceRate = device.getSampleRate()
-            val naOffset = (APRS_NA_HZ - dualAprsCentreHz).toDouble()
-            val euOffset = (APRS_EU_HZ - dualAprsCentreHz).toDouble()
-            val halfBw   = deviceRate / 2.0
-
-            // Only process if both channels are inside the current passband.
-            if (kotlin.math.abs(naOffset) < halfBw && kotlin.math.abs(euOffset) < halfBw) {
-                ensureDualAprsChain(deviceRate)
-                val aprsIfRate = narrowIfRate(deviceRate)
-                val phNA = doubleArrayOf(dualAprsPhaseNA)
-                val phEU = doubleArrayOf(dualAprsPhaseEU)
-
-                val mixedNA = ncoMix(floatIq, deviceRate, naOffset, phNA)
-                val mixedEU = ncoMix(floatIq, deviceRate, euOffset, phEU)
-                dualAprsPhaseNA = phNA[0]; dualAprsPhaseEU = phEU[0]
-
-                val decimNA = dualAprsDecimNA!!.process(mixedNA)
-                val decimEU = dualAprsDecimEU!!.process(mixedEU)
-
-                val stateNA = floatArrayOf(dualAprsPrevINa, dualAprsPrevQNa)
-                val stateEU = floatArrayOf(dualAprsPrevIEu, dualAprsPrevQEu)
-
-                val discNA = nfmDiscriminate(decimNA, stateNA, aprsIfRate)
-                val discEU = nfmDiscriminate(decimEU, stateEU, aprsIfRate)
-                dualAprsPrevINa = stateNA[0]; dualAprsPrevQNa = stateNA[1]
-                dualAprsPrevIEu = stateEU[0]; dualAprsPrevQEu = stateEU[1]
-
-                val audioNA = dualAprsResampNA!!.process(discNA)
-                val audioEU = dualAprsResampEU!!.process(discEU)
-
-                _dualAprsFlow.tryEmit(Pair(audioNA, audioEU))
+        if((_dualAprsAudioBlocks.subscriptionCount.value>0 || _dualAprsFlow.subscriptionCount.value>0)
+            && dualAprsCentreHz!=0L) {
+            dualAprsChannels.process(floatIq,device.getSampleRate(),dualAprsCentreHz,session.snapshot.epoch)?.let { audio ->
+                if(!_dualAprsAudioBlocks.tryEmit(audio)) dualAprsDroppedPairs.incrementAndGet()
+                if(_dualAprsFlow.subscriptionCount.value>0)
+                    _dualAprsFlow.tryEmit(Pair(audio.northAmerica.samples,audio.europe.samples))
             }
         }
 

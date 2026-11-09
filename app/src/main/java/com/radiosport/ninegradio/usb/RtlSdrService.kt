@@ -448,6 +448,10 @@ class RtlSdrService : Service() {
         if (state is ConnectionState.Connected) dspEngine?.dualAprsFlow ?: emptyFlow()
         else emptyFlow()
     }
+    val dualAprsAudioBlocks:Flow<com.radiosport.ninegradio.dsp.DualAprsChannels.Audio> = connectionState.flatMapLatest { state ->
+        if(state is ConnectionState.Connected) dspEngine?.dualAprsAudioBlocks ?: emptyFlow()
+        else emptyFlow()
+    }
 
     // ── Convenience wrappers ──────────────────────────────────────────────────
 
