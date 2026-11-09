@@ -2,6 +2,12 @@
 
 Status: **pending user acceptance**. Passing the Android 13 automation or static ELF/APK checks does not complete this checklist. Use the independent **9GRadio HF+ 架构预览** APK; the stable app and its data remain separate. No ADB or auxiliary test APK is needed.
 
+Current scope: both available phones run with **4096-byte pages** (backup measured directly; Android 16 confirmed by the user's diagnostic export). At the user's request, dedicated 16 KB runtime testing is deferred and is **not a merge prerequisite for this round**. Keep native alignment/build checks and record 16 KB runtime as untested; this does not establish compatibility on a real 16 KB device.
+
+The user reports a brief interruption while switching applications on preview **10**, with nonzero input-loss/underrun counters. This is an unresolved listening observation, not a completed Android 16 pass. Preview 11 reduces some processing overhead, but the same Android 16 scenario has not yet been confirmed on that version. Do not publish the user's raw diagnostic export or attribute cumulative counters to a specific switch without before/after evidence.
+
+本轮按两台手机实际的 **4 KB** 环境验收；16 KB 专项实测不再作为本轮合并前置条件，已有静态兼容检查保留，运行状态标记“未实测”。Android 16 的听音、后台恢复等关键流程仍需确认；目前收到的是预览 10 的问题反馈，请用最新预览复核相同场景。
+
 请白天有空时逐项记录“通过／异常／未测”；发生异常时记下模式、操作和大致持续时间即可，不必公开位置、接收内容或原始日志。
 
 | 检查 | 操作及预期 |
@@ -16,4 +22,4 @@ Status: **pending user acceptance**. Passing the Android 13 automation or static
 | IQ 文件 | 原有 IQ 录制／回放及正常文件结束可用；不要求本轮增加新的 IQ 播放交互 |
 | 诊断 | 查看链路状态及各支路损失；导出摘要默认不包含位置、网络地址、本机路径和接收内容 |
 
-Android 16 关键流程须由用户确认后才能满足合并条件。实际 16 KB 页运行环境仍单独记录；未知页大小时填“未验证”，不要将 Android 版本或静态对齐等同于 16 KB 运行通过。
+Android 16 关键流程须由用户确认后才能满足合并条件。本轮实际页大小已确认为 4096 B。16 KB 页运行环境留待具备条件时再验证，不作为本轮合并前置；不要将 Android 版本或静态对齐等同于 16 KB 运行通过。
