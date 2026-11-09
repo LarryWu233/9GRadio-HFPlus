@@ -31,11 +31,6 @@ class DspEngine(private val device: IqSource,
     // Accessed only from the DSP processing coroutine so no lock needed.
     @Volatile private var dualAprsCentreHz = 0L
 
-    // Reusable scratch buffer for WFM_STEREO → mono mixdown in processIqBlock().
-    // Grown only when the block size changes; avoids a FloatArray allocation
-    // on every IQ block (~15-20/sec at the WFM IF rate).
-    private var monoMixBuf = FloatArray(0)
-
     companion object {
         private const val TAG = "DspEngine"
 
@@ -178,7 +173,7 @@ class DspEngine(private val device: IqSource,
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Current demodulator
-    @Volatile private var demodulator: Demodulator = NfmDemodulator(AndroidDemodPrimitives)
+    private val channel=ChannelProcessor(AndroidDemodPrimitives,iqResamplers)
     @Volatile private var demodMode = DemodMode.NFM
 
     // ─── IF Filter / Protocol Bandwidth ──────────────────────────────────────
@@ -306,9 +301,7 @@ class DspEngine(private val device: IqSource,
      *  the demod mode flips between SSB and non-SSB (see setDemodMode()). */
     @Volatile private var dialFreqHz: Long = 0L
     @Volatile private var cwCenterOffsetHz = 0L
-    private val cwChannelizer=CwChannelizer(AndroidDemodPrimitives,iqResamplers)
     private fun isCw()=demodMode==DemodMode.CW || demodMode==DemodMode.CWR
-    private fun cwWidth()=(ifBandwidthHz.takeIf { it>0 } ?: demodMode.defaultBwHz).coerceAtLeast(100)
 
     // Squelch
     @Volatile private var squelchLevel = -200f
@@ -576,49 +569,7 @@ class DspEngine(private val device: IqSource,
     // Integer-only decimation eliminates fractional-ratio artefacts and pitch
     // drift; the WfmDemodulator reconstructs all coefficients from the actual
     // IF rate received via sampleRate in demodulate().
-    @Volatile private var wfmDecimator: ComplexIqResampler? = null
-    private var wfmDecimatorInputRate  = 0
-    private var wfmDecimatorOutputRate = 0
-    private var wfmFilterWidth = 0
 
-    private fun getWfmDecimator(deviceRate: Int): Pair<ComplexIqResampler, Int> {
-        val requested=(ifBandwidthHz.takeIf { it>0 } ?: WFM_TARGET_BW).coerceAtMost(device.capabilities.maxChannelBandwidth(deviceRate))
-        val ifRate = wfmIfRate(deviceRate,requested)
-        val width = requested
-            .coerceIn(50_000, (ifRate * 0.9).toInt().coerceAtLeast(50_000))
-        if (wfmDecimator == null || wfmDecimatorInputRate != deviceRate
-                || wfmDecimatorOutputRate != ifRate || wfmFilterWidth != width) {
-            val next=iqResamplers.create(deviceRate,ifRate,width/2.0)
-            wfmDecimator?.close();wfmDecimator=next
-            wfmFilterWidth = width
-            wfmDecimatorInputRate  = deviceRate
-            wfmDecimatorOutputRate = ifRate
-            // deviceRate:ifRate may now be a RATIONAL ratio (not just an integer
-            // decimation factor) — reduce via GCD for logging/DebugBus.
-            val gRate = gcd(deviceRate, ifRate)
-            val decimP = deviceRate / gRate   // input side of the ratio
-            val decimQ = ifRate / gRate       // output side of the ratio
-            Log.d(TAG, "WFM ComplexDecimator created: $deviceRate → $ifRate Hz " +
-                    "(ratio=$decimP:$decimQ, integer=${deviceRate % ifRate == 0})")
-            // WFM: the final resampler bridges wfmIfRate → sinkRate
-            val g = gcd(ifRate, audioSinkRate)
-            DebugBus.setChain(com.radiosport.ninegradio.debug.DebugBus.ChainSnapshot(
-                sourceHz    = deviceRate,
-                ifHz        = ifRate,
-                decimFactor = (deviceRate / ifRate).coerceAtLeast(1),
-                sinkHz      = audioSinkRate,
-                resampleP   = audioSinkRate / g,
-                resampleQ   = ifRate / g,
-                direct      = ifRate == audioSinkRate,
-                demodMode   = demodMode.displayName,
-                wfmIfHz     = ifRate,
-                timestampMs = System.currentTimeMillis(),
-                decimP      = decimP,
-                decimQ      = decimQ
-            ))
-        }
-        return Pair(wfmDecimator!!, ifRate)
-    }
 
     /** Return (or recreate) the RDS decoder for the given WFM IF rate. */
     private fun getOrCreateRdsDecoder(ifRate: Int): RdsDecoder {
@@ -640,45 +591,8 @@ class DspEngine(private val device: IqSource,
     //   • 2560kS/s, sinkRate=32kHz  → IF=32kHz  (÷80, direct; previously BROKEN)
     //
     // Invalidated by setAudioSinkRate() and setDemodMode(); rebuilt on next IQ block.
-    @Volatile private var narrowDecimator: ComplexIqResampler? = null
-    private var narrowDecimatorInputRate = 0
-    private var narrowDecimatorOutputRate = 0
-
-    private fun resolveNarrowIfRate(deviceRate:Int):Int =
-        ChannelRatePolicy.narrow(deviceRate,audioSinkRate,demodMode,ifBandwidthHz,cwWidth())
-
-    private fun getNarrowDecimator(deviceRate: Int): ComplexIqResampler {
-        // Rebuild when the device rate OR the resolved IF rate changes.
-        // resolveNarrowIfRate() now calls narrowIfRateFor(deviceRate, audioSinkRate),
-        // so the IF rate tracks the sink rate automatically; setAudioSinkRate()
-        // invalidates this decimator whenever the sink rate changes.
-        val targetRate = resolveNarrowIfRate(deviceRate)
-        // Read the volatile field exactly ONCE into a local val so that any
-        // concurrent write from setIfBandwidth() / setMode() / setAudioSinkRate()
-        // cannot null it out between our null-check and the return — which is the
-        // TOCTOU race that caused the NullPointerException at runtime.
-        // (The @Volatile annotation on narrowDecimator guarantees visibility but
-        // does NOT prevent another thread from storing null in the interval
-        // between  `if (narrowDecimator == null …)`  and  `return narrowDecimator!!`.)
-        val current = narrowDecimator
-        if (current != null
-                && narrowDecimatorInputRate  == deviceRate
-                && narrowDecimatorOutputRate == targetRate) {
-            return current   // fast path — no allocation, no race
-        }
-        val fresh = iqResamplers.create(deviceRate,targetRate,null)
-        current?.close()
-        narrowDecimator           = fresh
-        narrowDecimatorInputRate  = deviceRate
-        narrowDecimatorOutputRate = targetRate
-        Log.d(TAG, "Narrow ComplexDecimator created: $deviceRate → $targetRate Hz" +
-                " (N=${deviceRate/targetRate}, sinkRate=$audioSinkRate Hz)")
-        publishChainSnapshot(deviceRate, targetRate, audioSinkRate)
-        return fresh
-    }
-
     /** Publish the current IQ→Audio chain rates to DebugBus for the Debug Panel. */
-    private fun publishChainSnapshot(deviceRate: Int, ifRate: Int, sinkRate: Int) {
+    private fun publishChainSnapshot(deviceRate: Int, ifRate: Int, sinkRate: Int,isWfm:Boolean=false) {
         val g = gcd(ifRate, sinkRate)
         val p = sinkRate / g
         val q = ifRate   / g
@@ -692,36 +606,19 @@ class DspEngine(private val device: IqSource,
             resampleQ   = q,
             direct      = ifRate == sinkRate,
             demodMode   = demodMode.displayName,
-            wfmIfHz     = 0,
+            wfmIfHz     = if(isWfm) ifRate else 0,
             timestampMs = System.currentTimeMillis(),
-            protocolFilterHz   = if (isAuto) ifRate else ifBandwidthHz,
-            protocolFilterAuto = isAuto
+            protocolFilterHz   = if(isWfm) 0 else if (isAuto) ifRate else ifBandwidthHz,
+            protocolFilterAuto = if(isWfm) true else isAuto,
+            decimP = if(isWfm) deviceRate/gcd(deviceRate,ifRate) else 0,
+            decimQ = if(isWfm) ifRate/gcd(deviceRate,ifRate) else 0
         ))
     }
 
     private fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
 
     /** Returns true for modes that benefit from narrow pre-decimation. */
-    private fun DemodMode.isNarrowMode() = when (this) {
-        DemodMode.AM, DemodMode.NFM,
-        DemodMode.USB, DemodMode.LSB,
-        DemodMode.CW, DemodMode.CWR,
-        DemodMode.DSB,
-        DemodMode.APRS,
-        // ACARS channels are 25 kHz wide (VHF aviation band).  Without narrow-mode
-        // pre-decimation the AM envelope detector integrates broadband noise across
-        // the full device capture bandwidth (250 kHz–3.2 MHz), raising the noise
-        // floor 15–20 dB and burying the 1200/2400 Hz subcarrier tones.
-        DemodMode.ACARS -> true
-        // Digital voice modes use 12.5 kHz or 6.25 kHz channels (4FSK/C4FM/GMSK).
-        // Narrow-mode pre-decimation is essential — without it the full device
-        // bandwidth (~250 kHz+) passes to the discriminator, swamping the symbol eye.
-        DemodMode.DMR, DemodMode.P25, DemodMode.NXDN,
-        DemodMode.DSTAR, DemodMode.YSF, DemodMode.M17,
-        DemodMode.DPMR,
-        DemodMode.DIG -> true
-        else -> false
-    }
+    private fun DemodMode.isNarrowMode()=ChannelProcessor.isNarrow(this)
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -831,9 +728,7 @@ class DspEngine(private val device: IqSource,
         display.close()
         voiceStage.close()
         synchronized(this) {
-            narrowDecimator?.close();narrowDecimator=null
-            wfmDecimator?.close();wfmDecimator=null
-            cwChannelizer.close();dualAprsChannels.close()
+            channel.close();dualAprsChannels.close()
         }
         audioEngine.stop()
         soundCapture.stop()
@@ -867,12 +762,11 @@ class DspEngine(private val device: IqSource,
         if(!modeChanged) return
         session.discontinuity();configureDecoderEpoch()
         audioEngine.configureEpoch(session.snapshot.epoch);voiceStage.configure(session.snapshot.epoch)
-        cwChannelizer.reset()
         pcmPacketizer.reset()
         while(audioWriteChannel.tryReceive().isSuccess) { }
         audioEngine.clearPendingAudio()
         demodMode = mode
-        demodulator = DemodulatorFactory.create(mode,AndroidDemodPrimitives)
+        channel.setMode(mode)
         // Switching protocols changes the IF bandwidth, decimation chain, and
         // tuned frequency — any peaks accumulated under the previous mode are
         // no longer meaningful, so clear the peak-hold trace and re-arm the
@@ -943,9 +837,9 @@ class DspEngine(private val device: IqSource,
             // already correct.
             ifBandwidthHz = if (mode == DemodMode.USB || mode == DemodMode.LSB ||
                                  mode == DemodMode.APRS || mode == DemodMode.CW || mode == DemodMode.CWR || modeDefault >= dynamicCeiling) -1 else modeDefault
-            narrowDecimator?.close();narrowDecimator = null
-            narrowDecimatorInputRate  = 0
-            narrowDecimatorOutputRate = 0
+            channel.invalidateNarrow()
+
+
         }
         // Reapply the carrier-offset hardware frequency whenever the mode changes
         // into or out of USB/LSB.  setCarrierFrequency() applies ±SSB_BFO_OFFSET_HZ
@@ -960,15 +854,11 @@ class DspEngine(private val device: IqSource,
         }
         // Free WFM decimator when leaving WFM modes — saves memory and forces
         // re-creation (with up-to-date device rate) if we return to WFM later.
-        if (mode != DemodMode.WFM && mode != DemodMode.WFM_STEREO) {
-            wfmDecimator?.close();wfmDecimator = null
-            wfmDecimatorInputRate  = 0
-            wfmDecimatorOutputRate = 0
-        }
+
         // Free narrow decimator when leaving narrow modes — same rationale.
         if (!mode.isNarrowMode()) {
-            narrowDecimator?.close();narrowDecimator = null
-            narrowDecimatorInputRate = 0
+            channel.invalidateNarrow()
+
         }
         updateStats()
         DebugBus.setStatus(DebugBus.STAGE_DEMODULATOR, DebugBus.StageStatus.OK,
@@ -1025,8 +915,8 @@ class DspEngine(private val device: IqSource,
             audioSinkRate = rate
             pcmPacketizer = com.radiosport.ninegradio.audio.PcmPacketizer(rate)
             while (audioWriteChannel.tryReceive().isSuccess) { }
-            audioResampler = null; resamplerInRate = 0; resamplerOutRate = 0
-            narrowDecimator?.close();narrowDecimator = null; narrowDecimatorInputRate = 0; narrowDecimatorOutputRate = 0
+            channel.outputRateChanged()
+            channel.invalidateNarrow()
             audioEngine = outputFactory.create(rate)
             oldEngine.stop()
             configurationChanged()
@@ -1117,9 +1007,9 @@ class DspEngine(private val device: IqSource,
         if (newHz == ifBandwidthHz) return
         ifBandwidthHz = newHz
         // Invalidate so getNarrowDecimator() rebuilds at next IQ block.
-        narrowDecimator?.close();narrowDecimator = null
-        narrowDecimatorInputRate  = 0
-        narrowDecimatorOutputRate = 0
+        channel.invalidateNarrow()
+
+
         Log.i(TAG, "IF bandwidth set to ${if (newHz < 0) "auto" else "$newHz Hz"}")
         configurationChanged()
     }
@@ -1314,12 +1204,11 @@ class DspEngine(private val device: IqSource,
         audioEngine.configureEpoch(session.snapshot.epoch)
         measurement.reset()
         soundCapture.abort("输入信号出现缺口，录制已停止")
-        demodulator=DemodulatorFactory.create(demodMode,AndroidDemodPrimitives)
-        dcState.fill(0f); freqShiftPhase=0.0; cwChannelizer.reset();dualAprsChannels.reset()
+        channel.reset()
+        dcState.fill(0f); freqShiftPhase=0.0;dualAprsChannels.reset()
         iqNoiseBlanker.reset()
-        narrowDecimator?.close();narrowDecimator=null
-        wfmDecimator?.close();wfmDecimator=null
-        audioResampler=null; decoderResampler=null
+        channel.invalidateNarrow()
+
         aprsDecoder.setSampleRate(DEFAULT_AUDIO_RATE)
         acarsDecoder.resetSignalState(); pocsagDecoder.resetSignalState(); rdsDecoder.resetSignalState()
         voiceStage.configure(session.snapshot.epoch)
@@ -1346,41 +1235,27 @@ class DspEngine(private val device: IqSource,
         if (continuity.missingSamples > 0) DebugBus.setExtra(DebugBus.STAGE_IQ_STREAM,
             "CONSUMER_MISSING_SAMPLES", continuity.missingSamples.toString())
         if (continuity.change == com.radiosport.ninegradio.pipeline.IqContinuity.Change.GAP) recoverDiscontinuity()
+        // Recovery establishes a new epoch; this current block belongs to that epoch.
+        val admitted=session.snapshot
+        if(admitted.closed) return
+        val processingEpoch=admitted.epoch
         val rawIq = (block as? IqBlock.Unsigned8)?.bytes
-        // ── Zero-content guard ────────────────────────────────────────────────
-        // The async URB path in RtlSdrUsbHelper can produce all-zero buffers
-        // when the direct ByteBuffer suffers a DMA cache-coherency failure (CPU
-        // reads stale zeros instead of the DMA-written IQ data).  Processing
-        // such a block would:
-        //   • push -300 dBFS into the spectrum (log₁₀(1×10⁻¹⁵))
-        //   • write silence to the AudioTrack despite squelch showing OPEN
-        //   • flood the waterfall with all-black rows
-        //
-        // Detection: RTL-SDR outputs unsigned-8 IQ centred at ~127.5; a true
-        // all-zero block is physically impossible from a live device.  Sample
-        // 64 bytes spread 512 bytes apart across the buffer — cheap O(1) check
-        // that catches the full-buffer-zero case without walking every byte.
-        //
-        // The helper auto-detects the same condition and switches to bulkTransfer()
-        // after a few blocks, so this guard only fires transiently.
-        val zeroCheckStep = 512
-        val zeroCheckCount = minOf(64, (rawIq?.size ?: 0) / zeroCheckStep)
-        if (rawIq != null && zeroCheckCount > 0) {
-            var allZero = true
-            for (k in 0 until zeroCheckCount) {
-                if (rawIq[k * zeroCheckStep] != 0.toByte()) { allZero = false; break }
+        // Retain the existing U8 invalid-content guard, but confirm BOTH components
+        // across the entire block. Sparse checks at even offsets can mistake valid
+        // I=0/Q!=0 input for an empty USB buffer. Content alone cannot identify a
+        // hardware failure. A rejected block is an explicit main-channel gap.
+        if (rawIq != null && rawIq.isNotEmpty() && rawIq[0] == 0.toByte()
+                && rawIq.all { it == 0.toByte() }) {
+            val counter = DebugBus.counter(DebugBus.STAGE_IQ_STREAM)
+            if (counter % 14L == 0L) {
+                Log.w(TAG, "processIqBlock: rejected all-zero U8 input block")
+                DebugBus.setError(DebugBus.STAGE_DSP_PROCESS,"全零 U8 输入已跳过，处理状态已重置")
             }
-            if (allZero) {
-                // Log sparingly (once per second at ~14 blocks/s = every ~14 blocks)
-                val counter = DebugBus.counter(DebugBus.STAGE_IQ_STREAM)
-                if (counter % 14L == 0L) {
-                    Log.w(TAG, "processIqBlock: all-zero IQ data — USB async DMA failure; " +
-                        "waiting for helper to switch to bulkTransfer()")
-                    DebugBus.setError(DebugBus.STAGE_DSP_PROCESS,
-                        "All-zero IQ — USB DMA coherency failure (helper switching to bulkTransfer)")
-                }
-                return
-            }
+            inputSamples.addAndGet(-block.sampleCount.toLong())
+            inputMissingSamples.addAndGet(block.sampleCount.toLong())
+            DebugBus.incrementIqFlowDrops(1)
+            recoverDiscontinuity()
+            return
         }
 
         val n = block.sampleCount
@@ -1539,27 +1414,14 @@ class DspEngine(private val device: IqSource,
         val isNarrow = demodMode.isNarrowMode()
         val isDigital = demodMode in DIGITAL_VOICE_MODES
         val deviceRate = device.getSampleRate()
-        val (iqForDemod, demodRate) = when {
-            isCw() -> {
-                val rate=resolveNarrowIfRate(deviceRate)
-                Pair(cwChannelizer.process(floatIq,deviceRate,rate,cwWidth()),rate)
-            }
-            isWfm   -> {
-                val (decim, ifRate) = getWfmDecimator(deviceRate)
-                Pair(decim.process(floatIq), ifRate)
-            }
-            isNarrow -> {
-                val narrowRate = resolveNarrowIfRate(deviceRate)
-                Pair(getNarrowDecimator(deviceRate).process(floatIq), narrowRate)
-            }
-            else    -> Pair(floatIq, deviceRate)
-        }
+        val channelOutput=channel.process(floatIq,ChannelConfiguration(demodMode,deviceRate,audioSinkRate,
+            ifBandwidthHz,device.capabilities.maxChannelBandwidth(deviceRate),deemphasisUs))
+        val demodRate=channelOutput.ifRate
+        val audio=channelOutput.demodulated
+        val afterProcessing=session.snapshot
+        if(afterProcessing.closed || afterProcessing.epoch!=processingEpoch) return
+        if(channelOutput.planChanged) publishChainSnapshot(deviceRate,demodRate,audioSinkRate,isWfm)
 
-        // ── Demodulate ────────────────────────────────────────────────────────
-        // Listening is manual. Always demodulate and decode; mute only the
-        // speaker path so closing listening cannot discard RDS or data bursts.
-        (demodulator as? WfmDemodulator)?.deemphasisUs = deemphasisUs
-        val audio = demodulator.demodulate(iqForDemod, demodRate)
 
         // ── Demod output tick ────────────────────────────────────────────────
         if (audio.isNotEmpty()) {
@@ -1601,66 +1463,12 @@ class DspEngine(private val device: IqSource,
             }
         }
 
-        // Protocol consumers need mono; the listening path below retains L/R.
-        // WfmDemodulator returns interleaved [L₀, R₀, L₁, R₁, …] at wfmIfRate.
-        // Allocation note: the mono mix buffer is reused across calls (grown
-        // only when the block size changes) instead of allocating a fresh
-        // FloatArray every block — this ran ~15-20 times/sec at the WFM IF
-        // rate and contributed to GC-induced audio choppiness. The mono path
-        // (non-WFM-stereo) remains a zero-alloc direct reference.
-        val monoAudio = if (demodMode == DemodMode.WFM_STEREO
-                && audio.size >= 2 && audio.size % 2 == 0) {
-            val outN = audio.size / 2
-            if (monoMixBuf.size != outN) monoMixBuf = FloatArray(outN)
-            val mono = monoMixBuf
-            for (i in mono.indices) mono[i] = (audio[2 * i] + audio[2 * i + 1]) * 0.5f
-            mono
-        } else {
-            audio
-        }
+        val monoAudio=channelOutput.mono
+        val decoderAudio=channelOutput.decoderPcm
+        val sinkAudio=channelOutput.sinkPcm
+        if(isWfm && monoAudio.isNotEmpty())
+            getOrCreateRdsDecoder(demodRate).feedAudio(channelOutput.rdsMultiplex ?: monoAudio)
 
-        // ── RDS decoder — needs mono audio at the WFM IF rate ─────────────────
-        // Lazily (re)creates the RDS decoder whenever the IF rate changes so it
-        // always operates at the correct rate for the RDS sub-carrier (57 kHz).
-        if ((demodMode == DemodMode.FM || demodMode == DemodMode.WFM || demodMode == DemodMode.WFM_STEREO)
-                && monoAudio.isNotEmpty()) {
-            getOrCreateRdsDecoder(demodRate).feedAudio((demodulator as? WfmDemodulator)?.multiplex ?: monoAudio)
-        }
-
-        // ── Resample mono audio → 48 kHz for protocol decoders / audioFlow ────
-        // Protocol decoders (ACARS, APRS, RDS) and audioFlow subscribers always
-        // need 48 kHz regardless of the user-selected audio-sink rate.
-        // resampleForDecoder() is a no-op when demodRate is already 48 kHz.
-        val decoderAudio = if (monoAudio.isNotEmpty()) {
-            resampleForDecoder(monoAudio, demodRate)
-        } else {
-            FloatArray(0)
-        }
-
-        // ── Resample mono audio → audioSinkRate for AudioTrack ────────────────
-        // narrowIfRateFor() now ensures demodRate is always the smallest exact
-        // divisor of deviceRate that is ≥ audioSinkRate, so three cases arise:
-        //
-        //   demodRate == audioSinkRate  → ComplexDecimator already landed at the
-        //     exact sink rate.  No resampler needed; use monoAudio directly.
-        //     (GnuRadio direct-decimation path — e.g. 1920kS/s→48kHz, ÷40.)
-        //
-        //   demodRate == DEFAULT_AUDIO_RATE (48 kHz) and audioSinkRate==48 kHz
-        //     → reuse decoderAudio (same array, already at 48 kHz).
-        //
-        //   demodRate > audioSinkRate  → rational resample demodRate→sinkRate.
-        //     (e.g. 250kS/s→50kHz→32kHz: demodRate=50k, sinkRate=32k, ratio 16/25.)
-        val sinkAudio = if (monoAudio.isNotEmpty()) {
-            when {
-                demodRate == audioSinkRate          -> monoAudio
-                audioSinkRate == DEFAULT_AUDIO_RATE -> decoderAudio
-                else                               -> resampleForSink(monoAudio, demodRate)
-            }
-        } else {
-            FloatArray(0)
-        }
-
-        // ── Resample tick (log the sink path) ─────────────────────────────────
         if (sinkAudio.isNotEmpty()) {
             DebugBus.tick(DebugBus.STAGE_AUDIO_RESAMPLE)
             if (DebugBus.counter(DebugBus.STAGE_AUDIO_RESAMPLE) % 15L == 0L) {
@@ -1725,12 +1533,12 @@ class DspEngine(private val device: IqSource,
         if (decoderAudio.isNotEmpty() && demodMode in DIGITAL_VOICE_MODES) {
             DebugBus.setExtra(DebugBus.STAGE_DEMODULATOR, DebugBus.EXTRA_DV_FEED_RATE,
                 "${demodRate} Hz \u2192 ${DEFAULT_AUDIO_RATE} Hz (decoderAudio)")
-            voiceStage.offer(decoderAudio,demodMode,squelchSignalDb,session.snapshot.epoch)
+            voiceStage.offer(decoderAudio,demodMode,squelchSignalDb,processingEpoch)
         }
 
         // ── Publish 48 kHz audio baseband for APRS / other subscribers ────────
         if (decoderAudio.isNotEmpty()) {
-            val published=decoderAudioClock.publish(decoderAudio,DEFAULT_AUDIO_RATE,1,session.snapshot.epoch)
+            val published=decoderAudioClock.publish(decoderAudio,DEFAULT_AUDIO_RATE,1,processingEpoch)
             val input=decoderAttachment.input
             if(input!=null) input.accept(published) else decoderAttachment.legacy?.invoke(published.samples)
             if(_decoderAudioBlocks.subscriptionCount.value>0) _decoderAudioBlocks.tryEmit(published)
@@ -1768,7 +1576,7 @@ class DspEngine(private val device: IqSource,
         if (!isDigital && sinkAudio.isNotEmpty()) {
             val audioOut=monitoring.analog(audio,demodRate,sinkAudio,audioSinkRate,demodMode,
                 MonitorAudioBranch.Settings(listeningEnabled,noiseReducerEnabled,volume),squelchOpen)
-            if (receptionAvailable) enqueueAudio(audioOut)
+            if (receptionAvailable) enqueueAudio(audioOut,processingEpoch)
             DebugBus.tick(DebugBus.STAGE_AUDIO_TRACK)
             if (DebugBus.counter(DebugBus.STAGE_AUDIO_TRACK) % 15L == 0L) {
                 val rate = DebugBus.rate(DebugBus.STAGE_AUDIO_TRACK)
@@ -1807,56 +1615,6 @@ class DspEngine(private val device: IqSource,
     // Invalidated (set null) by setAudioSinkRate() whenever the user switches
     // the output rate; also rebuilt automatically when demodRate changes (e.g.
     // switching between WFM IF rate and narrow-mode rate).
-    private var audioResampler: PolyphaseResampler? = null
-    private var resamplerInRate  = 0
-    private var resamplerOutRate = 0
-
-    /**
-     * Resample [input] from [inRate] to the current [audioSinkRate].
-     * Only called when demodRate > audioSinkRate (the PolyphaseResampler is not
-     * trivially 1:1).  When demodRate == audioSinkRate the caller uses [input]
-     * directly (no-op fast path) and this function is never invoked.
-     */
-    private fun resampleForSink(input: FloatArray, inRate: Int): FloatArray {
-        val outRate = audioSinkRate
-        if (inRate == outRate) return input
-        if (inRate != resamplerInRate || outRate != resamplerOutRate || audioResampler == null) {
-            audioResampler = PolyphaseResampler(inRate, outRate)
-            resamplerInRate  = inRate
-            resamplerOutRate = outRate
-            Log.d(TAG, "Sink PolyphaseResampler created: $inRate → $outRate Hz")
-        }
-        return audioResampler!!.process(input)
-    }
-
-    // ── Decoder resampler ─────────────────────────────────────────────────────
-    // Protocol decoders (ACARS, APRS, RDS) and the audioFlow subscribers always
-    // require audio at DEFAULT_AUDIO_RATE (48 000 Hz) regardless of the user's
-    // chosen audio-sink rate.  This second resampler bridges demodRate → 48 kHz
-    // and is independent of the sink resampler so both can maintain their own
-    // delay-line state without interference.
-    private var decoderResampler: PolyphaseResampler? = null
-    private var decoderResamplerInRate  = 0
-    private var decoderResamplerOutRate = 0
-
-    /**
-     * Resample [input] from [inRate] to [DEFAULT_AUDIO_RATE] (48 000 Hz) for
-     * protocol decoders and audioFlow subscribers.
-     * Returns [input] unchanged when [inRate] already equals 48 000 Hz.
-     */
-    private fun resampleForDecoder(input: FloatArray, inRate: Int): FloatArray {
-        val outRate = DEFAULT_AUDIO_RATE
-        if (inRate == outRate) return input
-        if (inRate != decoderResamplerInRate || outRate != decoderResamplerOutRate
-                || decoderResampler == null) {
-            decoderResampler = PolyphaseResampler(inRate, outRate)
-            decoderResamplerInRate  = inRate
-            decoderResamplerOutRate = outRate
-            Log.d(TAG, "Decoder PolyphaseResampler created: $inRate → $outRate Hz")
-        }
-        return decoderResampler!!.process(input)
-    }
-
     private fun updateStats() {
         _stats.value = _stats.value.copy(
             sampleRate = device.getSampleRate(),   // keep sample-rate current on every settings change

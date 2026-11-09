@@ -1478,10 +1478,11 @@ class DebugPanelActivity : RadioThemedActivity() {
         sb.appendLine("  WF_VIEW_WH   : $wfViewWH")
         sb.appendLine("  WF_BITMAP_WH : $wfBitmap")
 
-        sdrService?.dspEngine?.let { engine ->
+        sdrService?.pipelineDiagnostics()?.let { snapshot ->
             sb.appendLine()
-            sb.append(engine.pipelineDiagnostics().report(com.radiosport.ninegradio.BuildConfig.VERSION_NAME))
+            sb.append(snapshot.report(com.radiosport.ninegradio.BuildConfig.VERSION_NAME))
         }
+        sb.append(runtimeEnvironmentSummary())
         tvMetricsContent.text = sb.toString()
     }
 
@@ -1626,8 +1627,15 @@ class DebugPanelActivity : RadioThemedActivity() {
     private fun buildExportText(): String {
         val snapshot=sdrService?.pipelineDiagnostics()
             ?: com.radiosport.ninegradio.pipeline.ReceiverDiagnostics()
-        return snapshot.report(com.radiosport.ninegradio.BuildConfig.VERSION_NAME)
+        return snapshot.report(com.radiosport.ninegradio.BuildConfig.VERSION_NAME)+runtimeEnvironmentSummary()
     }
+
+    private val runtimePageBytes:Long by lazy {
+        runCatching { android.system.Os.sysconf(android.system.OsConstants._SC_PAGESIZE) }.getOrDefault(-1L)
+    }
+    /** Generic runtime facts only; no model, serial, location, address or path. */
+    private fun runtimeEnvironmentSummary()="Android API: ${android.os.Build.VERSION.SDK_INT}\n"+
+        "系统页大小: ${if(runtimePageBytes>0) "$runtimePageBytes B" else "未知"}\n"
 
     // ── View helpers ──────────────────────────────────────────────────────────
 

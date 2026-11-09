@@ -60,6 +60,12 @@ class ReadsbLifetimeTest {
             assertEquals(8192L,status.inputSamples)
             assertEquals(4096L,status.inputMissingSamples)
             assertEquals(0L,status.driverMissingSamples)
+            val module:com.radiosport.ninegradio.pipeline.IqDecoderModule<List<com.radiosport.ninegradio.dsp.AdsbDecoder.AdsbFrame>> = receiver
+            module.start(source,com.radiosport.ninegradio.pipeline.IqDecoderConfiguration(768000,
+                com.radiosport.ninegradio.pipeline.IqSampleFormat.FLOAT_32))
+            assertFalse("A running module must also reject an unsupported replacement",receiver.status.value.running)
+            assertNotNull(receiver.status.value.error)
+            assertEquals(0,source.iqSubscriberCount)
         } finally { receiver.stop() }
         assertFalse(receiver.pendingReleaseDetails,receiver.hasPendingRelease)
     }

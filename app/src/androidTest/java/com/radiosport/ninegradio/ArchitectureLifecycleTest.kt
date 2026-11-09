@@ -16,6 +16,88 @@ import java.util.concurrent.atomic.AtomicLong
 /** Own-package native/AudioTrack lifecycle; does not open USB or alter saved settings. */
 @RunWith(AndroidJUnit4::class)
 class ArchitectureLifecycleTest {
+    @Test fun validU8AndFirstPostGapBlockReachTheDecoder():Unit=runBlocking {
+        val stream=IqStream(lossless=true)
+        val clock=CaptureClock()
+        val base=Source()
+        val source=object:IqSource by base {
+            override val iqFlow=stream.flow
+            override val iqSubscriberCount get()=stream.subscriberCount
+            override fun startStreaming(bufferSize:Int)=Unit
+            override fun stopStreaming()=Unit
+            override fun close() { stream.complete();base.close() }
+        }
+        source.open()
+        val engine=DspEngine(source)
+        val received=java.util.concurrent.CopyOnWriteArrayList<com.radiosport.ninegradio.pipeline.AudioBlock>()
+        try {
+            engine.setDemodMode(DemodMode.AM);engine.setVolume(0f)
+            engine.setAudioDecoderInput { received+=it }
+            engine.start()
+            withTimeout(3000) { while(source.iqSubscriberCount==0) delay(5) }
+            suspend fun send(bytes:ByteArray) {
+                val meta=clock.stamp(bytes.size/2,48000,10000000)
+                stream.send(IqBlock.Unsigned8(bytes,meta))
+            }
+            suspend fun awaitFrames(count:Int) {
+                withTimeout(3000) { while(received.sumOf { it.frameCount }<count) delay(5) }
+            }
+            // Sparse even-offset probes see only I=0; Q is valid and must survive.
+            val valid=ByteArray(8192) { if(it%2==0) 0 else 127 }
+            send(valid);awaitFrames(4096)
+            clock.stamp(4096,48000,10000000) // One missing producer block.
+            send(valid);awaitFrames(8192)
+            assertTrue(received[1].epoch>received[0].epoch)
+            assertEquals(0L,received[1].firstFrame)
+            send(ByteArray(8192)) // Existing invalid-content policy: explicit gap.
+            send(valid);awaitFrames(12288)
+            assertTrue(received[2].epoch>received[1].epoch)
+            assertEquals(0L,received[2].firstFrame)
+            val diagnostics=engine.pipelineDiagnostics()
+            assertEquals(12288L,diagnostics.inputSamples)
+            assertEquals(8192L,diagnostics.inputMissingSamples)
+            assertEquals(0L,diagnostics.driverMissingSamples)
+            assertNull(engine.failure.value)
+        } finally { engine.stop();source.close() }
+    }
+    @Test fun inFlightAudioCannotBeStampedWithTheClosedEpoch():Unit=runBlocking {
+        val entered=java.util.concurrent.CountDownLatch(1)
+        val proceed=java.util.concurrent.CountDownLatch(1)
+        val first=java.util.concurrent.atomic.AtomicBoolean(true)
+        val configured=java.util.concurrent.atomic.AtomicLong()
+        val late=java.util.concurrent.atomic.AtomicInteger()
+        val factory=com.radiosport.ninegradio.dsp.ComplexIqResamplerFactory { input,output,cutoff ->
+            object:com.radiosport.ninegradio.dsp.ComplexIqResampler {
+                val delegate=com.radiosport.ninegradio.dsp.ComplexDecimator(input,output,cutoffHz=cutoff)
+                override fun process(iq:FloatArray):FloatArray {
+                    if(first.compareAndSet(true,false)) { entered.countDown();check(proceed.await(5,java.util.concurrent.TimeUnit.SECONDS)) }
+                    return delegate.process(iq)
+                }
+                override fun reset()=delegate.reset()
+                override fun close()=delegate.close()
+            }
+        }
+        val source=Source();source.open();val engine=DspEngine(source,iqResamplers=factory)
+        var stopping:java.util.concurrent.Future<*>?=null
+        val executor=java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            engine.setDemodMode(DemodMode.AM);engine.setVolume(0f)
+            engine.setAudioDecoderInput(object:com.radiosport.ninegradio.pipeline.AudioDecoderInput {
+                override fun configure(epoch:Long) { configured.set(epoch) }
+                override fun accept(block:com.radiosport.ninegradio.pipeline.AudioBlock) { late.incrementAndGet() }
+            })
+            val active=configured.get();engine.start()
+            assertTrue(entered.await(3,java.util.concurrent.TimeUnit.SECONDS))
+            stopping=executor.submit { engine.stop() }
+            withTimeout(3000) { while(configured.get()==active) delay(5) }
+            proceed.countDown();stopping.get(5,java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals("The old in-flight frame must not enter the closed decoder epoch",0,late.get())
+        } finally {
+            proceed.countDown()
+            stopping?.get(5,java.util.concurrent.TimeUnit.SECONDS)
+            engine.stop();source.close();executor.shutdownNow()
+        }
+    }
     @Test fun resamplerPlansCloseBeforeReplacementAndAfterProcessingStops():Unit=runBlocking {
         val plans=java.util.concurrent.CopyOnWriteArrayList<com.radiosport.ninegradio.dsp.ComplexIqResampler>()
         val released=java.util.concurrent.atomic.AtomicInteger()

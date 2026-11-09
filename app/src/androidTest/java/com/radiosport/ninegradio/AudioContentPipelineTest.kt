@@ -129,6 +129,7 @@ class AudioContentPipelineTest {
             val chunks=java.util.concurrent.ConcurrentLinkedQueue<FloatArray>()
             val sink=DspEngine::class.java.getDeclaredField("contentAudioSink").apply { isAccessible=true }.get(engine) as (FloatArray)->Unit
             engine.setContentAudioSink { data -> chunks.add(data.copyOf()); sink(data) }
+            val receiverCpuStart=android.os.Process.getElapsedCpuTime()
             engine.start()
             val decoded=withTimeoutOrNull(12000) { while(!receiver.state.value.text.replace(Regex("\\s+"),"").contains("TEST")) delay(100); true } ?: false
             assertTrue("$mode: ${receiver.state.value}; sourceElapsedMs=${source.elapsedMs}; " +
@@ -151,7 +152,7 @@ class AudioContentPipelineTest {
                 withTimeout(12000) { while(source.elapsedMs==0L) delay(50) }
                 val nominal=source.segments.sumOf { it.first }*1000L/rate
                 InstrumentationRegistry.getInstrumentation().sendStatus(0,android.os.Bundle().apply {
-                    putString("stream","\nCW timing wall_ms=${source.elapsedMs} nominal_ms=$nominal generator_ms=${source.generationNanos/1_000_000} delivery_ms=${source.deliveryNanos/1_000_000}\n")
+                    putString("stream","\nCW timing wall_ms=${source.elapsedMs} nominal_ms=$nominal generator_ms=${source.generationNanos/1_000_000} delivery_ms=${source.deliveryNanos/1_000_000} receiver_cpu_ms=${android.os.Process.getElapsedCpuTime()-receiverCpuStart}\n")
                 })
                 assertTrue("CW processing too slow: ${source.elapsedMs} ms / $nominal ms",source.elapsedMs<nominal*1.15)
                 delay(250)

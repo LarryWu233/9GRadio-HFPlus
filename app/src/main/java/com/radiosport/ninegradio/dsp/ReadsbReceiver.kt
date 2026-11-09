@@ -38,36 +38,47 @@ object ReadsbSnapshotParser {
 }
 
 /** Service-owned raw-IQ consumer; UI navigation never owns or restarts the decoder. */
-class ReadsbReceiver(private val context: Context) {
+class ReadsbReceiver(private val context: Context):com.radiosport.ninegradio.pipeline.IqDecoderModule<List<AdsbDecoder.AdsbFrame>> {
     companion object { const val SAMPLE_RATE=2_400_000 }
     data class Status(val running: Boolean=false,val inputSamples: Long=0,val messages: Long=0,val error: String?=null,
         val inputMissingSamples:Long=0,val driverMissingSamples:Long=0,val decoderGeneration:Long=0)
     private val _status=MutableStateFlow(Status())
     val status=_status.asStateFlow()
+    override val state:kotlinx.coroutines.flow.Flow<com.radiosport.ninegradio.pipeline.DecoderModuleState> =
+        status.map { com.radiosport.ninegradio.pipeline.DecoderModuleState(it.running,it.error) }.distinctUntilChanged()
     private val _aircraft=MutableStateFlow<List<AdsbDecoder.AdsbFrame>>(emptyList())
     val aircraft=_aircraft.asStateFlow()
+    override val results:kotlinx.coroutines.flow.Flow<List<AdsbDecoder.AdsbFrame>> get()=aircraft
+    override val requirements=com.radiosport.ninegradio.pipeline.IqDecoderRequirements(
+        setOf(SAMPLE_RATE),setOf(com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8))
     private val lifecycleLock=Any()
     private val publicationLock=Any()
     private val generations=AtomicLong()
     @Volatile private var session:Session?=null
     @Volatile private var finishing:Session?=null
-    val hasPendingRelease get()=finishing!=null
+    override val hasPendingRelease get()=finishing!=null
     val pendingReleaseDetails get()=finishing?.releaseDetails() ?: "released"
-    fun start(source: IqSource):Unit=synchronized(lifecycleLock) {
+    fun start(source:IqSource)=start(source,com.radiosport.ninegradio.pipeline.IqDecoderConfiguration(
+        source.getSampleRate(),if(source.capabilities.floatIq) com.radiosport.ninegradio.pipeline.IqSampleFormat.FLOAT_32
+        else com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8))
+    override fun start(input:com.radiosport.ninegradio.pipeline.IqReadInput,
+                       configuration:com.radiosport.ninegradio.pipeline.IqDecoderConfiguration):Unit=synchronized(lifecycleLock) {
+        val source=input
+        if(!requirements.accepts(configuration)) {
+            stop()
+            if(finishing==null) _status.value=Status(error="ADS-B 需要 2.400 MS/s 的原始 IQ")
+            return@synchronized
+        }
         if(_status.value.running && session?.source===source && session?.native?.child?.isAlive==true) return@synchronized
         stop()
         if(finishing!=null) return@synchronized
-        if(source.getSampleRate()!=SAMPLE_RATE || source.capabilities.floatIq) {
-            _status.value=Status(error="ADS-B 需要 2.400 MS/s 的原始 IQ")
-            return@synchronized
-        }
         try {
             val next=Session(source)
             synchronized(publicationLock) { session=next;_status.value=Status(running=true) }
             next.start()
         } catch(error: Exception) { stop(); _status.value=Status(error=error.message ?: "ADS-B 启动失败") }
     }
-    fun stop():Unit=synchronized(lifecycleLock) {
+    override fun stop():Unit=synchronized(lifecycleLock) {
         val old=synchronized(publicationLock) {
             val previous=session ?: finishing
             session=null;finishing=previous
@@ -79,7 +90,7 @@ class ReadsbReceiver(private val context: Context) {
         else _status.value=Status(error="ADS-B 解码组件仍在关闭，请稍候")
     }
 
-    private inner class Session(val source:IqSource) {
+    private inner class Session(val source:com.radiosport.ninegradio.pipeline.IqReadInput) {
         private val lifetime=SupervisorJob()
         private val scope=CoroutineScope(lifetime+Dispatchers.IO)
         private val runs=CopyOnWriteArrayList<NativeRun>()

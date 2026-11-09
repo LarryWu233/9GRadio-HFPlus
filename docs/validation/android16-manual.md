@@ -6,7 +6,7 @@ Status: **pending user acceptance**. Passing the Android 13 automation or static
 
 | 检查 | 操作及预期 |
 | --- | --- |
-| 版本 | 打开诊断页，核对预览版本与发布记录一致 |
+| 版本与运行环境 | 打开诊断页，核对预览版本与发布记录一致；记录 Android API 与系统页大小（4096／16384 B），摘要不包含型号或设备标识 |
 | HF+ | OTG 接入 HF+，允许预览版访问；选择已知有信号的 AM、SSB、WFM，各连续听音并调谐，确认无规律断音、卡死或错误模式恢复 |
 | RTL | 换接 RTL，检查 USB 授权、接收、调谐，以及该设备适用的功能入口 |
 | 关闭与重连 | CLOSED 后停止接收；拔插、重新 OPEN，检查只恢复当前设备，不出现旧音频或 OPEN/CLOSED 自动振荡 |
