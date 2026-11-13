@@ -280,13 +280,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         launch {
-            svc.statusFlow.collect { status ->
+            // Device counters can change for every USB block. Coalesce only the
+            // presentation copy off the main thread; service faults/control and
+            // all DSP/scanner measurements keep their original clocks.
+            svc.statusFlow.sample(100L).flowOn(Dispatchers.Default).collect { status ->
                 _deviceStatus.value = status
             }
         }
 
         launch {
-            svc.statsFlow.collect { stats ->
+            svc.statsFlow.sample(100L).flowOn(Dispatchers.Default).collect { stats ->
                 _dspStats.value = stats
             }
         }
