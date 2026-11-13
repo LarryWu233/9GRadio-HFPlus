@@ -193,7 +193,8 @@ class RtlSdrService : Service() {
                         val lat=item.latitude ?: return@mapNotNull null
                         val lon=item.longitude ?: return@mapNotNull null
                         com.radiosport.ninegradio.data.RadioTarget(item.icao24,item.callsign ?: item.icao24,lat,lon,
-                            "${item.callsign ?: item.icao24}\n${item.altitude?.let { "$it ft" } ?: "高度未知"} · ${item.velocity?.let { "$it kt" } ?: "速度未知"}\n$lat, $lon",item.timestamp)
+                            "${item.callsign ?: item.icao24}\n${item.altitude?.let { "$it ft" } ?: "高度未知"} · ${item.velocity?.let { "$it kt" } ?: "速度未知"}\n$lat, $lon",item.timestamp,
+                            com.radiosport.ninegradio.data.RadioTarget.Type.AIRCRAFT,item.heading)
                     }
             } }
         }

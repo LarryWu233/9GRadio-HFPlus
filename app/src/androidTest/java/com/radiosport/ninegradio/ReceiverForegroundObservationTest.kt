@@ -56,7 +56,7 @@ class ReceiverForegroundObservationTest {
                 .putBoolean("receiverEnabled",false)
                 .putBoolean("autoDemod",false).putBoolean("modeStationMemory",false).commit()
             inst.targetContext.getSharedPreferences("radio_map",Context.MODE_PRIVATE).edit()
-                .putBoolean("adsb_show_map",true).commit()
+                .putBoolean("adsb_show_map",true).putString("receiverLocationMode","manual").commit()
             // MIUI blocks ActivityScenario's app-UID launch after instrumentation
             // restarts the process. Bring the target forward through Android's
             // standard shell automation before asking Scenario to own it.

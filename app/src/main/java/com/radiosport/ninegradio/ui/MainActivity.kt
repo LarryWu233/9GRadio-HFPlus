@@ -2537,6 +2537,7 @@ class MainActivity : RadioThemedActivity() {
     private var positionControlsPanel: (() -> Unit)?=null
     private var adsbMapPanel: RadioMapPanel?=null
     private var aprsMapPanel: RadioMapPanel?=null
+    private val receiverLocation by lazy { ReceiverLocationController(this) }
     private var adsbMapSelected=true
 
     private var animatePanelResize=false
@@ -4029,7 +4030,7 @@ class MainActivity : RadioThemedActivity() {
             .putBoolean("pref_aprs_auto_display",false).putBoolean("aprs_click_details_v1",true).apply()
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_APRS)?.let { page ->
             val host=page.findViewById<android.widget.FrameLayout>(R.id.aprsMapHost)
-            aprsMapPanel=RadioMapPanel(this,"APRS",true).also { host.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
+            aprsMapPanel=RadioMapPanel(this,"APRS",true,receiverLocation).also { host.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
             page.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.btnAprsMap).setOnCheckedChangeListener { _,on ->
                 host.isVisible=on; updateDigitalVisualization(); resizePagerToCurrentPage()
             }
@@ -4090,7 +4091,7 @@ class MainActivity : RadioThemedActivity() {
                     .setPositiveButton("关闭",null).show()
         }
         val mapHost=page.findViewById<android.widget.FrameLayout>(R.id.adsbMapHost)
-        adsbMapPanel=RadioMapPanel(this,"ADSB",true).also { mapHost.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
+        adsbMapPanel=RadioMapPanel(this,"ADSB",true,receiverLocation).also { mapHost.addView(it,android.widget.FrameLayout.LayoutParams(-1,-1)) }
         val mapSwitch=page.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.btnAdsbPanelMap)
         adsbMapSelected=getSharedPreferences("radio_map",MODE_PRIVATE).getBoolean("adsb_show_map",true)
         mapSwitch.isChecked=adsbMapSelected
@@ -4098,10 +4099,15 @@ class MainActivity : RadioThemedActivity() {
             adsbMapSelected=on; getSharedPreferences("radio_map",MODE_PRIVATE).edit().putBoolean("adsb_show_map",on).apply()
             updateDigitalVisualization()
         }
+        page.findViewById<View>(R.id.btnAdsbPanelRadar).setOnClickListener { mapSwitch.isChecked=false }
+        page.findViewById<View>(R.id.tvAdsbReceiverLocation).setOnClickListener { receiverLocation.showDialog() }
+        lifecycleScope.launch { receiverLocation.status.collect { page.findViewById<TextView>(R.id.tvAdsbReceiverLocation).text=it } }
         page.findViewById<Button>(R.id.btnAdsbPanelFull).setOnClickListener { setPanelFullscreen(!panelFullscreen) }
         val distances=AdsbDistanceTracker(this)
         page.findViewById<TextView>(R.id.tvAdsbRecordDistance).setOnClickListener {
-            AlertDialog.Builder(this).setTitle("清除历史最远距离？").setPositiveButton("清除") { _,_ -> distances.reset() }.setNegativeButton("取消",null).show()
+            AlertDialog.Builder(this).setTitle("清除历史最远距离？").setPositiveButton("清除") { _,_ ->
+                distances.reset();page.findViewById<TextView>(R.id.tvAdsbRecordDistance).text="记录距离：—"
+            }.setNegativeButton("取消",null).show()
         }
         val radar=page.findViewById<AdsbRadarView>(R.id.adsbPanelRadar)
         radar.setAnimating(pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_ADSB)
@@ -4111,7 +4117,8 @@ class MainActivity : RadioThemedActivity() {
             viewModel.serviceConnected.collectLatest { connected ->
                 if(!connected) return@collectLatest
                 val svc=viewModel.getService() ?: return@collectLatest
-                kotlinx.coroutines.flow.combine(svc.adsbReceiver.aircraft,svc.adsbReceiver.status,svc.connectionState) { tracks,status,state -> Triple(tracks,status,state) }
+                val reception=kotlinx.coroutines.flow.combine(svc.adsbReceiver.aircraft,svc.adsbReceiver.status,svc.connectionState) { tracks,status,state -> Triple(tracks,status,state) }
+                kotlinx.coroutines.flow.combine(reception,receiverLocation.position) { current,_ -> current }
                     .collect { (tracks,status,state) ->
                         aircraft=tracks.sortedBy { it.callsign ?: it.icao24 }
                         val ranges=distances.update(aircraft)
@@ -4131,6 +4138,8 @@ class MainActivity : RadioThemedActivity() {
     private fun updateDigitalVisualization() {
         if(!::pagerAdapter.isInitialized) return
         val module=pagerAdapter.moduleAt(binding.controlViewPager.currentItem)
+        receiverLocation.setActive(module==ControlsPagerAdapter.TAB_ADSB ||
+            (module==ControlsPagerAdapter.TAB_APRS && findViewById<View>(R.id.aprsMapHost)?.visibility==View.VISIBLE))
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB)?.let { page ->
             page.findViewById<View>(R.id.adsbMapHost)?.isVisible=adsbMapSelected
             page.findViewById<AdsbRadarView>(R.id.adsbPanelRadar)?.let { radar ->
