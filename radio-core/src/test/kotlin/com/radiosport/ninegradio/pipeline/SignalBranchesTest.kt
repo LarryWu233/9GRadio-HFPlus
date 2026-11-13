@@ -8,6 +8,25 @@ import org.junit.Test
 import kotlin.math.*
 
 class SignalBranchesTest {
+    @Test fun displayAcceptsOwnedUint8AndFloatWithoutChangingScaleOrInput() {
+        val bytes=ByteArray(4096).also { kotlin.random.Random(9).nextBytes(it) }
+        val floats=FloatArray(bytes.size) { ((bytes[it].toInt() and 255)-127.5f)/128f }
+        val original=bytes.copyOf()
+        val frames=ArrayList<SpectrumFrame>()
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
+        val a=SpectrumBranch(FftEngine(256).apply { decimationFactor=2 },scope) { frames+=it }
+        val b=SpectrumBranch(FftEngine(256).apply { decimationFactor=2 },scope) { frames+=it }
+        a.start();b.start()
+        try {
+            val meta=CaptureClock().stamp(2048,48000,10000000)
+            a.offer(IqBlock.Unsigned8(bytes,meta))
+            b.offer(IqBlock.Float32(floats,meta.sequence,meta))
+            assertEquals(2,frames.size)
+            assertArrayEquals(frames[0].bins,frames[1].bins,0.000001f)
+            assertArrayEquals(original,bytes)
+            assertSame(meta,frames[0].metadata)
+        } finally { a.close();b.close();scope.cancel() }
+    }
     @Test fun displayPublicationKeepsThirtyHzBudgetWithoutStoppingAnalysis() {
         var now=0L
         val published=ArrayList<Long>()

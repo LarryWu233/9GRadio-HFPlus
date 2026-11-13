@@ -43,6 +43,9 @@ class ReceiverForegroundObservationTest {
         val mode=if(args.getString("observationMode")=="ADSB") DemodMode.ADSB else DemodMode.FM
         val frequency=if(mode==DemodMode.ADSB) 1_090_000_000L else 87_800_000L
         val bandwidth=if(mode==DemodMode.ADSB) mode.defaultBwHz else 180_000
+        val decimation=args.getString("observationDecimation")?.toIntOrNull() ?: 2
+        require(decimation in listOf(1,2,4,8,16,32,64))
+        val frameAverage=args.getString("observationFrameAverage")?.toIntOrNull()
         val seconds=args.getString("observationSeconds")
             ?.toIntOrNull()?.coerceIn(10,30) ?: 20
         ReceiverTestPreferences(inst.targetContext).use {
@@ -88,7 +91,7 @@ class ReceiverForegroundObservationTest {
                     vm.setAutoDemod(false);vm.setModeStationMemory(false)
                     vm.setReceiverEnabled(true);vm.setDemodMode(mode)
                     vm.setSampleRate(2_400_000);vm.setIfBandwidth(bandwidth)
-                    vm.setFftSize(2048);vm.setDecimation(2)
+                    vm.setFftSize(2048);vm.setDecimation(decimation)
                     vm.setNoiseBlanker(false);vm.setNoiseReducer(false)
                     vm.setSquelch(-120f);vm.setVolume(0f)
                     vm.setFrequency(frequency)
@@ -102,9 +105,10 @@ class ReceiverForegroundObservationTest {
                 }
                 inst.sendStatus(0,Bundle().apply { putString("stream","\nFOREGROUND_SETTINGS_APPLIED rate=${vm.sampleRate.value} mode=${vm.demodMode.value}\n") })
                 runBlocking { withTimeout(10000) { vm.dspStats.first { it.sampleRate==2_400_000 } } }
-                Thread.sleep(6000)
                 val service=vm.getService()!!
                 val engine=service.dspEngine!!
+                frameAverage?.let { engine.fftEngine.frameAveragingCount=it }
+                Thread.sleep(6000)
                 val drops=engine.javaClass.getDeclaredField("audioQueueDrops").apply { isAccessible=true }.get(engine) as AtomicLong
                 val beforeDrops=drops.get();val beforeUnderruns=engine.getPlaybackUnderruns()
                 val diagnosticsMethod=engine.javaClass.methods.firstOrNull { it.name=="pipelineDiagnostics" }
@@ -130,7 +134,8 @@ class ReceiverForegroundObservationTest {
                     put("durationNs",elapsed);put("cpuMs",cpuMs);put("endPssKb",memory.totalPss)
                     put("sourceRate",vm.dspStats.value.sampleRate)
                     put("input",if(hardware) "rtl" else "tcp");put("mode",mode.name)
-                    put("fftSize",2048);put("fftDecimation",2);put("bandwidthHz",bandwidth)
+                    put("fftSize",engine.fftEngine.fftSize);put("fftDecimation",engine.fftEngine.decimationFactor)
+                    put("frameAverage",engine.fftEngine.frameAveragingCount);put("bandwidthHz",bandwidth)
                     put("playbackDrops",dropDelta);put("playbackUnderruns",underrunDelta)
                     put("counterDeltas",JSONObject(deltas))
                     if(mode==DemodMode.ADSB) {
@@ -141,6 +146,8 @@ class ReceiverForegroundObservationTest {
                 }
                 inst.sendStatus(0,Bundle().apply { putString("stream","\nFOREGROUND_RESOURCE_OBSERVATION=$report\n") })
                 assertTrue("Receiver must stay active",vm.dspStats.value.sampleRate==2_400_000)
+                assertEquals(decimation,engine.fftEngine.decimationFactor)
+                frameAverage?.let { assertEquals(it.toInt(),engine.fftEngine.frameAveragingCount) }
                 assertEquals("No stable-window PCM loss",0L,dropDelta)
                 if(mode!=DemodMode.ADSB) assertEquals("No stable-window playback underruns",0,underrunDelta)
                 for((key,value) in deltas) if(key!="InputSamples") assertEquals(key,0L,value)

@@ -1285,8 +1285,12 @@ class DspEngine(private val device: IqSource,
         if(iqRecorder.isRecording && recordingGateOpen) iqRecorder.write(block)
         if(_spectrumFlow.subscriptionCount.value>0) {
             val meta=block.metadata.copy(sampleRate=rate,centerHz=hardwareHz)
-            val raw=if(block is IqBlock.Float32) block.values else floatIq.copyOf()
-            display.offer(IqBlock.Float32(raw,meta.sequence,meta))
+            // Source blocks own immutable arrays. Share the original format with
+            // display instead of allocating a full-rate Float32 copy for RTL.
+            display.offer(when(block) {
+                is IqBlock.Unsigned8 -> IqBlock.Unsigned8(block.bytes,meta)
+                is IqBlock.Float32 -> IqBlock.Float32(block.values,meta.sequence,meta)
+            })
         }
 
         // ── DC offset removal ─────────────────────────────────────────────────

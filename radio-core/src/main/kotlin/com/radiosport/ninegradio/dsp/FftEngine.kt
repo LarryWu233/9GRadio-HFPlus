@@ -243,8 +243,15 @@ class FftEngine(fftSize: Int = 2048, private val transformFactory: ComplexFftFac
     @Synchronized
     fun processUint8(rawIq: ByteArray): FloatArray {
         check(!closed)
-        for (i in 0 until rawIq.size / 2) {
-            accumulateSample(((rawIq[2 * i].toInt() and 0xff) - 127.5) / 128.0,
+        val count=rawIq.size/2
+        if(decimationFactor==1) {
+            for (i in beginFullSpanAppend(count) until count) {
+                inputRe[inputCount]=((rawIq[2*i].toInt() and 0xff)-127.5)/128.0
+                inputIm[inputCount]=((rawIq[2*i+1].toInt() and 0xff)-127.5)/128.0
+                inputCount++;if(inputCount==fftSize) inputCount=0
+            }
+        } else {
+            for(i in 0 until count) accumulateSample(((rawIq[2 * i].toInt() and 0xff) - 127.5) / 128.0,
                 ((rawIq[2 * i + 1].toInt() and 0xff) - 127.5) / 128.0)
         }
         return transformAvailableInput()
@@ -254,9 +261,29 @@ class FftEngine(fftSize: Int = 2048, private val transformFactory: ComplexFftFac
     @Synchronized
     fun processFloat(floatIq: FloatArray): FloatArray {
         check(!closed)
-        for (i in 0 until floatIq.size / 2)
-            accumulateSample(floatIq[2 * i].toDouble(), floatIq[2 * i + 1].toDouble())
+        val count=floatIq.size/2
+        if(decimationFactor==1) {
+            for (i in beginFullSpanAppend(count) until count) {
+                inputRe[inputCount]=floatIq[2*i].toDouble()
+                inputIm[inputCount]=floatIq[2*i+1].toDouble()
+                inputCount++;if(inputCount==fftSize) inputCount=0
+            }
+        } else {
+            for(i in 0 until count) accumulateSample(floatIq[2 * i].toDouble(), floatIq[2 * i + 1].toDouble())
+        }
         return transformAvailableInput()
+    }
+
+    // Transforms occur only after the source block. At full span, earlier
+    // samples overwritten within that block cannot affect its final FFT window.
+    // Advance storage/time bookkeeping once and copy only the retained tail.
+    // Decimated input still uses the original accumulator (including partial groups).
+    private fun beginFullSpanAppend(count:Int):Int {
+        samplesSinceTransform+=count
+        val skipped=(count-fftSize).coerceAtLeast(0)
+        inputCount=(inputCount+skipped)%fftSize
+        validInputCount=(validInputCount+count).coerceAtMost(fftSize)
+        return skipped
     }
 
     private fun accumulateSample(i: Double, q: Double) {

@@ -15,7 +15,7 @@ class SpectrumBranch(val engine: FftEngine, private val scope: CoroutineScope,
                      private val onFrame: (SpectrumFrame) -> Unit) : AutoCloseable {
     val skipped = AtomicLong()
     @Volatile private var closing=false
-    private val queue=Channel<IqBlock.Float32>(2,BufferOverflow.DROP_OLDEST,
+    private val queue=Channel<IqBlock>(2,BufferOverflow.DROP_OLDEST,
         onUndeliveredElement={ if(!closing) skipped.incrementAndGet() })
     private var job: Job?=null
     fun start() {
@@ -31,7 +31,10 @@ class SpectrumBranch(val engine: FftEngine, private val scope: CoroutineScope,
                 }
                 engine.analysisIntervalSamples=(block.metadata.sampleRate/60).coerceAtLeast(1)
                 val before=engine.spectrumSequence
-                val result=engine.processFloat(block.values)
+                val result=when(block) {
+                    is IqBlock.Unsigned8 -> engine.processUint8(block.bytes)
+                    is IqBlock.Float32 -> engine.processFloat(block.values)
+                }
                 if(engine.spectrumSequence!=before) {
                     val now=nanoTime()
                     // Preserve alpha28's 30 Hz display budget. Measurement keeps its
@@ -46,7 +49,7 @@ class SpectrumBranch(val engine: FftEngine, private val scope: CoroutineScope,
         }
     }
     /** Only immutable, source-owned arrays may cross this boundary. */
-    fun offer(block:IqBlock.Float32) { if(!closing) queue.trySend(block) }
+    fun offer(block:IqBlock) { if(!closing) queue.trySend(block) }
     override fun close() {
         closing=true;queue.cancel()
         runBlocking { job?.cancelAndJoin() }
