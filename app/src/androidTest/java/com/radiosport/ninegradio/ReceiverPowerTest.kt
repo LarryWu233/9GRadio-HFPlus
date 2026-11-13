@@ -44,7 +44,7 @@ class ReceiverPowerTest {
             withTimeout(10000) { service.connectionState.first { it is RtlSdrService.ConnectionState.Connected } }
             assertNotSame(old, service.source)
             assertTrue(service.source!!.isOpen())
-            val scanner = FrequencyScanner(service.source!!)
+            val scanner = FrequencyScanner(service.source!!,service.scannerTuner(service.source!!))
             try {
                 scanner.startScan(FrequencyScanner.ScanConfig(10_000_000, 10_200_000,
                     adaptiveSquelch = true, holdOnSignal = false, resumeTimeMs = 0,

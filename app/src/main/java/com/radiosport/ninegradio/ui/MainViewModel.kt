@@ -271,20 +271,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // switching internally. This eliminates any race between dspEngine being
         // assigned and the connectionState emission being observed here.
         launch {
-            svc.spectrumFlow.collect { spectrum ->
+            _spectrumData.subscriptionCount.map { it>0 }.distinctUntilChanged().flatMapLatest { visible ->
+                if(visible) svc.spectrumFlow else emptyFlow()
+            }.collect { spectrum ->
                 _spectrumData.value = spectrum
                 svc.dspEngine?.fftEngine?.getPeakHold()?.let { _peakData.value = it }
             }
         }
 
         launch {
-            svc.statusFlow.collect { status ->
+            // Device counters can change for every USB block. Coalesce only the
+            // presentation copy off the main thread; service faults/control and
+            // all DSP/scanner measurements keep their original clocks.
+            svc.statusFlow.sample(100L).flowOn(Dispatchers.Default).collect { status ->
                 _deviceStatus.value = status
             }
         }
 
         launch {
-            svc.statsFlow.collect { stats ->
+            svc.statsFlow.sample(100L).flowOn(Dispatchers.Default).collect { stats ->
                 _dspStats.value = stats
             }
         }
@@ -1188,7 +1193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * running (no-op in that case).
      */
     fun rebuildVocoderDecoder() {
-        sdrService?.dspEngine?.rebuildVocoderDecoder()
+        sdrService?.rebuildVocoderDecoder()
     }
 
     // ─── RDS data ─────────────────────────────────────────────────────────────

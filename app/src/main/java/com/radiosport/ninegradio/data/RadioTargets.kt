@@ -3,7 +3,10 @@ package com.radiosport.ninegradio.data
 import kotlinx.coroutines.flow.MutableStateFlow
 
 data class RadioTarget(val id: String, val label: String, val latitude: Double,
-                       val longitude: Double, val detail: String, val timeMs: Long)
+                       val longitude: Double, val detail: String, val timeMs: Long,
+                       val type:Type=Type.STATION,val headingDegrees:Double?=null) {
+    enum class Type { STATION, AIRCRAFT }
+}
 
 /** Decoded position data in WGS84; independent of map rendering and tile providers. */
 object RadioTargets {

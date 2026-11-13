@@ -20,6 +20,31 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ReceiverPresentationTest {
+    @Test fun hiddenDirectionPanelDefersTextUpdatesUntilSelected() {
+        val inst=InstrumentationRegistry.getInstrumentation()
+        inst.runOnMainSync {
+            val panel=com.radiosport.ninegradio.ui.RdfControls(ContextThemeWrapper(inst.targetContext,R.style.Theme_NineGRadio))
+            fun texts(view:View):List<String> = when(view) {
+                is TextView -> listOf(view.text.toString())
+                is android.view.ViewGroup -> (0 until view.childCount).flatMap { texts(view.getChildAt(it)) }
+                else -> emptyList()
+            }
+            try {
+                val initial=texts(panel)
+                panel.render(-40f,true,10_000_000L)
+                assertEquals(initial,texts(panel))
+                panel.setActive(true)
+                assertTrue(texts(panel).any { it.contains("dBFS") })
+                panel.setActive(false)
+                val hidden=texts(panel)
+                panel.render(-25f,false,20_000_000L)
+                assertEquals(hidden,texts(panel))
+                panel.setActive(true)
+                assertTrue(texts(panel).contains("已关闭"))
+                assertTrue(texts(panel).any { it.contains("20.000000") })
+            } finally { panel.setActive(false) }
+        }
+    }
     @Test fun waterfallRetainsNarrowCarrierInFullSpan() {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         instrumentation.runOnMainSync {

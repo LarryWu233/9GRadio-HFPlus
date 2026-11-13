@@ -10,6 +10,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlinx.coroutines.flow.first
 
 /** Run in isolation after force-stopping the receiver; fixtures never enter live reception. */
 @RunWith(AndroidJUnit4::class)
@@ -21,7 +22,15 @@ class ReadsbReplayTest {
         val source=FileIqSource(fixture,2400000,1090000000,DemodMode.ADSB)
         val receiver=ReadsbReceiver(context)
         try {
-            assertTrue(source.open()); receiver.start(source)
+            assertTrue(source.open())
+            val module:com.radiosport.ninegradio.pipeline.IqDecoderModule<List<AdsbDecoder.AdsbFrame>> = receiver
+            module.start(source,com.radiosport.ninegradio.pipeline.IqDecoderConfiguration(768000,
+                com.radiosport.ninegradio.pipeline.IqSampleFormat.FLOAT_32))
+            assertFalse("Unsupported input must be refused before subscribing",receiver.status.value.running)
+            assertNotNull(kotlinx.coroutines.runBlocking { module.state.first() }.error)
+            assertEquals(0,source.iqSubscriberCount)
+            module.start(source,com.radiosport.ninegradio.pipeline.IqDecoderConfiguration(2400000,
+                com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8))
             val deadline=SystemClock.elapsedRealtime()+12000
             while(source.iqSubscriberCount==0 && SystemClock.elapsedRealtime()<deadline) Thread.sleep(20)
             source.startStreaming()
@@ -30,7 +39,7 @@ class ReadsbReplayTest {
                 val status=receiver.status.value
                 assertNull(status.error)
                 messages=maxOf(messages,status.messages)
-                val tracks=receiver.aircraft.value
+                val tracks=kotlinx.coroutines.runBlocking { module.results.first() }
                 callsign=callsign || tracks.any { it.icao24=="4840D6" && it.callsign=="KLM1023" }
                 altitude=altitude || tracks.any { it.icao24=="40621D" && it.altitude==38000 }
                 if(callsign && altitude && messages>=85 && status.inputSamples==fixture.length()/2) break
@@ -39,6 +48,10 @@ class ReadsbReplayTest {
             assertTrue("Native CRC-valid message count: $messages",messages>=85)
             assertTrue("Native callsign decode",callsign); assertTrue("Native altitude decode",altitude)
             assertEquals(fixture.length()/2,receiver.status.value.inputSamples)
+            while(receiver.status.value.running && SystemClock.elapsedRealtime()<deadline) Thread.sleep(20)
+            assertFalse("Normal file EOF drains and exits",receiver.status.value.running)
+            assertNull("Successful native EOF is not an input error",receiver.status.value.error)
+            assertTrue("Final JSON is read after native exit",receiver.status.value.messages>=85)
             if(InstrumentationRegistry.getArguments().getString("tablePreview")=="1") {
                 val tracks=receiver.aircraft.value.sortedBy { it.icao24 }
                 InstrumentationRegistry.getInstrumentation().runOnMainSync {

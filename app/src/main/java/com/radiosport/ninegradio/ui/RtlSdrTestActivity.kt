@@ -1,4 +1,5 @@
 package com.radiosport.ninegradio.ui
+import com.radiosport.ninegradio.source.requiresDirectSampling
 
 import android.os.Bundle
 import android.widget.*

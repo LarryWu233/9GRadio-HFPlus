@@ -16,6 +16,7 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
     private external fun nativeClose(handle: Long)
     private external fun nativeStart(handle: Long): Boolean
     private external fun nativeStop(handle: Long)
+    private external fun nativeStreaming(handle:Long):Boolean
     private external fun nativeRates(handle: Long): IntArray
     private external fun nativeRate(handle: Long, rate: Int): Boolean
     private external fun nativeFrequency(handle: Long, hz: Long): Boolean
@@ -23,22 +24,26 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
     private external fun nativeAttenuation(handle: Long, index: Int): Boolean
     private external fun nativePpm(handle: Long, ppm: Int): Boolean
 
-    private val samples = MutableSharedFlow<IqBlock>(extraBufferCapacity = 128, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    override val iqFlow = samples.asSharedFlow()
-    override val iqSubscriberCount get() = samples.subscriptionCount.value
+    private val samples = com.radiosport.ninegradio.pipeline.IqStream()
+    private val clock = com.radiosport.ninegradio.pipeline.CaptureClock()
+    override val iqFlow = samples.flow
+    override val iqSubscriberCount get() = samples.subscriberCount
     private val status = MutableStateFlow(IqSource.SourceStatus(centerFreqHz = 10_000_000, sampleRate = 768000))
     override val statusFlow = status.asStateFlow()
     private var connection: UsbDeviceConnection? = null
     @Volatile private var handle = 0L
     @Volatile private var streaming = false
+    @Volatile private var lastIqNanos=0L
     @Volatile private var caps = DeviceCapabilities.airspy()
     override val capabilities get() = caps
-    private var sequence = 0L
 
     // Called from the driver's consumer thread. JNI supplies a fresh owned array.
     @Suppress("unused")
     private fun onIq(values: FloatArray, dropped: Long) {
-        samples.tryEmit(IqBlock.Float32(values, sequence++))
+        lastIqNanos=System.nanoTime()
+        val state = status.value
+        val meta = clock.stamp(values.size / 2, state.sampleRate, state.centerFreqHz, driverLostSamples = dropped)
+        samples.offer(IqBlock.Float32(values, meta.sequence, meta))
         DebugBus.recordIqTransfer(values.size * 4, values.size * 4, 0L)
         DebugBus.tick(DebugBus.STAGE_IQ_STREAM)
         if (dropped > 0) DebugBus.setExtra(DebugBus.STAGE_IQ_STREAM, "HF_DRIVER_DROPPED_SAMPLES", dropped.toString())
@@ -51,7 +56,7 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
         if (opened == 0L) { conn.close(); return false }
         connection = conn
         handle = opened
-        sequence = 0
+        clock.restart()
         val rates = nativeRates(handle).filter { it > 0 }.distinct().sorted()
         if (rates.isEmpty()) { close(); return false }
         caps = DeviceCapabilities.airspy(rates)
@@ -66,8 +71,20 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
     }
     @Synchronized override fun startStreaming(bufferSize: Int) {
         if (handle == 0L || streaming) return
+        lastIqNanos=System.nanoTime()
         streaming = nativeStart(handle)
         if (!streaming) status.value = status.value.copy(error = "Airspy HF+ stream failed", streamRestartRequired = true)
+    }
+    @Synchronized override fun pollStreamingStatus() {
+        if(handle==0L || !streaming || status.value.streamRestartRequired) return
+        val attached=usbManager.deviceList[usbDevice.deviceName]
+        val error=when {
+            attached==null || !isSupported(attached) -> "Airspy HF+ USB 已断开，请重新连接"
+            !nativeStreaming(handle) -> "Airspy HF+ 驱动已停止供样，请重新连接"
+            System.nanoTime()-lastIqNanos>3_000_000_000L -> "Airspy HF+ 超过 3 秒没有 IQ 数据，请检查连接"
+            else -> null
+        }
+        if(error!=null) status.value=status.value.copy(error=error,streamRestartRequired=true)
     }
     @Synchronized override fun stopStreaming() {
         if (handle != 0L && streaming) nativeStop(handle)
@@ -80,6 +97,7 @@ class AirspyHfSource(private val usbManager: UsbManager, val usbDevice: UsbDevic
         connection?.close()
         connection = null
         status.value = status.value.copy(connected = false)
+        samples.complete()
     }
     @Synchronized override fun setCenterFrequency(freqHz: Long): Boolean {
         if (handle == 0L || !caps.supportsFrequency(freqHz)) return false

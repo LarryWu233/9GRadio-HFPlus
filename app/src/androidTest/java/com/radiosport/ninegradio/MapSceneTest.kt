@@ -31,12 +31,19 @@ class MapSceneTest {
     @Test fun protocolFilteredSamplePositionsRenderAndProbeOriginalTile() {
         val inst=InstrumentationRegistry.getInstrumentation(); val context=inst.targetContext
         ReceiverTestPreferences(context).use {
+        context.getSharedPreferences("radio_map",android.content.Context.MODE_PRIVATE).edit()
+            .putString("receiverLocationMode","manual").putString("receiverPositionSource","manual")
+            .putFloat("receiverLat",35f).putFloat("receiverLon",105f).commit()
+        context.getSharedPreferences("rtlsdr_prefs",android.content.Context.MODE_PRIVATE).edit().putBoolean("receiverEnabled",false).commit()
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand(
+            "am start -W -n ${context.packageName}/${MainActivity::class.java.name}"
+        )).use { it.readBytes() }
         ActivityScenario.launch(MainActivity::class.java).use { main ->
         main.onActivity { ViewModelProvider(it)[MainViewModel::class.java].setReceiverEnabled(false) }
         Thread.sleep(2700) // MIUI explicit-launch helper finishes before map navigation.
         val oldAircraft=RadioTargets.aircraft.value; val oldStations=RadioTargets.stations.value
         val now=System.currentTimeMillis()
-        RadioTargets.aircraft.value=listOf(RadioTarget("SAMPLE-AIRCRAFT","[样本] 飞机",35.0,105.0,"位置图层测试",now))
+        RadioTargets.aircraft.value=listOf(RadioTarget("SAMPLE-AIRCRAFT","[样本] 飞机",35.0,105.0,"位置图层测试",now,RadioTarget.Type.AIRCRAFT,90.0))
         RadioTargets.stations.value=listOf(RadioTarget("SAMPLE-APRS","[样本] 电台",35.1,105.1,"五分钟前的 APRS 数据",now-300000))
         val results=ArrayList<Map<String,Any?>>()
         try {
@@ -47,9 +54,13 @@ class MapSceneTest {
                     activity.findViewById<com.google.android.material.tabs.TabLayout>(R.id.controlTabLayout)
                         .getTabAt(adapter.positionOf(if(protocol=="ADSB") ControlsPagerAdapter.TAB_ADSB else ControlsPagerAdapter.TAB_APRS))!!.select()
                     activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(if(protocol=="ADSB") R.id.btnAdsbPanelMap else R.id.btnAprsMap).isChecked=true
+                    if(protocol=="ADSB") {
+                        val expanded=MainActivity::class.java.getDeclaredField("panelFullscreen").apply { isAccessible=true }.getBoolean(activity)
+                        if(!expanded) activity.findViewById<android.view.View>(R.id.btnAdsbPanelFull).performClick()
+                    }
                 }
                 Thread.sleep(600)
-                RadioTargets.aircraft.value=listOf(RadioTarget("SAMPLE-AIRCRAFT","[样本] 飞机",35.0,105.0,"位置图层测试",now))
+                RadioTargets.aircraft.value=listOf(RadioTarget("SAMPLE-AIRCRAFT","[样本] 飞机",35.0,105.0,"位置图层测试",now,RadioTarget.Type.AIRCRAFT,90.0))
                 RadioTargets.stations.value=listOf(RadioTarget("SAMPLE-APRS","[样本] 电台",35.1,105.1,"五分钟前的 APRS 数据",now-300000))
                     val deadline=SystemClock.elapsedRealtime()+18000
                     var found=false; var details=""
@@ -60,7 +71,7 @@ class MapSceneTest {
                             details="map=${map!=null}; style=${map?.style?.isFullyLoaded}; network=${MapNetwork.status.value}"
                             if(map?.style?.isFullyLoaded==true) {
                                 val point=map.projection.toScreenLocation(LatLng(lat,if(protocol=="ADSB") 105.0 else 105.1))
-                                val features=map.queryRenderedFeatures(point,"radio-points")
+                                val features=map.queryRenderedFeatures(point,if(protocol=="ADSB") "radio-aircraft" else "radio-points")
                                 found=features.any { it.hasProperty("id") && it.getStringProperty("id")==id }
                                 assertTrue(features.none { it.hasProperty("id") && it.getStringProperty("id")!=id })
                             }

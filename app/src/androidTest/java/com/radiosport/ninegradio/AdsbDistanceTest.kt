@@ -27,6 +27,8 @@ class AdsbDistanceTest {
             val known=tracker.update(listOf(ac))
             assertTrue(known.currentMaxKm!! in 110.0..112.0)
             assertEquals(known.currentMaxKm!!,known.recordKm!!,0.01)
+            prefs.edit().putFloat("receiverLat",0.0001f).commit() // GPS drift, same receiver site.
+            assertEquals(known.recordKm!!,tracker.update(listOf(ac)).recordKm!!,0.001)
             val empty=tracker.update(emptyList())
             assertNull(empty.currentMaxKm); assertNotNull(empty.recordKm)
             prefs.edit().putFloat("receiverLat",10f).commit()

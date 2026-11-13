@@ -11,20 +11,21 @@ import java.util.zip.GZIPOutputStream
  * Records raw IQ data from the RTL-SDR to a file.
  * Supports .iq (raw uint8) and .iq.gz (gzip compressed) formats.
  */
-class IqRecorder {
+class IqRecorder : IqRecordingSink {
     @Synchronized
-    fun write(block: com.radiosport.ninegradio.source.IqBlock) {
+    override fun write(block: com.radiosport.ninegradio.source.IqBlock) {
         when (block) {
             is com.radiosport.ninegradio.source.IqBlock.Unsigned8 -> write(block.bytes)
             is com.radiosport.ninegradio.source.IqBlock.Float32 -> {
                 if (!isRecording) return
                 try {
                     check(format == Format.FLOAT32) { "Float IQ must be recorded as CF32" }
-                    val buffer = java.nio.ByteBuffer.allocate(block.values.size * 4)
-                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    val size=block.values.size*4
+                    if(floatBytes.size<size) floatBytes=ByteArray(size)
+                    val buffer = java.nio.ByteBuffer.wrap(floatBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
                     buffer.asFloatBuffer().put(block.values)
-                    outputStream?.write(buffer.array())
-                    bytesWritten += buffer.capacity()
+                    outputStream?.write(floatBytes,0,size)
+                    bytesWritten += size
                 } catch (e: IOException) { Log.e(TAG, "Float IQ write failed", e); stop() }
             }
         }
@@ -40,7 +41,7 @@ class IqRecorder {
         }
     }
 
-    var isRecording = false
+    @Volatile override var isRecording = false
         private set
 
     var filePath: String = ""
@@ -53,6 +54,7 @@ class IqRecorder {
         private set
 
     private var sampleRate = 0
+    private var floatBytes = ByteArray(0)
     private var outputStream: OutputStream? = null
     private var fileOutputStream: FileOutputStream? = null
 
@@ -67,7 +69,7 @@ class IqRecorder {
      * @param fmt Output format.
      */
     @Synchronized
-    fun start(path: String, rate: Int, fmt: Format = Format.RAW_UINT8) {
+    override fun start(path: String, rate: Int, fmt: Format) {
         if (isRecording) stop()
         filePath = path
         sampleRate = rate
@@ -124,22 +126,20 @@ class IqRecorder {
     }
 
     @Synchronized
-    fun stop() {
-        if (!isRecording) return
+    override fun stop() {
+        val output=outputStream ?: fileOutputStream ?: return
         isRecording = false
-        try {
-            outputStream?.flush()
-            outputStream?.close()
-            val durationMs = System.currentTimeMillis() - startTimeMs
-            Log.i(TAG, "IQ recording stopped: $bytesWritten bytes in ${durationMs}ms -> $filePath")
-        } catch (e: IOException) {
-            Log.e(TAG, "Error closing IQ file", e)
-        }
         outputStream = null
         fileOutputStream = null
+        var failure:IOException?=null
+        try { output.flush() } catch(e:IOException) { failure=e }
+        try { output.close() } catch(e:IOException) { failure?.addSuppressed(e) ?: run { failure=e } }
+        if(failure!=null) throw failure!!
+        val durationMs = System.currentTimeMillis() - startTimeMs
+        Log.i(TAG, "IQ recording stopped: $bytesWritten bytes in ${durationMs}ms -> $filePath")
     }
 
-    @Synchronized fun capturedDurationMs(): Long = bytesWritten * 1000L / ((if(format==Format.FLOAT32) 8L else 2L)*sampleRate.coerceAtLeast(1))
+    @Synchronized override fun capturedDurationMs(): Long = bytesWritten * 1000L / ((if(format==Format.FLOAT32) 8L else 2L)*sampleRate.coerceAtLeast(1))
 
     fun getDurationMs(): Long = if (isRecording) System.currentTimeMillis() - startTimeMs else 0L
 

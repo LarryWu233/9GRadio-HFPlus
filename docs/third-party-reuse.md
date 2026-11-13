@@ -21,7 +21,7 @@
 
 - ADS-B 复用 [wiedehopf/readsb](https://github.com/wiedehopf/readsb) 固定提交 `5d13a0c2b2a6d22949b8b13c5424f28b7f3e1ead`，GPL-3.0-or-later。源码、COPYING、版本和归档 SHA-256 在 `cpp/vendor/readsb/`；链接 zstd v1.5.7，按 BSD-3-Clause 使用，完整许可在 `cpp/vendor/zstd/`。
 - 原样编译 `demod_2400.c`、Mode S、CRC、CPR 与跟踪内核，独立进程从 stdin 接收 **2.4 MS/s UC8 原始 IQ**。Android 继续独占 USB；不启用 readsb 的原生 USB 后端，不将监听 NR/NB/SQL 音频送进解码器。
-- Android 适配仅涉及 `readsb.h` 中的 `posix_memalign` 兼容分配、`util.c` 使用现有 POSIX `pthread_join` 路径、CMake/PIE 打包和进程/JSON 生命周期管理。未另写或修改 ADS-B 解调及定位算法。
+- Android 适配涉及 `readsb.h` 的 `posix_memalign` 兼容分配、`util.c` 的条件唤醒与 POSIX `pthread_join`、CMake/PIE 打包，以及 stdin／进程／最终 JSON 的生命周期管理。架构分支另外修复启动期退出请求、正常 EOF 状态竞态，并移除退出信号处理器中会重入 libc 时间锁的日志调用。具体改动在 `cpp/vendor/readsb/UPSTREAM.json`；未另写或修改 ADS-B 解调及定位算法。
 - 地图复用 [MapLibre Native Android 13.7.1](https://maplibre.org/maplibre-native/android/api/) 的 OpenGL 包；原版 APK 使用的 OSM 栅格地址作为默认来源。地图与雷达在接收模块内切换，目标数据由接收服务维护。MapLibre 保留 HTTP 缓存；请求携带应用 User-Agent，按 [OSM 瓦片政策](https://operations.osmfoundation.org/policies/tiles/) 显示署名，不批量下载公共瓦片。
 - 指南针由 Android [方向传感器 API](https://developer.android.com/develop/sensors-and-location/sensors/sensors_position) 提供磁北朝向，显示层只绘制刻度，不将手机朝向称为无线电信号方位。距离使用 Android `Location.distanceBetween`，不从信号强度推算距离。
 

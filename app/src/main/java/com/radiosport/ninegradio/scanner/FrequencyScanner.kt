@@ -1,5 +1,7 @@
 package com.radiosport.ninegradio.scanner
 
+import com.radiosport.ninegradio.dsp.spectrum
+
 import android.util.Log
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.dsp.FftEngine
@@ -55,6 +57,7 @@ import kotlin.math.roundToLong
  */
 class FrequencyScanner(
     private val device: IqSource,
+    private val tuner: com.radiosport.ninegradio.pipeline.CaptureTuner,
     private val signalLevelProvider: (() -> Float)? = null,
     /**
      * Invoked with the new frequency immediately after every hardware retune
@@ -483,18 +486,19 @@ class FrequencyScanner(
      * every frame here is captured at the same, unchanging [centerFreqHz].
      */
     private suspend fun captureBlock(centerFreqHz: Long, settleMs: Long = RETUNE_SETTLE_MS): FftBlock? {
-        if (!device.capabilities.supportsFrequency(centerFreqHz) || !device.setCenterFrequency(centerFreqHz)) return null
+        if (!device.capabilities.supportsFrequency(centerFreqHz) || !tuner.tune(centerFreqHz)) return null
         onRetune?.invoke(centerFreqHz)
         delay(settleMs)
+        val selection=com.radiosport.ninegradio.pipeline.CaptureSelection(centerFreqHz,System.nanoTime())
         fftEngine.resetSpectrumAveraging()
         return try {
             withTimeoutOrNull(IQ_CAPTURE_TIMEOUT_MS * (SCAN_BLOCK_AVERAGES + 1)) {
-                device.iqFlow.first() // discard: may predate the retune settling
+                device.iqFlow.first { selection.accepts(it.metadata) } // retain the post-settle discard
                 var accum: DoubleArray? = null
                 var framesAveraged = 0
                 var sampleRate = device.getSampleRate()
                 repeat(SCAN_BLOCK_AVERAGES) {
-                    val raw = device.iqFlow.first()
+                    val raw = device.iqFlow.first { selection.accepts(it.metadata) }
                     val spectrum = raw.spectrum(fftEngine)
                     if (accum == null) accum = DoubleArray(spectrum.size)
                     val acc = accum!!
@@ -605,14 +609,15 @@ class FrequencyScanner(
      *  priority poll, and search mode, where a single known channel — not a
      *  whole capture's worth of bandwidth — is what's being evaluated. */
     private suspend fun sampleSignal(freqHz: Long, totalDwellMs: Long, samples: Int): Float {
-        if (!device.capabilities.supportsFrequency(freqHz) || !device.setCenterFrequency(freqHz)) return -120f
+        if (!device.capabilities.supportsFrequency(freqHz) || !tuner.tune(freqHz)) return -120f
         onRetune?.invoke(freqHz)
         delay(RETUNE_SETTLE_MS)
+        val selection=com.radiosport.ninegradio.pipeline.CaptureSelection(freqHz,System.nanoTime())
         val iterations = max(1, samples)
         val perIterationMs = max(20L, totalDwellMs / iterations)
         var peak = -200f
         repeat(iterations) {
-            val raw = withTimeoutOrNull(perIterationMs) { device.iqFlow.first() }
+            val raw = withTimeoutOrNull(perIterationMs) { device.iqFlow.first { selection.accepts(it.metadata) } }
             if (raw != null) {
                 val spectrum = raw.spectrum(fftEngine)
                 val db = narrowbandDb(spectrum, device.getSampleRate())

@@ -13,17 +13,18 @@ import kotlin.math.*
 
 /** Bounded worker adapter to Android MediaCodec/MediaMuxer; no codec runs on the audio writer. */
 class AudioFileRecorder(private val path:String,private val rate:Int,private val channels:Int,
-    private val profile:AudioRecordingProfile) {
-    @Volatile var isRecording=false
+    private val profile:AudioRecordingProfile) : SoundRecordingSink {
+    @Volatile override var isRecording=false
         private set
-    @Volatile var error:String?=null
+    @Volatile override var error:String?=null
         private set
     @Volatile private var finishing=false
     private val queue=ArrayBlockingQueue<FloatArray>(128)
     private val frames=AtomicLong()
     private var worker:Thread?=null
+    override val isWorkerAlive get()=worker?.isAlive==true
 
-    fun start() {
+    override fun start() {
         val ready=CompletableFuture<Unit>()
         worker=Thread({
             var sink:Sink?=null
@@ -52,18 +53,19 @@ class AudioFileRecorder(private val path:String,private val rate:Int,private val
         },"radio-audio-recorder").apply { start() }
         try { ready.get(8,TimeUnit.SECONDS) } catch(t:Exception) { finishing=true;isRecording=false;throw IOException("无法启动所选录制格式",t) }
     }
-    fun writeSamples(samples:FloatArray) {
+    override fun writeSamples(samples:FloatArray) {
         if(!isRecording || finishing) return
         if(!queue.offer(samples.copyOf())) {
             error="编码或存储未能跟上，录制已停止";isRecording=false;finishing=true
         }
     }
-    fun stop() {
+    override fun abort(reason:String) { error=reason;isRecording=false;finishing=true }
+    override fun stop() {
         isRecording=false;finishing=true
         worker?.join(15000)
         if(worker?.isAlive==true) { error="录制文件仍在完成，请稍候";throw IOException(error) }
     }
-    fun capturedDurationMs()=frames.get()*1000/rate
+    override fun capturedDurationMs()=frames.get()*1000/rate
 
     private interface Sink { fun write(values:FloatArray);fun close() }
     private class WaveSink(path:String,rate:Int,channels:Int,depth:Int):Sink {

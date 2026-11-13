@@ -87,12 +87,19 @@ void setExit(int arg) {
 static void exitHandler(int sig) {
     setExit(1);
 
+    #ifndef __ANDROID__
     char *sigX = NULL;
     if (sig == SIGTERM) { sigX = "SIGTERM"; }
     if (sig == SIGINT) { sigX = "SIGINT"; }
     if (sig == SIGQUIT) { sigX = "SIGQUIT"; }
     if (sig == SIGHUP) { sigX = "SIGHUP"; }
     log_with_timestamp("Caught %s, shutting down...", sigX);
+    #else
+    // localtime/stdio inside timestamp logging are not signal-safe. A stop
+    // during modesInit's time conversion can otherwise re-enter its libc lock.
+    // The main thread retains the existing normal-exit log.
+    (void) sig;
+    #endif
 }
 
 static void adjustUserLocationAccuracy(int verbose) {
@@ -609,7 +616,7 @@ static void *readerEntryPoint(void *arg) {
     if (sdrHasRun()) {
         sdrRun();
         // Wake the main thread (if it's still waiting)
-        if (!Modes.exit)
+        if (!Modes.exit && !Modes.exitSoon)
             setExit(2); // unexpected exit
     } else {
         struct timespec ts;
@@ -3139,7 +3146,9 @@ int main(int argc, char **argv) {
         exit(0);
     }
 
+    #ifndef __ANDROID__
     configureSignals();
+    #endif
 
     if (0) {
         unlink("test.gz");
@@ -3162,6 +3171,12 @@ int main(int argc, char **argv) {
     #else
     Modes.exitNowEventfd = eventfd(0, EFD_NONBLOCK);
     Modes.exitSoonEventfd = eventfd(0, EFD_NONBLOCK);
+    #endif
+
+    #ifdef __ANDROID__
+    // Preserve cancellation during startup: configSetDefaults clears Modes,
+    // and an exit request also needs its event descriptors to exist first.
+    configureSignals();
     #endif
 
 
@@ -3415,6 +3430,16 @@ int main(int argc, char **argv) {
         // force stats to be done, this must happen before network cleanup as it checks network stuff
         Modes.next_stats_update = 0;
         priorityTasksRun();
+
+        #ifdef __ANDROID__
+        // Android consumes aircraft.json from the stdin IQ adapter. A short file
+        // or its final tail can finish between the periodic JSON updates. All
+        // decoder/JSON workers have joined here; publish the existing encoder's
+        // final snapshot before aircraft state and its locks are destroyed.
+        if (Modes.sdr_type == SDR_IFILE && Modes.json_dir) {
+            free(writeJsonToFile(Modes.json_dir, "aircraft.json", generateAircraftJson(0)).buffer);
+        }
+        #endif
 
         /* Cleanup network setup */
         cleanupNetwork();

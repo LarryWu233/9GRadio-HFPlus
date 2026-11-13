@@ -35,6 +35,13 @@ struct IqBlanker {
         else if(reinitialize) reset();
         const float ramp=1.0f/(0.002f*rate);
         if(fm) {
+            if(!enabled && wet==0.0f) {
+                // Keep SDR++'s amplitude estimator warm, exactly as before.
+                // With a fully dry mix its returned gain is unused: do not
+                // calculate the ramp/mix or rewrite unchanged IQ samples.
+                for(int i=0;i<count;i+=2) (void)amplitude.gain(iq[i],iq[i+1],threshold);
+                return 0;
+            }
             int modified=0;
             for(int i=0;i<count;i+=2) {
                 wet=std::clamp(wet+(enabled?ramp:-ramp),0.0f,1.0f);
