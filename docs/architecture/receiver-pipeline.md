@@ -56,7 +56,7 @@ Public artifacts exclude device IDs, network/location details, personal paths, c
 | External audio decoder | Service-owned `ExternalDecoderStream` adapter | Bounded session queue; sender/socket/DNS ownership survives DSP replacement until truly released |
 | Monitoring | Portable `MonitorAudioBranch`; injected `ListeningPostProcessor` | Existing NR, L/R processing, native notch/leveling, gain and SQL fade; never mutates decoder PCM |
 | Sound recording | Application `SoundCapture` | Forks processed monitor audio before the playback queue; storage failure and finishing ownership explicit |
-| Playback | Portable `AudioOutput` port; Android `AudioEngine` / AudioTrack | Fixed-duration PCM packets, interruptible write and joined shutdown; reports drops and underruns |
+| Playback | Portable `AudioOutput` port; Android `AudioEngine` / AudioTrack | Fixed-duration PCM packets; session-owned audio-priority HandlerThread, interruptible write and joined job/thread shutdown; reports drops and underruns |
 | Map / database / UI | Application services and collectors | Decoder emits results; map target and persistence updates stay outside portable DSP |
 
 The monitor extraction preserves the prior analog and digital-voice operation ordering and gain behavior; it is not a new noise algorithm. Frozen pre-extraction comparisons check exact samples with irregular chunks, NR toggles, stereo, mute and gain changes. Recording format/settings and the Views UI remain unchanged.

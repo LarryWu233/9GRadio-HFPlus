@@ -534,6 +534,7 @@ class DspEngine(private val device: IqSource,
         }
     )
     private var audioWriterJob: Job? = null
+    private val audioWriterThread=lazy { com.radiosport.ninegradio.audio.AudioWriterThread() }
     @Volatile private var audioFramePosition=0L
     private var packetFramePosition=0L
     fun getPlaybackQueueDrops()=audioQueueDrops.get()
@@ -644,27 +645,12 @@ class DspEngine(private val device: IqSource,
     /** Launch (or re-launch) the dedicated audio writer coroutine. */
     private fun startAudioWriter() {
         audioWriterJob?.cancel()
-        // DISPATCHERS.IO — not Dispatchers.Default.
-        //
-        // AudioEngine.write() calls AudioTrack.write(WRITE_BLOCKING) inside a
-        // Java synchronized() block.  synchronized() is not a coroutine suspend
-        // point: the thread is completely parked while AudioTrack drains room in
-        // its ring buffer.  On a budget 2-core device Dispatchers.Default has only
-        // 2 threads; with one permanently blocked in the audio write loop there is
-        // only ONE thread left for processIqBlock() — and any competing scheduler
-        // pressure (GC, binder, UI) causes the 34 ms (→ now 8.5 ms) DSP budget
-        // to slip, triggering the SharedFlow DROP_OLDEST and producing audio gaps.
-        //
-        // Dispatchers.IO has an elastic thread pool (default 64 threads) specifically
-        // designed for blocking I/O calls.  AudioTrack.write(WRITE_BLOCKING) is exactly
-        // that: a blocking I/O call into the Android audio HAL.  Parking an IO thread
-        // for a few ms costs nothing — it does not reduce the CPU-bound Default pool
-        // that processIqBlock() depends on.
-        //
-        // rtl_tcp never suffers this problem because its 4.3 ms audio blocks return
-        // from AudioTrack.write() almost immediately (ring-buffer copy), so the
-        // Default thread is only parked for <1 ms per block rather than up to 8.5 ms.
-        audioWriterJob = scope.launch(Dispatchers.IO) {
+        // AudioTrack's blocking writes run on a platform audio-priority thread.
+        // Its Handler dispatcher is owned by this session, not a shared IO/CPU
+        // pool. Source work, decoding, rendering and recording stay elsewhere.
+        // Stop interrupts the native write, joins this job, then quits/joins the
+        // HandlerThread. Rate changes reuse the thread within the same session.
+        audioWriterJob = scope.launch(audioWriterThread.value.dispatcher) {
             try {
             for (samples in audioWriteChannel) {
                 if (samples.epoch == session.snapshot.epoch && !session.snapshot.closed)
@@ -725,6 +711,7 @@ class DspEngine(private val device: IqSource,
         audioEngine.interruptWrites()
         // Do not hold the DSP monitor: an in-flight block must be able to finish.
         runBlocking { processingJob?.join(); digVoiceAudioJob?.join(); audioWriterJob?.join() }
+        if(audioWriterThread.isInitialized()) audioWriterThread.value.close()
         display.close()
         voiceStage.close()
         synchronized(this) {

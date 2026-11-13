@@ -68,6 +68,7 @@ class ReceiverForegroundObservationTest {
                 scenario.onActivity { activity ->
                     vm=ViewModelProvider(activity)[MainViewModel::class.java]
                 }
+                var writerThreads=emptyList<Thread>()
                 try {
                 runBlocking { withTimeout(10000) { vm.serviceConnected.first { it } } }
                 if(hardware) {
@@ -109,22 +110,27 @@ class ReceiverForegroundObservationTest {
                 val engine=service.dspEngine!!
                 frameAverage?.let { engine.fftEngine.frameAveragingCount=it }
                 Thread.sleep(6000)
+                writerThreads=Thread.getAllStackTraces().keys.filter { it.name=="Radio:AudioWriter" }
                 val drops=engine.javaClass.getDeclaredField("audioQueueDrops").apply { isAccessible=true }.get(engine) as AtomicLong
                 val beforeDrops=drops.get();val beforeUnderruns=engine.getPlaybackUnderruns()
                 val diagnosticsMethod=engine.javaClass.methods.firstOrNull { it.name=="pipelineDiagnostics" }
                 fun diagnosticCounters():Map<String,Long> {
                     val snapshot=diagnosticsMethod?.invoke(engine) ?: return emptyMap()
-                    return listOf("InputSamples","InputMissingSamples","DriverMissingSamples","RawDecoderInputMissingSamples","RawDecoderDriverMissingSamples")
+                    return listOf("Epoch","InputSamples","InputMissingSamples","DriverMissingSamples","RawDecoderInputMissingSamples","RawDecoderDriverMissingSamples")
                         .associateWith { name -> (snapshot.javaClass.getMethod("get"+name).invoke(snapshot) as Number).toLong() }
                 }
                 val beforeCounters=diagnosticCounters()
                 val beforeAdsb=service.adsbReceiver.status.value.inputSamples
+                val beforeClock=engine.getPlaybackClock()
+                val beforeAllocation=Debug.getRuntimeStat("art.gc.bytes-allocated")?.toLongOrNull()
                 inst.sendStatus(0,Bundle().apply { putString("stream","\nFOREGROUND_OBSERVATION_STARTED\n") })
                 val cpu=Process.getElapsedCpuTime()
                 val start=SystemClock.elapsedRealtimeNanos()
                 Thread.sleep(seconds*1000L)
                 val elapsed=SystemClock.elapsedRealtimeNanos()-start
                 val cpuMs=Process.getElapsedCpuTime()-cpu
+                val afterAllocation=Debug.getRuntimeStat("art.gc.bytes-allocated")?.toLongOrNull()
+                val afterClock=engine.getPlaybackClock()
                 val dropDelta=drops.get()-beforeDrops
                 val underrunDelta=engine.getPlaybackUnderruns()-beforeUnderruns
                 val deltas=diagnosticCounters().mapValues { (key,value) -> value-beforeCounters.getValue(key) }
@@ -138,6 +144,14 @@ class ReceiverForegroundObservationTest {
                     put("frameAverage",engine.fftEngine.frameAveragingCount);put("bandwidthHz",bandwidth)
                     put("playbackDrops",dropDelta);put("playbackUnderruns",underrunDelta)
                     put("counterDeltas",JSONObject(deltas))
+                    put("dedicatedAudioThreads",writerThreads.size)
+                    put("writtenFramesDelta",(afterClock["writtenFrames"] ?: 0)-(beforeClock["writtenFrames"] ?: 0))
+                    put("playedFramesDelta",(afterClock["playbackHeadFrames"] ?: 0)-(beforeClock["playbackHeadFrames"] ?: 0))
+                    if(beforeAllocation!=null && afterAllocation!=null) put("javaAllocatedBytes",afterAllocation-beforeAllocation)
+                    put("memorySummaryKb",JSONObject().apply {
+                        for(key in listOf("summary.java-heap","summary.native-heap","summary.code","summary.graphics","summary.private-other","summary.system"))
+                            memory.memoryStats[key]?.toLongOrNull()?.let { put(key,it) }
+                    })
                     if(mode==DemodMode.ADSB) {
                         put("adsbInputSamples",service.adsbReceiver.status.value.inputSamples-beforeAdsb)
                         put("adsbMessages",service.adsbReceiver.status.value.messages)
@@ -156,6 +170,9 @@ class ReceiverForegroundObservationTest {
                     service.adsbReceiver.status.value.running && service.adsbReceiver.status.value.inputSamples-beforeAdsb>2_400_000L*(seconds-2))
                 } finally {
                     inst.runOnMainSync { vm.setReceiverEnabled(false) }
+                    runBlocking { withTimeout(5000) {
+                        while(writerThreads.any { it.isAlive }) kotlinx.coroutines.delay(20)
+                    } }
                     Thread.sleep(350)
                 }
             }
