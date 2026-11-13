@@ -11,6 +11,7 @@ data class SpectrumFrame(val metadata: IqMetadata, val bins: FloatArray)
 
 /** Display-only analysis. The producer never waits for FFT or the UI. */
 class SpectrumBranch(val engine: FftEngine, private val scope: CoroutineScope,
+                     private val nanoTime: () -> Long = System::nanoTime,
                      private val onFrame: (SpectrumFrame) -> Unit) : AutoCloseable {
     val skipped = AtomicLong()
     @Volatile private var closing=false
@@ -21,6 +22,7 @@ class SpectrumBranch(val engine: FftEngine, private val scope: CoroutineScope,
         check(job==null)
         job=scope.launch {
             val continuity=IqContinuity()
+            var lastPublishedNanos:Long?=null
             for(block in queue) {
                 when(continuity.accept(block.metadata,block.sampleCount).change) {
                     IqContinuity.Change.STALE -> continue
@@ -30,7 +32,16 @@ class SpectrumBranch(val engine: FftEngine, private val scope: CoroutineScope,
                 engine.analysisIntervalSamples=(block.metadata.sampleRate/60).coerceAtLeast(1)
                 val before=engine.spectrumSequence
                 val result=engine.processFloat(block.values)
-                if(engine.spectrumSequence!=before) onFrame(SpectrumFrame(block.metadata,result.copyOf()))
+                if(engine.spectrumSequence!=before) {
+                    val now=nanoTime()
+                    // Preserve alpha28's 30 Hz display budget. Measurement keeps its
+                    // independent sample clock; gestures still draw at screen cadence.
+                    val previous=lastPublishedNanos
+                    if(previous==null || now-previous>=1_000_000_000L/30) {
+                        lastPublishedNanos=now
+                        onFrame(SpectrumFrame(block.metadata,result.copyOf()))
+                    }
+                }
             }
         }
     }

@@ -21,6 +21,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.chip.Chip
@@ -2961,10 +2963,12 @@ class MainActivity : RadioThemedActivity() {
         }
 
         lifecycleScope.launch {
-            viewModel.spectrumData.collect { data ->
-                if (viewModel.capabilities.value.supportsFrequency(viewModel.centerFreqHz.value)) {
-                    binding.spectrumView.updateSpectrum(data, viewModel.peakData.value)
-                    binding.waterfallView.addLine(data)
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.spectrumData.collect { data ->
+                    if (viewModel.capabilities.value.supportsFrequency(viewModel.centerFreqHz.value)) {
+                        binding.spectrumView.updateSpectrum(data, viewModel.peakData.value)
+                        binding.waterfallView.addLine(data)
+                    }
                 }
             }
         }

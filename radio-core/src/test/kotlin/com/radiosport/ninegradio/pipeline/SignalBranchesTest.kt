@@ -8,6 +8,24 @@ import org.junit.Test
 import kotlin.math.*
 
 class SignalBranchesTest {
+    @Test fun displayPublicationKeepsThirtyHzBudgetWithoutStoppingAnalysis() {
+        var now=0L
+        val published=ArrayList<Long>()
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
+        val display=SpectrumBranch(FftEngine(256),scope,{now}) { published+=now }
+        val clock=CaptureClock()
+        display.start()
+        try {
+            repeat(12) {
+                val meta=clock.stamp(2048,48000,10000000)
+                display.offer(IqBlock.Float32(tone(2048,32),meta.sequence,meta))
+                now+=16_666_667L
+            }
+            assertEquals(12L,display.engine.spectrumSequence)
+            assertEquals(6,published.size)
+            assertTrue(published.zipWithNext().all { (a,b) -> b-a>=1_000_000_000L/30 })
+        } finally { display.close();scope.cancel() }
+    }
     private fun tone(n:Int,bin:Int,amplitude:Double=0.01)=FloatArray(n*2) { i ->
         val phase=2*PI*bin*(i/2)/n
         (amplitude*if(i%2==0) cos(phase) else sin(phase)).toFloat()

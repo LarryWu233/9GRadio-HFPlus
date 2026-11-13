@@ -21,6 +21,8 @@ Android 16 critical-flow acceptance remains required. The current user interrupt
 
 ## Current checkpoint — preview 10
 
+**Priority update — foreground CPU/power regression:** the user reports a large regression against upstream and the pre-refactor fork. Preview 11's headless +3.067% observation does not qualify the full foreground application or battery power. [Preview 12](architecture-12.md) removes inactive-map rendering and restores display publication/lifecycle limits, with bounded foreground observations. Representative RTL/HF+ reception and Android 16 power/app-switch behavior remain open; do not merge on the strength of the earlier headless result.
+
 Follow-up: [preview 11](architecture-11.md) records the actual 60-second high-rate RTL failure, its sampling diagnosis and an output-equivalent idle-NB/FFT-bookkeeping optimization. The same scenario passes on preview 11; prior failures remain visible. A failed baseline is not qualified for CPU/PSS percentage comparison. An additional matched continuous 1.024 MS/s headless pair, with aligned ART verification state, reports CPU/PSS changes of +3.067%/+1.031%, satisfying the resource bound in that representative case. Full-UI/all-mode evidence and actual output-clock adaptation remain separate. The observations below remain historical evidence rather than a claim that every subsequent configuration passes.
 
 - Channel rate policy, dual-APRS computation and channel filtering/demodulation/resampling are now portable core boundaries. Raw ADS-B implements the generic IQ module contract; audio decoder admission remains a selected typed port. Application selection/result routing is still explicit. See [decoder extension boundaries](../architecture/decoder-extension.md).

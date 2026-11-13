@@ -33,7 +33,7 @@ android {
         archPreview {
             initWith debug
             applicationIdSuffix '.arch'
-            versionNameSuffix '-arch11'
+            versionNameSuffix '-arch12'
             matchingFallbacks = ['debug']
             externalNativeBuild { cmake { arguments '-DNINEGRADIO_PACKAGE_VARIANT=archPreview' } }
         }

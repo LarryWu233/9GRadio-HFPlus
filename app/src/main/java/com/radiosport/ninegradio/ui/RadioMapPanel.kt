@@ -36,6 +36,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         if(result.values.any { it }) readReceiverLocation() else status.text="未允许定位，可手动填写接收位置。"
     }
     private lateinit var view: MapView
+    private lateinit var gestures: MapGestureFrame
     private lateinit var status: TextView
     private var map: MapLibreMap? = null
     private var centered = false
@@ -89,10 +90,9 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         root.addView(controls)
         status = TextView(activity).apply { text = "正在加载底图…"; setPadding(12, 8, 12, 8) }
         root.addView(status)
-        view = MapView(activity,MapLibreMapOptions.createFromAttributes(activity).textureMode(true))
-        view.onCreate(null)
-        view.addOnDidFinishLoadingMapListener { mapReady=true; updateMapStatus() }
-        val gestures=MapGestureFrame(activity).apply { addView(view,FrameLayout.LayoutParams(-1,-1)) }
+        // Pager pages are constructed before they are selected. Creating a TextureView
+        // here starts its renderer even though this panel has never been resumed.
+        gestures=MapGestureFrame(activity)
         root.addView(gestures, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(TextView(activity).apply {
             text = "© OpenStreetMap contributors"
@@ -112,6 +112,22 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             val size=(40*resources.displayMetrics.density).toInt()
             addView(options,FrameLayout.LayoutParams(size,size,android.view.Gravity.TOP or android.view.Gravity.END))
         }
+        lifecycleScope.launch {
+            combine(RadioTargets.aircraft, RadioTargets.stations) { aircraft, stations ->
+                when(protocol) { "ADSB" -> aircraft; "APRS" -> stations; else -> aircraft+stations }
+            }.sample(250).collect { updateTargets(it) }
+        }
+        lifecycleScope.launch {
+            MapNetwork.status.collect { updateMapStatus() }
+        }
+        lifecycleScope.launch { while(isActive) { delay(1000); updateTargets(targets) } }
+
+    }
+    private fun ensureMapCreated() {
+        if(::view.isInitialized) return
+        view=MapView(activity,MapLibreMapOptions.createFromAttributes(activity).textureMode(true))
+        view.onCreate(null)
+        view.addOnDidFinishLoadingMapListener { mapReady=true; updateMapStatus() }
         view.addOnDidFailLoadingMapListener {
             status.text = "底图加载失败，可选择已导入的离线地图；本地接收继续运行。"
             if (!fallback) { fallback = true; map?.setStyle(Style.Builder().fromJson(emptyStyle)) { installLayers(it) } }
@@ -133,16 +149,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
                 target != null
             }
         }
-        lifecycleScope.launch {
-            combine(RadioTargets.aircraft, RadioTargets.stations) { aircraft, stations ->
-                when(protocol) { "ADSB" -> aircraft; "APRS" -> stations; else -> aircraft+stations }
-            }.sample(250).collect { updateTargets(it) }
-        }
-        lifecycleScope.launch {
-            MapNetwork.status.collect { updateMapStatus() }
-        }
-        lifecycleScope.launch { while(isActive) { delay(1000); updateTargets(targets) } }
-
+        gestures.addView(view,FrameLayout.LayoutParams(-1,-1))
     }
     private fun loadStyle(url: String) {
         fallback = false
@@ -191,6 +198,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             else "底图加载中 · ${targets.size} 个已定位目标"
     }
     private fun render() {
+        if(!started) return
         val features = targets.map { target -> Feature.fromGeometry(Point.fromLngLat(target.longitude, target.latitude)).apply {
             addStringProperty("id", target.id); addStringProperty("label", target.label)
         } }.toMutableList()
@@ -289,7 +297,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
     fun setActive(value: Boolean) { active=value; updateLifecycle() }
     private fun updateLifecycle() {
         val wanted=active && isAttachedToWindow && activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && !destroyed
-        if(wanted && !started) { view.onStart(); view.onResume(); started=true }
+        if(wanted && !started) { ensureMapCreated(); view.onStart(); view.onResume(); started=true; render() }
         else if(!wanted && started) { view.onPause(); view.onStop(); started=false }
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); updateLifecycle() }
@@ -298,6 +306,8 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
     override fun onPause(owner: androidx.lifecycle.LifecycleOwner) { if(started) { view.onPause(); view.onStop(); started=false } }
     override fun onDestroy(owner: androidx.lifecycle.LifecycleOwner) {
         destroyed=true; setActive(false); locationSignal?.cancel(); lifecycleScope.cancel()
-        importer.unregister(); locationPermission.unregister(); view.onDestroy(); activity.lifecycle.removeObserver(this)
+        importer.unregister(); locationPermission.unregister()
+        if(::view.isInitialized) view.onDestroy()
+        activity.lifecycle.removeObserver(this)
     }
 }

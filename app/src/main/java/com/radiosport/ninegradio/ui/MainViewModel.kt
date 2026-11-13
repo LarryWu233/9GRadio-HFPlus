@@ -271,7 +271,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // switching internally. This eliminates any race between dspEngine being
         // assigned and the connectionState emission being observed here.
         launch {
-            svc.spectrumFlow.collect { spectrum ->
+            _spectrumData.subscriptionCount.map { it>0 }.distinctUntilChanged().flatMapLatest { visible ->
+                if(visible) svc.spectrumFlow else emptyFlow()
+            }.collect { spectrum ->
                 _spectrumData.value = spectrum
                 svc.dspEngine?.fftEngine?.getPeakHold()?.let { _peakData.value = it }
             }
