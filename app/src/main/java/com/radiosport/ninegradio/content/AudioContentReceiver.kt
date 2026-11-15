@@ -51,15 +51,19 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
         engine?.setAudioDecoderInput(null); engine?.setExternalCaptureMuted(false)
         if (next == null && session?.config?.input == ContentInput.SOFTWARE) stop("接收机已关闭")
         engine = next
+        next?.setDataContent(session?.config?.kind?.let { it!=AudioContentKind.CW }==true)
         next?.setExternalCaptureMuted(session?.config?.input == ContentInput.MICROPHONE)
         if (session?.config?.input == ContentInput.SOFTWARE) next?.setAudioDecoderInput(session)
     }
     fun start(config: ContentConfig, uri: Uri? = null):Unit = synchronized(lifecycleLock) {
-        stop()
+        engine?.setDataContent(config.kind!=AudioContentKind.CW)
+        stop(restoreMonitoring=false)
         if(finishing!=null) {
+            engine?.setDataContent(false)
             mutable.value=ContentState(config,status="解码组件仍在关闭，请稍候");return@synchronized
         }
         if (config.input == ContentInput.SOFTWARE && (engine == null || !softwareAvailable())) {
+            engine?.setDataContent(false)
             mutable.value = ContentState(config, status = "请先打开接收机"); return@synchronized
         }
         val next = Session(config)
@@ -68,16 +72,18 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
             mutable.value = ContentState(config, true, "等待音频", mode = if(config.apt) "APT" else config.sstvMode)
         }
         if (config.input == ContentInput.SOFTWARE) engine?.setAudioDecoderInput(next)
+        engine?.setDataContent(config.kind!=AudioContentKind.CW)
         engine?.setExternalCaptureMuted(config.input == ContentInput.MICROPHONE)
         next.launch(uri)
     }
-    fun stop(reason: String = "已停止"):Unit = synchronized(lifecycleLock) {
+    fun stop(reason: String = "已停止",restoreMonitoring:Boolean=true):Unit = synchronized(lifecycleLock) {
         val old=synchronized(this) {
             val previous=session ?: finishing;session=null;finishing=previous
             if(mutable.value.running) mutable.value=mutable.value.copy(running=false,status=reason)
             previous
         }
         engine?.setAudioDecoderInput(null); engine?.setExternalCaptureMuted(false)
+        if(restoreMonitoring) engine?.setDataContent(false)
         old?.cancel();old?.process?.destroy()
         if(old==null || old.awaitReleased(5000)) finishing=null
         else mutable.value=mutable.value.copy(running=false,status="解码组件仍在关闭，请稍候")
@@ -202,7 +208,7 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
                     try { source?.release();releaseDecoder() }
                     finally {
                         synchronized(this@AudioContentReceiver) {
-                            if(session===this) { engine?.setAudioDecoderInput(null);engine?.setExternalCaptureMuted(false) }
+                            if(session===this) { engine?.setAudioDecoderInput(null);engine?.setExternalCaptureMuted(false);engine?.setDataContent(false) }
                         }
                         closed.countDown()
                     }

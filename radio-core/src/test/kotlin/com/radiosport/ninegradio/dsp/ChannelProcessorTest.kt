@@ -5,6 +5,21 @@ import org.junit.Test
 import kotlin.math.*
 
 class ChannelProcessorTest {
+    @Test fun disablingMonitoringPreservesProtocolBasebandAndAvoidsSinkOutput() {
+        val config=ChannelConfiguration(DemodMode.APRS,240000,44100,12500,200000)
+        ChannelProcessor().use { reference -> ChannelProcessor().use { data ->
+            repeat(4) {
+                val iq=FloatArray(4096*2) { n -> (.1*sin(n*.04)).toFloat() }
+                val expected=reference.process(iq,config)
+                val actual=data.process(iq,config.copy(monitorOutput=false))
+                assertArrayEquals(expected.decoderPcm,actual.decoderPcm,0f)
+                assertTrue(actual.sinkPcm.isEmpty())
+            }
+        } }
+        assertTrue(AudioRoutingPolicy.dataOnly(DemodMode.APRS))
+        assertFalse(AudioRoutingPolicy.canMonitor(DemodMode.ADSB))
+        assertTrue(AudioRoutingPolicy.canMonitor(DemodMode.DMR))
+    }
     /** Old serial assembly, independent instances, to catch extraction wiring changes. */
     @Test fun channelAndAudioOutputsMatchThePreviousAssemblyAcrossBlocks() {
         for(mode in listOf(DemodMode.NFM,DemodMode.AM,DemodMode.USB,DemodMode.CW,DemodMode.CWR,

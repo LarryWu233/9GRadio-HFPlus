@@ -46,6 +46,8 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
     private var centered = false
     private var targets = emptyList<RadioTarget>()
     private val trails = mutableMapOf<String, ArrayDeque<Point>>()
+    private var renderedPoints:List<Feature>?=null
+    private var renderedTrails:List<Feature>?=null
     private val preferences by lazy { activity.getSharedPreferences("radio_map", android.content.Context.MODE_PRIVATE) }
     private val offline by lazy { OfflineManager.getInstance(activity) }
     private val defaultStyle = "asset://maps/original-osm.json"
@@ -123,7 +125,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         lifecycleScope.launch {
             MapNetwork.status.collect { updateMapStatus() }
         }
-        lifecycleScope.launch { while(isActive) { delay(1000); updateTargets(targets) } }
+        lifecycleScope.launch { while(isActive) { delay(1000);if(started) updateTargets(targets) } }
         lifecycleScope.launch { receiverLocation.position.collect { centerInitially();render() } }
 
     }
@@ -168,6 +170,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         }
     }
     private fun installLayers(style: Style) {
+        renderedPoints=null;renderedTrails=null
         style.addSource(GeoJsonSource("radio-data", FeatureCollection.fromFeatures(emptyArray<Feature>())))
         style.addSource(GeoJsonSource("radio-trails", FeatureCollection.fromFeatures(emptyArray<Feature>())))
         style.addLayer(LineLayer("radio-tracks", "radio-trails").withProperties(lineColor("#00b7d8"), lineWidth(2f)))
@@ -176,11 +179,23 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         val size=(28*resources.displayMetrics.density).toInt()
         fun icon(color:Int):android.graphics.Bitmap {
             val drawable=androidx.appcompat.content.res.AppCompatResources.getDrawable(activity,com.radiosport.ninegradio.R.drawable.ic_aircraft)!!.mutate()
-            androidx.core.graphics.drawable.DrawableCompat.setTint(drawable,color)
-            return drawable.toBitmap(size,size)
+            val plane=drawable.toBitmap(size,size)
+            val stroke=resources.displayMetrics.density*.8f
+            val pad=kotlin.math.ceil(stroke.toDouble()).toInt()+1
+            val result=android.graphics.Bitmap.createBitmap(size+pad*2,size+pad*2,android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas=android.graphics.Canvas(result)
+            val paint=android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+            paint.colorFilter=android.graphics.PorterDuffColorFilter(android.graphics.Color.BLACK,android.graphics.PorterDuff.Mode.SRC_IN)
+            for((dx,dy) in listOf(-1f to 0f,1f to 0f,0f to -1f,0f to 1f,-1f to -1f,1f to -1f,-1f to 1f,1f to 1f))
+                canvas.drawBitmap(plane,pad+dx*stroke,pad+dy*stroke,paint)
+            paint.colorFilter=android.graphics.PorterDuffColorFilter(color,android.graphics.PorterDuff.Mode.SRC_IN)
+            canvas.drawBitmap(plane,pad.toFloat(),pad.toFloat(),paint);plane.recycle()
+            return result
         }
-        style.addImage("radio-aircraft-known",icon(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioAccent)))
-        style.addImage("radio-aircraft-unknown",icon(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioSecondary)))
+        fun darker(color:Int)=androidx.core.graphics.ColorUtils.blendARGB(color,android.graphics.Color.BLACK,.22f)
+        style.addImage("radio-aircraft-known",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioAccent))))
+        style.addImage("radio-aircraft-unknown",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioSecondary))))
+        style.addImage("radio-aircraft-stale",icon(0xffcf4444.toInt()))
         style.addLayer(SymbolLayer("radio-aircraft","radio-data").withFilter(eq(get("kind"),literal("aircraft"))).withProperties(
             iconImage(get("icon")),iconRotate(get("heading")),iconAllowOverlap(true),iconIgnorePlacement(true),
             iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP)))
@@ -190,7 +205,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
     private fun updateTargets(values: List<RadioTarget>) {
         val now = System.currentTimeMillis()
         val stations=RadioTargets.stations.value.map { it.id }.toSet()
-        targets = values.filter { now - it.timeMs < (if(protocolIsAprs() || it.id in stations) 600_000 else 120_000) &&
+        targets = values.filter { now - (if(it.type==RadioTarget.Type.AIRCRAFT) it.positionTimeMs ?: it.timeMs else it.timeMs) < (if(protocolIsAprs() || it.id in stations) 600_000 else 120_000) &&
             it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 }
         updateMapStatus()
         trails.keys.retainAll(targets.map { it.id }.toSet())
@@ -226,9 +241,15 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         receiverLocation.position.value?.let { receiver ->
             features+=Feature.fromGeometry(Point.fromLngLat(receiver.longitude,receiver.latitude)).apply { addStringProperty("kind","receiver") }
         }
-        map?.style?.getSourceAs<GeoJsonSource>("radio-data")?.setGeoJson(FeatureCollection.fromFeatures(features))
+        if(features!=renderedPoints) {
+            map?.style?.getSourceAs<GeoJsonSource>("radio-data")?.setGeoJson(FeatureCollection.fromFeatures(features))
+            renderedPoints=features
+        }
         val lines = trails.values.filter { it.size > 1 }.map { Feature.fromGeometry(LineString.fromLngLats(it.toList())) }
-        map?.style?.getSourceAs<GeoJsonSource>("radio-trails")?.setGeoJson(FeatureCollection.fromFeatures(lines))
+        if(lines!=renderedTrails) {
+            map?.style?.getSourceAs<GeoJsonSource>("radio-trails")?.setGeoJson(FeatureCollection.fromFeatures(lines))
+            renderedTrails=lines
+        }
     }
     private fun sourceDialog() {
         AlertDialog.Builder(activity).setTitle("地图源").setItems(arrayOf("OpenStreetMap", "OpenFreeMap 浅色", "OpenFreeMap 深色", "自定义样式地址")) { _, choice ->

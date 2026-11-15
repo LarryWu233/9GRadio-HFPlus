@@ -4,7 +4,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 data class RadioTarget(val id: String, val label: String, val latitude: Double,
                        val longitude: Double, val detail: String, val timeMs: Long,
-                       val type:Type=Type.STATION,val headingDegrees:Double?=null) {
+                       val type:Type=Type.STATION,val headingDegrees:Double?=null,
+                       val positionTimeMs:Long?=if(type==Type.AIRCRAFT) timeMs else null) {
     enum class Type { STATION, AIRCRAFT }
 }
 

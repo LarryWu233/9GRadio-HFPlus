@@ -26,12 +26,14 @@ object ReadsbSnapshotParser {
             val id=text("hex")?.takeIf { it.matches(Regex("~?[0-9a-fA-F]{6}")) } ?: return@mapNotNull null
             val seen=number("seen") ?: 0.0
             if(seen>120.0) return@mapNotNull null
-            val lat=number("lat")?.takeIf { it in -90.0..90.0 && (number("seen_pos") ?: 0.0)<=120.0 }
+            val positionAge=number("seen_pos")?.takeIf { it>=0 }
+            val lat=number("lat")?.takeIf { it in -90.0..90.0 && positionAge!=null && positionAge<=120.0 }
             val lon=number("lon")?.takeIf { it in -180.0..180.0 && lat!=null }
             AdsbDecoder.AdsbFrame(id.uppercase(),17,0,(number("alt_baro") ?: number("alt_geom"))?.toInt(),
                 text("flight")?.trim()?.takeIf { it.isNotEmpty() },if(lon!=null) lat else null,lon,
                 number("gs")?.toInt(),number("track"), (number("baro_rate") ?: number("geom_rate"))?.toInt(),
-                text("alt_baro")=="ground",now-(seen*1000).toLong())
+                text("alt_baro")=="ground",now-(seen*1000).toLong(),
+                if(lon!=null) now-(positionAge!!*1000).toLong() else null)
         } ?: emptyList()
         return Snapshot(root.get("messages")?.asLong ?: 0,aircraft)
     }
@@ -201,14 +203,19 @@ class ReadsbReceiver(private val context: Context):com.radiosport.ninegradio.pip
             fun startReaders() {
                 readers+=scope.launch {
                     val file=File(directory,"aircraft.json")
+                    var previousStamp:Pair<Long,Long>?=null
                     while(isActive) {
                         val alive=child.isAlive
                         publish(this@NativeRun) {
                             _status.value=_status.value.copy(inputSamples=samples.get(),
                                 inputMissingSamples=missing.get(),driverMissingSamples=driverMissing.get(),decoderGeneration=generation)
                         }
-                        if(file.isFile) try {
+                        val stamp=if(file.isFile) file.lastModified() to file.length() else null
+                        // Final native writes may share millisecond metadata with
+                        // the previous snapshot. EOF always rereads the final JSON.
+                        if(stamp!=null && (stamp!=previousStamp || !alive)) try {
                             val snapshot=ReadsbSnapshotParser.parse(file.readText())
+                            previousStamp=stamp
                             messages=snapshot.messages
                             publish(this@NativeRun) {
                                 _aircraft.value=snapshot.aircraft

@@ -19,6 +19,12 @@ class ReadsbReplayTest {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val fixture=File(context.cacheDir,"alpha14-reference.u8")
         assumeTrue("Push the explicit reference IQ fixture before invoking this test",fixture.isFile)
+        ReceiverTestPreferences(context).use {
+        // Reference CPR frames describe this synthetic receiver region. A real
+        // phone position elsewhere enables readsb's range rejection and changes results.
+        context.getSharedPreferences("radio_map",android.content.Context.MODE_PRIVATE).edit()
+            .putString("receiverLocationMode","manual").putString("receiverPositionSource","manual")
+            .putFloat("receiverLat",52.26f).putFloat("receiverLon",3.92f).commit()
         val source=FileIqSource(fixture,2400000,1090000000,DemodMode.ADSB)
         val receiver=ReadsbReceiver(context)
         try {
@@ -83,5 +89,6 @@ class ReadsbReplayTest {
             }
         } finally { receiver.stop(); source.close() }
         assertFalse(receiver.status.value.running); assertTrue(receiver.aircraft.value.isEmpty())
+        }
     }
 }

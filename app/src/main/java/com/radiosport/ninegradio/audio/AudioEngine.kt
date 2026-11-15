@@ -148,6 +148,7 @@ class AudioEngine(override val sampleRate: Int = 48_000) : com.radiosport.ninegr
         DebugBus.setExtra(DebugBus.STAGE_AUDIO_TRACK, DebugBus.EXTRA_AT_LAST_WRITE, "—")
 
         synchronized(trackLock) {
+            writtenFramesTotal=0L
             audioTrack = track
         }
         Log.i(TAG, "AudioTrack started: $sampleRate Hz, buf=${bufSize}B (${bufSize / 8 * 1000 / sampleRate}ms)")

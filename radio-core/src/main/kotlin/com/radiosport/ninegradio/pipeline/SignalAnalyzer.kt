@@ -19,6 +19,18 @@ class SignalAnalyzer {
         if(config!=key) { reset();key=config }
         fft.analysisIntervalSamples=(rate/60).coerceAtLeast(1)
         val spectrum=fft.processFloat(iq)
+        return measure(spectrum,config,rate,narrowCenterOffsetHz,nowNanos)
+    }
+    /** Same existing FFT/meter calibration; avoids a full-rate float copy for raw-IQ-only modes. */
+    fun processUnsigned8(iq:ByteArray,frequencyHz:Long,hardwareHz:Long,mode:DemodMode,bandwidthHz:Int,
+                         rate:Int,narrowCenterOffsetHz:Long,nowNanos:Long):Measurement {
+        val config=ChannelSquelchMeter.Configuration(frequencyHz,hardwareHz,mode,bandwidthHz,rate,1,2048)
+        if(config!=key) { reset();key=config }
+        fft.analysisIntervalSamples=(rate/60).coerceAtLeast(1)
+        return measure(fft.processUint8(iq),config,rate,narrowCenterOffsetHz,nowNanos)
+    }
+    private fun measure(spectrum:FloatArray,config:ChannelSquelchMeter.Configuration,rate:Int,
+                        narrowCenterOffsetHz:Long,nowNanos:Long):Measurement {
         val channel=meter.update(spectrum,fft.spectrumSequence,config,nowNanos)
         val binHz=rate.toDouble()/spectrum.size
         val center=(spectrum.size/2-narrowCenterOffsetHz/binHz).toInt().coerceIn(0,spectrum.lastIndex)

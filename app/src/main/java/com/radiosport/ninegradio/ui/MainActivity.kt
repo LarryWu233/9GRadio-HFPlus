@@ -2895,6 +2895,19 @@ class MainActivity : RadioThemedActivity() {
             }
         }
         binding.tvSquelchStatus.contentDescription = getString(R.string.receiver_power_hint)
+        binding.btnMonitor.setOnClickListener { viewModel.setMonitorEnabled(!viewModel.monitorEnabled.value) }
+        lifecycleScope.launch {
+            combine(viewModel.monitorAllowed,viewModel.monitorEnabled) { allowed,enabled -> allowed to enabled }
+                .collect { (allowed,enabled) ->
+                    binding.btnMonitor.isEnabled=allowed
+                    ctrlViews.btnRecordAudio?.isEnabled=allowed
+                    binding.btnMonitor.alpha=if(allowed) 1f else .45f
+                    binding.btnMonitor.setImageResource(if(enabled) R.drawable.ic_monitor_on else R.drawable.ic_monitor_off)
+                    binding.btnMonitor.imageTintList=android.content.res.ColorStateList.valueOf(UiThemes.color(this@MainActivity,
+                        if(enabled) R.attr.radioAccent else R.attr.radioSecondary))
+                    binding.btnMonitor.contentDescription=if(!allowed) "纯数据模式，监听已关闭" else if(enabled) "关闭监听" else "开启监听"
+                }
+        }
         binding.tvSquelchStatus.setOnClickListener {
             val state = viewModel.connectionState.value
             val start = !(viewModel.receiverEnabled.value && (state is RtlSdrService.ConnectionState.Connected || state is RtlSdrService.ConnectionState.Connecting))

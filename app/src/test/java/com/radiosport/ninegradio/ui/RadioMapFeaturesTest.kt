@@ -8,16 +8,16 @@ class RadioMapFeaturesTest {
     private fun aircraft(heading:Double?)=RadioTarget("SAMPLE","Sample",1.0,2.0,"",0,RadioTarget.Type.AIRCRAFT,heading)
     @Test fun trueNorthCardinalTracksArePreservedForMapRotation() {
         for(heading in listOf(0.0,90.0,180.0,270.0,359.5)) {
-            val feature=aircraft(heading).mapFeature()
+            val feature=aircraft(heading).mapFeature(0)
             assertEquals(heading,feature.getNumberProperty("heading").toDouble(),0.0)
             assertTrue(feature.getBooleanProperty("headingKnown"))
             assertEquals("radio-aircraft-known",feature.getStringProperty("icon"))
         }
-        assertEquals(0.0,aircraft(360.0).mapFeature().getNumberProperty("heading").toDouble(),0.0)
+        assertEquals(0.0,aircraft(360.0).mapFeature(0).getNumberProperty("heading").toDouble(),0.0)
     }
     @Test fun missingOrInvalidTrackUsesDistinctNorthFacingFallback() {
         for(heading in listOf(null,Double.NaN,Double.POSITIVE_INFINITY,-1.0,999.0)) {
-            val feature=aircraft(heading).mapFeature()
+            val feature=aircraft(heading).mapFeature(0)
             assertFalse(feature.getBooleanProperty("headingKnown"))
             assertEquals(0.0,feature.getNumberProperty("heading").toDouble(),0.0)
             assertEquals("radio-aircraft-unknown",feature.getStringProperty("icon"))
@@ -25,5 +25,11 @@ class RadioMapFeaturesTest {
     }
     @Test fun aprsStationsKeepTheirOwnSymbolCategory() {
         assertEquals("station",RadioTarget("APRS","APRS",1.0,2.0,"",0).mapFeature().getStringProperty("kind"))
+    }
+    @Test fun stalenessUsesPositionAgeEvenWhenOtherMessagesAreFresh() {
+        val target=aircraft(90.0).copy(timeMs=50_000,positionTimeMs=0)
+        assertEquals("radio-aircraft-stale",target.mapFeature(50_000).getStringProperty("icon"))
+        assertEquals("radio-aircraft-known",target.copy(positionTimeMs=49_000).mapFeature(50_000).getStringProperty("icon"))
+        assertTrue(target.copy(positionTimeMs=null).mapFeature(50_000).getBooleanProperty("positionStale"))
     }
 }

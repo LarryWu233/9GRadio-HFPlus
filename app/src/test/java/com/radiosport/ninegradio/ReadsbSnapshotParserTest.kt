@@ -11,6 +11,7 @@ class ReadsbSnapshotParserTest {
         assertEquals("40621D",track.icao24); assertEquals("TEST123",track.callsign)
         assertEquals(52.2572,track.latitude!!,0.00001); assertEquals(38000,track.altitude)
         assertEquals(450,track.velocity); assertEquals(99500,track.timestamp)
+        assertEquals(99000L,track.positionTimestamp)
     }
     @Test fun incompleteTracksRemainVisibleWithoutFabricatedCoordinates() {
         val track=ReadsbSnapshotParser.parse("""{"aircraft":[{"hex":"ABC123","flight":"N123","alt_baro":"ground","seen":0}]}""").aircraft.single()
@@ -19,5 +20,11 @@ class ReadsbSnapshotParserTest {
     @Test fun oldAndInvalidPositionsNeverEnterMap() {
         val tracks=ReadsbSnapshotParser.parse("""{"aircraft":[{"hex":"123456","seen":121,"lat":1,"lon":2},{"hex":"abcdef","seen":1,"seen_pos":130,"lat":1,"lon":2},{"hex":"fedcba","lat":120,"lon":2}]}""").aircraft
         assertEquals(2,tracks.size); assertTrue(tracks.all { it.latitude==null && it.longitude==null })
+    }
+    @Test fun freshIdentityDoesNotRefreshAnOldPosition() {
+        val track=ReadsbSnapshotParser.parse("""{"aircraft":[{"hex":"abcdef","seen":0,"seen_pos":45,"lat":1,"lon":2}]}""",100000).aircraft.single()
+        assertEquals(100000L,track.timestamp);assertEquals(55000L,track.positionTimestamp)
+        val unknown=ReadsbSnapshotParser.parse("""{"aircraft":[{"hex":"abcdef","seen":0,"lat":1,"lon":2}]}""").aircraft.single()
+        assertNull(unknown.latitude);assertNull(unknown.positionTimestamp)
     }
 }

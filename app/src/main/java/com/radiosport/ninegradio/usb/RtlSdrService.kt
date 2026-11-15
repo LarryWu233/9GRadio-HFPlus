@@ -194,7 +194,7 @@ class RtlSdrService : Service() {
                         val lon=item.longitude ?: return@mapNotNull null
                         com.radiosport.ninegradio.data.RadioTarget(item.icao24,item.callsign ?: item.icao24,lat,lon,
                             "${item.callsign ?: item.icao24}\n${item.altitude?.let { "$it ft" } ?: "高度未知"} · ${item.velocity?.let { "$it kt" } ?: "速度未知"}\n$lat, $lon",item.timestamp,
-                            com.radiosport.ninegradio.data.RadioTarget.Type.AIRCRAFT,item.heading)
+                            com.radiosport.ninegradio.data.RadioTarget.Type.AIRCRAFT,item.heading,item.positionTimestamp)
                     }
             } }
         }
@@ -282,12 +282,15 @@ class RtlSdrService : Service() {
                 dspEngine = engine
                 engine.setRecordingPlaybackMuted(playbackMonitorMuted)
                 audioContent.attach(engine)
-                if (next.capabilities.floatIq) engine.setDemodMode(DemodMode.AM)
+                val saved=getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE)
+                val initialMode=requestedMode ?: runCatching { DemodMode.valueOf(saved.getString("device_${next.capabilities.id}_mode",
+                    saved.getString("demod",if(next.capabilities.floatIq) "AM" else "NFM"))!!) }.getOrDefault(DemodMode.AM)
+                engine.setDemodMode(if(next.capabilities.supportsMode(initialMode)) initialMode else DemodMode.AM)
                 if (pendingFftSize > 0) engine.setFftSize(pendingFftSize)
                 engine.setFftDecimation(pendingFftDecimation)
                 engine.setNoiseBlankerEnabled(pendingNoiseBlanker)
                 engine.setNoiseReducerEnabled(pendingNoiseReducer)
-                engine.setListeningEnabled(true)
+                engine.setListeningEnabled(saved.getBoolean("monitor_${initialMode.name}",true))
                 engine.setNoiseReductionStrength(pendingNrStrength)
                 engine.setIqNoiseBlankerThreshold(pendingIqNbThreshold)
                 engine.setListeningAudio(pendingListeningAudio)
@@ -297,6 +300,7 @@ class RtlSdrService : Service() {
                     && next.capabilities.supportsFrequency(restore.dialHz)) {
                     next.applyModeHardwarePolicy(restore.mode);engine.restoreControls(restore)
                 }
+                engine.setListeningEnabled(saved.getBoolean("monitor_${engine.controlSnapshot().mode.name}",true))
                 targetsJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                     engine.aprsDecoder.packets.collect { packet -> control {
                         val lat=packet.latitude; val lon=packet.longitude
@@ -498,6 +502,7 @@ class RtlSdrService : Service() {
             requestedMode=mode
             source?.applyModeHardwarePolicy(mode)
             dspEngine?.setDemodMode(mode)
+            dspEngine?.setListeningEnabled(getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE).getBoolean("monitor_${mode.name}",true))
             updateAdsbReceiver()
         }
     }
@@ -511,6 +516,12 @@ class RtlSdrService : Service() {
     fun setFftDecimation(factor: Int) { pendingFftDecimation = factor; control { dspEngine?.setFftDecimation(factor) } }
     fun setSquelch(dbLevel: Float) = control { dspEngine?.setSquelchLevel(dbLevel) }
     fun setAudioVolume(vol: Float) = control { dspEngine?.setVolume(vol) }
+    fun setMonitorEnabled(enabled:Boolean)=control {
+        val mode=requestedMode ?: return@control
+        if(!com.radiosport.ninegradio.dsp.AudioRoutingPolicy.canMonitor(mode)) return@control
+        getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE).edit().putBoolean("monitor_${mode.name}",enabled).apply()
+        dspEngine?.setListeningEnabled(enabled)
+    }
     fun setFmDeemphasis(us: Int) = control { dspEngine?.setFmDeemphasis(us) }
     fun setDcBlock(enabled: Boolean) = control { dspEngine?.setDcBlockEnabled(enabled) }
     fun setFreqOffset(hz: Int) = control { dspEngine?.setFreqOffset(hz) }
@@ -554,6 +565,12 @@ class RtlSdrService : Service() {
     private fun beginCapture(path:String,audio:Boolean,profile:com.radiosport.ninegradio.recording.AudioRecordingProfile?=null) {
         finishCapture(audio)
         val engine=dspEngine ?: return
+        if(audio && !engine.canRecordAudio()) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(this,"纯数据模式不提供声音录制，请使用 IQ 录制",android.widget.Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         engine.setRecordingSquelch(capturePrefs.getBoolean("pref_record_squelch",false))
         if(!audio) try {
             com.radiosport.ninegradio.recording.IqRecordingInfo.write(java.io.File(path),engine.getDialFrequencyHz(),

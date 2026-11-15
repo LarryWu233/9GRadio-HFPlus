@@ -2,7 +2,8 @@ package com.radiosport.ninegradio.dsp
 
 /** Immutable channel request. Device capability calculation stays in the source adapter. */
 data class ChannelConfiguration(val mode:DemodMode,val sourceRate:Int,val sinkRate:Int,
-    val bandwidthHz:Int,val maximumBandwidthHz:Int,val deemphasisUs:Int=75)
+    val bandwidthHz:Int,val maximumBandwidthHz:Int,val deemphasisUs:Int=75,
+    val decoderOutput:Boolean=true,val monitorOutput:Boolean=true)
 
 /** Serial channel computation using the existing kernels. No USB, playback, recording or UI.
  * Scratch outputs are internal views valid until the next process call. Adapters must publish
@@ -32,6 +33,8 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
     private val decoder=AudioResampling()
     private val sink=AudioResampling()
     private var closed=false
+    private var decoderWanted=true
+    private var monitorWanted=true
     private class AudioResampling {
         private var rates=0 to 0
         private var filter:PolyphaseResampler?=null
@@ -68,6 +71,10 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
         check(!closed)
         require(config.sourceRate>0 && config.sinkRate>0 && input.size%2==0)
         setMode(config.mode)
+        val nextDecoder=config.decoderOutput || (config.monitorOutput && config.sinkRate==48000)
+        if(nextDecoder && !decoderWanted) decoder.reset()
+        if(config.monitorOutput && !monitorWanted) sink.reset()
+        decoderWanted=nextDecoder;monitorWanted=config.monitorOutput
         var changed=false
         val isWfm=mode==DemodMode.FM || mode==DemodMode.WFM || mode==DemodMode.WFM_STEREO
         val width=(config.bandwidthHz.takeIf { it>0 } ?: mode.defaultBwHz).coerceAtLeast(100)
@@ -108,8 +115,9 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
             for(i in monoMix.indices) monoMix[i]=(audio[i*2]+audio[i*2+1])*.5f
             monoMix
         } else audio
-        val decoderPcm=decoder.process(mono,rate,48000)
+        val decoderPcm=if(config.decoderOutput || (config.monitorOutput && config.sinkRate==48000)) decoder.process(mono,rate,48000) else FloatArray(0)
         val sinkPcm=when {
+            !config.monitorOutput -> FloatArray(0)
             mono.isEmpty() -> FloatArray(0)
             rate==config.sinkRate -> mono
             config.sinkRate==48000 -> decoderPcm

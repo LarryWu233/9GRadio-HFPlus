@@ -996,7 +996,8 @@ class AdsbDecoder {
         val heading: Double?,
         val verticalRate: Int?,
         val onGround: Boolean,
-        val timestamp: Long = System.currentTimeMillis()
+        val timestamp: Long = System.currentTimeMillis(),
+        val positionTimestamp:Long?=if(latitude!=null && longitude!=null) timestamp else null
     )
 
     private val _frames = MutableSharedFlow<AdsbFrame>(extraBufferCapacity = 64)

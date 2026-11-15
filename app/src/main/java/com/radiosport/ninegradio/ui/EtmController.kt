@@ -134,6 +134,7 @@ class EtmController(private val activity: AppCompatActivity,
         if (ranges.isEmpty() || !source.capabilities.supportsMode(desiredMode)) { status?.text = "当前接收源不支持此范围。"; return }
         val previousHz = frequency()
         val previousMode = mode()
+        val previousListening=svc.dspEngine?.isListeningRequested() ?: true
         val previousAuto = autoMode()
         selector?.isEnabled = false
         thresholdControl?.isEnabled = false
@@ -183,8 +184,9 @@ class EtmController(private val activity: AppCompatActivity,
                     hitJob?.cancelAndJoin(); statusJob?.cancelAndJoin(); renderJob?.cancelAndJoin()
                     save(); render()
                     if (svc.source === source) {
-                        svc.dspEngine?.setListeningEnabled(true)
                         tune(previousMode, previousHz)
+                        svc.awaitControls()
+                        svc.dspEngine?.setListeningEnabled(previousListening)
                         restoreAuto(previousAuto)
                         preview(previousHz)
                     }

@@ -150,6 +150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _capabilities.value = caps
         syncFmStereoPreference(_demodMode.value)
+        _monitorRequested.value=prefs.getBoolean("monitor_${_demodMode.value.name}",true)
         _centerFreqHz.value = caps.browseFrequency(_centerFreqHz.value)
         _sampleRate.value = caps.nearestRate(_sampleRate.value)
         if(_demodMode.value==DemodMode.ADSB && caps.supportsMode(DemodMode.ADSB))
@@ -214,6 +215,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         serviceFlowJob?.cancel()
         serviceFlowJob = viewModelScope.launch {
+        launch { svc.audioContent.state.collect { state ->
+            _dataContentActive.value=state.running && state.config?.kind!=com.radiosport.ninegradio.content.AudioContentKind.CW
+        } }
         // Mirror connection state, and push all saved settings to hardware
         // the moment the device reaches Connected.  The RTL-SDR resets to its
         // hardware defaults on every open() — notably sample rate = 2 048 000 Hz —
@@ -325,6 +329,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             prefs.getString("demod", "NFM")) ?: "NFM") }.getOrDefault(DemodMode.NFM)
     )
     val demodMode: StateFlow<DemodMode> = _demodMode
+    private val _monitorRequested=MutableStateFlow(prefs.getBoolean("monitor_${_demodMode.value.name}",true))
+    private val _dataContentActive=MutableStateFlow(false)
+    val monitorAllowed=combine(_demodMode,_dataContentActive) { mode,data ->
+        com.radiosport.ninegradio.dsp.AudioRoutingPolicy.canMonitor(mode,data)
+    }.stateIn(viewModelScope,SharingStarted.Eagerly,com.radiosport.ninegradio.dsp.AudioRoutingPolicy.canMonitor(_demodMode.value))
+    val monitorEnabled=combine(monitorAllowed,_monitorRequested) { allowed,requested -> allowed && requested }
+        .stateIn(viewModelScope,SharingStarted.Eagerly,monitorAllowed.value && _monitorRequested.value)
+    fun setMonitorEnabled(enabled:Boolean) {
+        if(!com.radiosport.ninegradio.dsp.AudioRoutingPolicy.canMonitor(_demodMode.value,_dataContentActive.value)) return
+        _monitorRequested.value=enabled
+        prefs.edit().putBoolean("monitor_${_demodMode.value.name}",enabled).apply()
+        sdrService?.setMonitorEnabled(enabled)
+    }
 
     // Migrate any previously persisted rate to the nearest valid entry.
     // The RTL-SDR has a dead zone (~300–900 kS/s) where register ratios alias;
@@ -805,6 +822,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val previousMode=_demodMode.value
         saveSettingsForMode(previousMode,previousFrequencyHz)
         _demodMode.value = mode
+        _monitorRequested.value=prefs.getBoolean("monitor_${mode.name}",true)
         if(mode==DemodMode.ADSB) configureAdsbRf()
         else if(previousMode==DemodMode.ADSB) restoreRfAfterAdsb(mode)
         // Manual type selection restores this device's last valid frequency.
