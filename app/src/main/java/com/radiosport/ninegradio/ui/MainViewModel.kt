@@ -217,7 +217,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         serviceFlowJob = viewModelScope.launch {
         launch { svc.amStatusFlow.collect { _amStatus.value=it } }
         launch { svc.audioContent.state.collect { state ->
-            _dataContentActive.value=state.running && state.config?.kind!=com.radiosport.ninegradio.content.AudioContentKind.CW
+            _dataContentActive.value=state.running && state.config?.let {
+                com.radiosport.ninegradio.modules.RadioModules.content(it).monitoring==com.radiosport.ninegradio.modules.MonitorPolicy.FORBIDDEN }==true
         } }
         // Mirror connection state, and push all saved settings to hardware
         // the moment the device reaches Connected.  The RTL-SDR resets to its
@@ -833,7 +834,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (!automatic && _autoDemod.value) setAutoDemod(false)
         if (!_capabilities.value.supportsMode(mode)) {
-            _messages.tryEmit("当前接收机不支持 ${mode.displayName}")
+            _messages.tryEmit(_capabilities.value.modeAvailability(mode).reason ?: "当前接收机不支持 ${mode.displayName}")
             return
         }
         if (!automatic) syncFmStereoPreference(mode)

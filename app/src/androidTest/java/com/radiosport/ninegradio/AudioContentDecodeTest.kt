@@ -78,7 +78,8 @@ class AudioContentDecodeTest {
                 s.tone(if(i%2==0) 1500.0 else 2300.0,.0045); s.tone(1900.0,.0015); s.tone(1900.0,.044)
             }
         }
-        decode(ContentConfig(AudioContentKind.SSTV),file) { state ->
+        // A SAT-only saved option must never select the APT backend for SSTV.
+        decode(ContentConfig(AudioContentKind.SSTV,apt=true),file) { state ->
             assertEquals("Robot 36 Color",state.mode); assertEquals(240,state.lines)
             assertEquals(240,state.totalLines); assertEquals(320,state.image!!.width)
             val color=state.image!!.getPixel(160,120)

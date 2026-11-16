@@ -12,6 +12,8 @@ import com.radiosport.ninegradio.pipeline.AudioBlock
 import com.radiosport.ninegradio.pipeline.AudioBlockClock
 import com.radiosport.ninegradio.pipeline.AudioDecoderInput
 import com.radiosport.ninegradio.pipeline.AudioContinuity
+import com.radiosport.ninegradio.modules.RadioModules
+import com.radiosport.ninegradio.modules.MonitorPolicy
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,10 +28,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 
-enum class AudioContentKind { CW, SSTV, SAT }
-enum class ContentInput { SOFTWARE, MICROPHONE, WAV }
-data class ContentConfig(val kind: AudioContentKind, val input: ContentInput = ContentInput.SOFTWARE,
-    val apt: Boolean = false, val sstvMode: String = "Auto", val wpm: Int = 0)
 data class ContentState(val config: ContentConfig? = null, val running: Boolean = false,
     val status: String = "未启动", val text: String = "", val image: Bitmap? = null,
     val lines: Int = 0, val totalLines: Int = 0, val mode: String = "", val sampleCount: Long = 0,
@@ -51,12 +49,14 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
         engine?.setAudioDecoderInput(null); engine?.setExternalCaptureMuted(false)
         if (next == null && session?.config?.input == ContentInput.SOFTWARE) stop("接收机已关闭")
         engine = next
-        next?.setDataContent(session?.config?.kind?.let { it!=AudioContentKind.CW }==true)
+        next?.setDataContent(session?.config?.let { RadioModules.content(it).monitoring==MonitorPolicy.FORBIDDEN }==true)
         next?.setExternalCaptureMuted(session?.config?.input == ContentInput.MICROPHONE)
         if (session?.config?.input == ContentInput.SOFTWARE) next?.setAudioDecoderInput(session)
     }
     fun start(config: ContentConfig, uri: Uri? = null):Unit = synchronized(lifecycleLock) {
-        engine?.setDataContent(config.kind!=AudioContentKind.CW)
+        val descriptor=RadioModules.content(config)
+        require(config.input in descriptor.inputs) { "Unsupported module input" }
+        engine?.setDataContent(descriptor.monitoring==MonitorPolicy.FORBIDDEN)
         stop(restoreMonitoring=false)
         if(finishing!=null) {
             engine?.setDataContent(false)
@@ -69,10 +69,10 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
         val next = Session(config)
         synchronized(this) {
             session = next
-            mutable.value = ContentState(config, true, "等待音频", mode = if(config.apt) "APT" else config.sstvMode)
+            mutable.value = ContentState(config, true, "等待音频", mode = if(descriptor.backend==com.radiosport.ninegradio.modules.ModuleBackend.APT) "APT" else config.sstvMode)
         }
         if (config.input == ContentInput.SOFTWARE) engine?.setAudioDecoderInput(next)
-        engine?.setDataContent(config.kind!=AudioContentKind.CW)
+        engine?.setDataContent(descriptor.monitoring==MonitorPolicy.FORBIDDEN)
         engine?.setExternalCaptureMuted(config.input == ContentInput.MICROPHONE)
         next.launch(uri)
     }
@@ -225,9 +225,10 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
             val closing=AtomicBoolean(false)
             var stream:OutputStream?=null
             try {
-                val sstv=if(config.kind!=AudioContentKind.CW && !config.apt) RadioSstvBridge(48000,config.sstvMode) else null
+                val binding=AudioDecoderFactories.forConfig(config)
+                val sstv=binding.imageFactory?.invoke(config.sstvMode)
                 val native=if(sstv==null) ProcessBuilder(File(context.applicationInfo.nativeLibraryDir,
-                    "libninegradio_audio_decode.so").absolutePath,if(config.kind==AudioContentKind.CW) "--cw" else "--apt",
+                    "libninegradio_audio_decode.so").absolutePath,requireNotNull(binding.nativeArgument),
                     config.wpm.toString()).redirectError(File(context.cacheDir,"audio-decoder.log")).apply {
                         environment()["LD_LIBRARY_PATH"]=context.applicationInfo.nativeLibraryDir
                     }.start() else null
@@ -245,7 +246,7 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
                 } }
                 val rate=first.first.sampleRate
                 val resampler=if(rate==48000) null else PolyphaseResampler(rate,48000)
-                val cwResampler=if(config.kind==AudioContentKind.CW) PolyphaseResampler(48000,22050) else null
+                val cwResampler=if(binding.decoderRate!=48000) PolyphaseResampler(48000,binding.decoderRate) else null
                 stream=native?.outputStream?.buffered(32768)
                 var block=first.first
                 var lastUpdate=0L

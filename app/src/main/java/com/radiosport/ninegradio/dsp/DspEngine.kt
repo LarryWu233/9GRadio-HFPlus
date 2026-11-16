@@ -162,12 +162,7 @@ class DspEngine(private val device: IqSource,
         const val DUAL_APRS_MIN_SAMPLE_RATE = 820_000
 
         /** Set of all digital voice demod modes that feed [DigitalVoiceDecoder]. */
-        val DIGITAL_VOICE_MODES = setOf(
-            DemodMode.DMR, DemodMode.P25, DemodMode.NXDN,
-            DemodMode.DSTAR, DemodMode.YSF, DemodMode.M17,
-            DemodMode.DPMR,
-            DemodMode.DIG
-        )
+        val DIGITAL_VOICE_MODES = com.radiosport.ninegradio.modules.RadioModules.digitalVoiceModes
     }
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -200,6 +195,8 @@ class DspEngine(private val device: IqSource,
         }
     }
     @Volatile private var demodMode = DemodMode.NFM
+    @Volatile private var activeModule=com.radiosport.ninegradio.modules.RadioModules.mode(DemodMode.NFM)
+    private var activeProtocolPcm:((FloatArray)->Unit)?=null
 
     // ─── IF Filter / Protocol Bandwidth ──────────────────────────────────────
     // User-adjustable narrow-mode intermediate rate.  The ComplexDecimator
@@ -269,6 +266,10 @@ class DspEngine(private val device: IqSource,
 
     // APRS decoder (active in APRS mode) — expects 48 kHz audio
     val aprsDecoder = AprsDecoder().also { it.setSampleRate(DEFAULT_AUDIO_RATE) }
+    private val protocolPcmBindings=mapOf<com.radiosport.ninegradio.modules.ModuleBackend,(FloatArray)->Unit>(
+        com.radiosport.ninegradio.modules.ModuleBackend.APRS to aprsDecoder::feed,
+        com.radiosport.ninegradio.modules.ModuleBackend.ACARS to acarsDecoder::feed,
+        com.radiosport.ninegradio.modules.ModuleBackend.PAGING to pocsagDecoder::feed)
 
     // Digital voice decoder (active in DMR / P25 / NXDN / D-STAR / YSF / M17 modes).
     // Receives 48 kHz raw FM-discriminated audio (same path as APRS — no AGC/LPF/limiter).
@@ -819,6 +820,8 @@ class DspEngine(private val device: IqSource,
         while(audioWriteChannel.tryReceive().isSuccess) { }
         audioEngine.clearPendingAudio()
         demodMode = mode
+        activeModule=com.radiosport.ninegradio.modules.RadioModules.mode(mode)
+        activeProtocolPcm=protocolPcmBindings[activeModule.backend]
         if(AudioRoutingPolicy.dataOnly(mode) && soundCapture.isRecording)
             soundCapture.abort("纯数据模式不提供声音录制，请使用 IQ 录制")
         refreshPlayback()
@@ -1256,7 +1259,9 @@ class DspEngine(private val device: IqSource,
         externalDecoderPendingRelease=externalDecoderStream.hasPendingRelease,
         dualAprsDroppedPairs=dualAprsDroppedPairs.get(),
         amState=if(demodMode==DemodMode.AM) "${amSettings.detector.label} ${_amStatus.value.label}" else "",
-        amGainDb=_amStatus.value.gainDb,amLimitingPercent=_amStatus.value.limitingPercent)
+        amGainDb=_amStatus.value.gainDb,amLimitingPercent=_amStatus.value.limitingPercent,
+        moduleId=activeModule.id,moduleInput=activeModule.input.label,moduleRoute=activeModule.route.label,
+        moduleResults=activeModule.results.joinToString("、") { it.label })
     private fun recoverDiscontinuity() {
         session.discontinuity()
         configureDecoderEpoch()
@@ -1319,7 +1324,7 @@ class DspEngine(private val device: IqSource,
 
         val n = block.sampleCount
         DebugBus.tick(DebugBus.STAGE_DSP_PROCESS)
-        if(demodMode==DemodMode.ADSB) {
+        if(activeModule.route==com.radiosport.ninegradio.modules.ModuleRoute.RAW_DECODER) {
             processRawOnly(block)
             return
         }
@@ -1481,10 +1486,10 @@ class DspEngine(private val device: IqSource,
         }
         val isWfm = demodMode == DemodMode.FM || demodMode == DemodMode.WFM || demodMode == DemodMode.WFM_STEREO
         val isNarrow = demodMode.isNarrowMode()
-        val isDigital = demodMode in DIGITAL_VOICE_MODES
+        val isDigital = activeModule.route==com.radiosport.ninegradio.modules.ModuleRoute.DIGITAL_VOICE
         val deviceRate = device.getSampleRate()
         val needMonitor=AudioRoutingPolicy.canMonitor(demodMode,dataContent) && (playbackActive || soundCapture.isRecording)
-        val needDecoder=AudioRoutingPolicy.needsProtocolPcm(demodMode) || decoderAttachment.input!=null ||
+        val needDecoder=activeModule.input==com.radiosport.ninegradio.modules.ModuleInput.PROTOCOL_PCM || decoderAttachment.input!=null ||
             decoderAttachment.legacy!=null || externalDecoderStream.isEnabled ||
             _decoderAudioBlocks.subscriptionCount.value>0 || _audioFlow.subscriptionCount.value>0
         if(!needMonitor && !needDecoder && !isWfm) {
@@ -1550,7 +1555,7 @@ class DspEngine(private val device: IqSource,
         val monoAudio=channelOutput.mono
         val decoderAudio=channelOutput.decoderPcm
         val sinkAudio=channelOutput.sinkPcm
-        if(isWfm && monoAudio.isNotEmpty())
+        if(com.radiosport.ninegradio.modules.ModuleResult.RDS in activeModule.results && monoAudio.isNotEmpty())
             getOrCreateRdsDecoder(demodRate).feedAudio(channelOutput.rdsMultiplex ?: monoAudio)
 
         if (sinkAudio.isNotEmpty()) {
@@ -1567,13 +1572,7 @@ class DspEngine(private val device: IqSource,
         // see the field declaration above) to match decoderAudio's actual rate.
         // POCSAG mode/support has been removed; pocsagDecoder now only runs
         // for DemodMode.FLEX.
-        if (demodMode == DemodMode.ACARS && decoderAudio.isNotEmpty()) {
-            acarsDecoder.feed(decoderAudio)
-        }
-        if (demodMode == DemodMode.FLEX
-                && decoderAudio.isNotEmpty()) {
-            pocsagDecoder.feed(decoderAudio)
-        }
+        if(decoderAudio.isNotEmpty()) activeProtocolPcm?.invoke(decoderAudio)
         // aprsDecoder: APRS mode uses NFM demodulation; the 48 kHz audio
         // produced by the narrow-FM discriminator is fed directly to the AFSK
         // decoder.
@@ -1590,9 +1589,6 @@ class DspEngine(private val device: IqSource,
         // packet, regardless of how correct the underlying AFSK/AX.25 logic
         // (FIX 1-19) was. Calling feed() directly here guarantees blocks are
         // processed in order, on one thread, with no extra allocation.
-        if (demodMode == DemodMode.APRS && decoderAudio.isNotEmpty()) {
-            aprsDecoder.feed(decoderAudio)
-        }
         // Digital voice decoder — DMR / P25 / NXDN / D-STAR / YSF / M17.
         // Uses the same raw FM-discriminated 48 kHz audio as APRS (AprsDemodulator
         // path — no post-discriminator AGC, LPF, or limiter). DigitalVoiceDecoder
@@ -1614,7 +1610,7 @@ class DspEngine(private val device: IqSource,
         // here guarantees blocks are processed in order, on one thread, with
         // no extra allocation — the same fix already applied to the APRS/
         // AFSK decoder above (see "FIX 21").
-        if (decoderAudio.isNotEmpty() && demodMode in DIGITAL_VOICE_MODES) {
+        if (decoderAudio.isNotEmpty() && isDigital) {
             DebugBus.setExtra(DebugBus.STAGE_DEMODULATOR, DebugBus.EXTRA_DV_FEED_RATE,
                 "${demodRate} Hz \u2192 ${DEFAULT_AUDIO_RATE} Hz (decoderAudio)")
             voiceStage.offer(decoderAudio,demodMode,squelchSignalDb,processingEpoch)

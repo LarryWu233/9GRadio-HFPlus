@@ -41,7 +41,7 @@ object ReadsbSnapshotParser {
 
 /** Service-owned raw-IQ consumer; UI navigation never owns or restarts the decoder. */
 class ReadsbReceiver(private val context: Context):com.radiosport.ninegradio.pipeline.IqDecoderModule<List<AdsbDecoder.AdsbFrame>> {
-    companion object { const val SAMPLE_RATE=2_400_000 }
+    companion object { const val SAMPLE_RATE=com.radiosport.ninegradio.modules.RadioModules.ADSB_SAMPLE_RATE }
     data class Status(val running: Boolean=false,val inputSamples: Long=0,val messages: Long=0,val error: String?=null,
         val inputMissingSamples:Long=0,val driverMissingSamples:Long=0,val decoderGeneration:Long=0)
     private val _status=MutableStateFlow(Status())
@@ -51,8 +51,7 @@ class ReadsbReceiver(private val context: Context):com.radiosport.ninegradio.pip
     private val _aircraft=MutableStateFlow<List<AdsbDecoder.AdsbFrame>>(emptyList())
     val aircraft=_aircraft.asStateFlow()
     override val results:kotlinx.coroutines.flow.Flow<List<AdsbDecoder.AdsbFrame>> get()=aircraft
-    override val requirements=com.radiosport.ninegradio.pipeline.IqDecoderRequirements(
-        setOf(SAMPLE_RATE),setOf(com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8))
+    override val requirements=com.radiosport.ninegradio.modules.RadioModules.mode(DemodMode.ADSB).rawIq!!
     private val lifecycleLock=Any()
     private val publicationLock=Any()
     private val generations=AtomicLong()

@@ -1,11 +1,11 @@
 # Resume checklist after the nightly checkpoint
 
-## Follow-up through previews 18–19
+## Follow-up through previews 18–20
 
 - [Preview 18](architecture-18.md) adds AM detector ports and bounded carrier AGC; [preview 19](architecture-19.md) addresses an observed adjacent-carrier whistle with a separately owned channel FIR. These do not close the historical architecture-wide acceptance gates below.
 - User feedback: ADS-B sustained average phone power is reported approximately 0.5–1.2 W below the upstream app. Conditions were not captured as a controlled laboratory comparison; retain this as user-observed improvement, not a universal power claim.
 - User accepts keeping the app locked in the background as their current workaround and deprioritizes additional background/audio-focus work. Do not reopen that task as a priority without a new request or reproduced problem.
-- A small module-description/registration mechanism and reception/ETM interaction improvements are accepted future directions. They are not implemented by the AM fixes. AGC Off producing quieter audio is accepted; keep the current Slow/Fast behavior.
+- [Preview 20](architecture-20.md) implements the small module-description/registration mechanism and shared selection bindings. Explicit platform factories and result presentation are still needed; it is not a dynamic plugin system. Reception/ETM interaction improvements remain subsequent work. AGC Off producing quieter audio is accepted; keep the current Slow/Fast behavior.
 - The reported manual frequency-entry failure was a unit misunderstanding: the existing dialog takes MHz, and `11.620` successfully tunes to the intended frequency. No tuning/UI rewrite is required for that report.
 
 This records unfinished engineering and acceptance work. The nightly target of approximately 75% is an engineering estimate, not a claim that 75% of every test gate has passed or that the remaining elapsed time is proportional. The branch stays separate from main.

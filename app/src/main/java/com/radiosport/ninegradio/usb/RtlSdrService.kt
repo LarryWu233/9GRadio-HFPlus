@@ -80,6 +80,9 @@ class RtlSdrService : Service() {
             stopAudioContent("麦克风已暂停")
     }
     val adsbReceiver by lazy { com.radiosport.ninegradio.dsp.ReadsbReceiver(this) }
+    private val iqModules=com.radiosport.ninegradio.modules.RegisteredIqModules(mapOf("adsb" to { adsbReceiver }))
+    private val _moduleAvailability=MutableStateFlow(com.radiosport.ninegradio.modules.ModuleAvailability())
+    val moduleAvailability=_moduleAvailability.asStateFlow()
     private val externalDecoder=com.radiosport.ninegradio.dsp.ExternalDecoderStream()
     @Volatile private var stoppedDiagnostics:com.radiosport.ninegradio.pipeline.ReceiverDiagnostics?=null
     private var requestedMode: DemodMode?=null
@@ -359,7 +362,8 @@ class RtlSdrService : Service() {
         dspEngine?.stop()
         stoppedDiagnostics=pipelineDiagnostics()
         finishCapture(false); finishCapture(true)
-        adsbReceiver.stop()
+        iqModules.stop()
+        _moduleAvailability.value=com.radiosport.ninegradio.modules.ModuleAvailability()
         com.radiosport.ninegradio.data.RadioTargets.aircraft.value=emptyList()
         audioContent.attach(null)
         dspEngine = null
@@ -493,9 +497,9 @@ class RtlSdrService : Service() {
                 // consume blocks across a device-rate transition.
                 val factory=selectedFactory
                 if(factory!=null) switchSource(factory,selected)
-                else { adsbReceiver.stop(); active.setSampleRate(selected) }
+                else { iqModules.stop(); active.setSampleRate(selected) }
             }
-            updateAdsbReceiver()
+            updateIqModules()
         } }
     }
     fun setGain(idx: Int) = control { source?.setGain(idx) }
@@ -511,14 +515,14 @@ class RtlSdrService : Service() {
             source?.applyModeHardwarePolicy(mode)
             dspEngine?.setDemodMode(mode)
             dspEngine?.setListeningEnabled(getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE).getBoolean("monitor_${mode.name}",true))
-            updateAdsbReceiver()
+            updateIqModules()
         }
     }
-    private fun updateAdsbReceiver() {
-        val active=source
-        if(requestedMode==DemodMode.ADSB && active!=null && active.isOpen() && capabilities.supportsMode(DemodMode.ADSB))
-            adsbReceiver.start(active)
-        else adsbReceiver.stop()
+    private fun updateIqModules() {
+        val active=source?.takeIf { it.isOpen() }
+        val configuration=active?.let { com.radiosport.ninegradio.pipeline.IqDecoderConfiguration(it.getSampleRate(),
+            if(it.capabilities.floatIq) com.radiosport.ninegradio.pipeline.IqSampleFormat.FLOAT_32 else com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8) }
+        _moduleAvailability.value=iqModules.select(requestedMode,active,configuration,active?.capabilities?.moduleSupport())
     }
     fun setFftSize(size: Int) { pendingFftSize = size; control { dspEngine?.setFftSize(size) } }
     fun setFftDecimation(factor: Int) { pendingFftDecimation = factor; control { dspEngine?.setFftDecimation(factor) } }

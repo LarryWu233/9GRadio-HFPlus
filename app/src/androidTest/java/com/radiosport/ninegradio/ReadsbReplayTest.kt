@@ -27,6 +27,7 @@ class ReadsbReplayTest {
             .putFloat("receiverLat",52.26f).putFloat("receiverLon",3.92f).commit()
         val source=FileIqSource(fixture,2400000,1090000000,DemodMode.ADSB)
         val receiver=ReadsbReceiver(context)
+        val registered=com.radiosport.ninegradio.modules.RegisteredIqModules(mapOf("adsb" to { receiver }))
         try {
             assertTrue(source.open())
             val module:com.radiosport.ninegradio.pipeline.IqDecoderModule<List<AdsbDecoder.AdsbFrame>> = receiver
@@ -35,8 +36,8 @@ class ReadsbReplayTest {
             assertFalse("Unsupported input must be refused before subscribing",receiver.status.value.running)
             assertNotNull(kotlinx.coroutines.runBlocking { module.state.first() }.error)
             assertEquals(0,source.iqSubscriberCount)
-            module.start(source,com.radiosport.ninegradio.pipeline.IqDecoderConfiguration(2400000,
-                com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8))
+            assertTrue(registered.select(DemodMode.ADSB,source,com.radiosport.ninegradio.pipeline.IqDecoderConfiguration(2400000,
+                com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8),source.capabilities.moduleSupport()).available)
             val deadline=SystemClock.elapsedRealtime()+12000
             while(source.iqSubscriberCount==0 && SystemClock.elapsedRealtime()<deadline) Thread.sleep(20)
             source.startStreaming()
@@ -87,7 +88,7 @@ class ReadsbReplayTest {
                     File(context.cacheDir,"alpha15-aircraft-table-data.json").writeText(com.google.gson.Gson().toJson(tracks))
                 }
             }
-        } finally { receiver.stop(); source.close() }
+        } finally { registered.stop();receiver.stop(); source.close() }
         assertFalse(receiver.status.value.running); assertTrue(receiver.aircraft.value.isEmpty())
         }
     }

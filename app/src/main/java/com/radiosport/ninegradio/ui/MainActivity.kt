@@ -1054,10 +1054,7 @@ class MainActivity : RadioThemedActivity() {
         return listOfNotNull(root.findViewById(R.id.chipGroupDemod),root.findViewById(R.id.chipGroupDigital))
     }
     private fun setupDemodModeChips() {
-        val modes = listOf(DemodMode.AM, DemodMode.NFM, DemodMode.WFM, DemodMode.WFM_STEREO,
-            DemodMode.USB, DemodMode.LSB, DemodMode.CW, DemodMode.CWR, DemodMode.DSB,
-            DemodMode.APRS, DemodMode.ACARS, DemodMode.ADSB, DemodMode.RAW,
-            DemodMode.DMR, DemodMode.YSF, DemodMode.DSTAR, DemodMode.DIG)
+        val modes = com.radiosport.ninegradio.modules.RadioModules.modeChoices
         val groups=modeChipGroups()
         if(groups.size!=2) return
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_MODE)
@@ -1074,16 +1071,16 @@ class MainActivity : RadioThemedActivity() {
                 }
             }
         groups.forEach { it.removeAllViews() }
-        val analog=setOf(DemodMode.AM,DemodMode.NFM,DemodMode.WFM,DemodMode.WFM_STEREO,
-            DemodMode.USB,DemodMode.LSB,DemodMode.CW,DemodMode.CWR,DemodMode.DSB)
-        for (mode in modes) {
-            val group=groups[if(mode in analog) 0 else 1]
+        for (descriptor in modes) {
+            val mode=requireNotNull(descriptor.mode)
+            val group=groups[if(descriptor.picker==com.radiosport.ninegradio.modules.ModulePicker.ANALOG) 0 else 1]
             val cell=group.childCount
             group.addView(ModeChoiceUi.button(this).apply {
             id=View.generateViewId()
-            text = if(mode==DemodMode.WFM_STEREO) "WFM 立体声" else mode.displayName
+            text = descriptor.label
             tag=mode; isCheckable=false; isSelected=mode==viewModel.demodMode.value
             isEnabled=viewModel.capabilities.value.supportsMode(mode)
+            tooltipText=viewModel.capabilities.value.modeAvailability(mode).reason
             layoutParams=ModeChoiceUi.cell(this@MainActivity,cell)
             setOnClickListener {
                 contentController?.explicitRfMode(mode)
@@ -3644,7 +3641,7 @@ class MainActivity : RadioThemedActivity() {
                 val chip = group.getChildAt(i) as? com.google.android.material.button.MaterialButton ?: continue
                 val mode = chip.tag as? DemodMode ?: continue
                 chip.isEnabled = caps.supportsMode(mode)
-                chip.tooltipText = if (chip.isEnabled) null else "超出当前接收机的频率或带宽能力"
+                chip.tooltipText = caps.modeAvailability(mode).reason
             }
         }
     }
@@ -4167,7 +4164,10 @@ class MainActivity : RadioThemedActivity() {
             viewModel.serviceConnected.collectLatest { connected ->
                 if(!connected) return@collectLatest
                 val svc=viewModel.getService() ?: return@collectLatest
-                val reception=kotlinx.coroutines.flow.combine(svc.adsbReceiver.aircraft,svc.adsbReceiver.status,svc.connectionState) { tracks,status,state -> Triple(tracks,status,state) }
+                val decoderStatus=kotlinx.coroutines.flow.combine(svc.adsbReceiver.status,svc.moduleAvailability) { status,availability ->
+                    if(availability.available) status else status.copy(error=availability.reason)
+                }
+                val reception=kotlinx.coroutines.flow.combine(svc.adsbReceiver.aircraft,decoderStatus,svc.connectionState) { tracks,status,state -> Triple(tracks,status,state) }
                 kotlinx.coroutines.flow.combine(reception,receiverLocation.position) { current,_ -> current }
                     .collect { (tracks,status,state) ->
                         aircraft=tracks.sortedBy { it.callsign ?: it.icao24 }

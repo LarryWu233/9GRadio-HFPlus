@@ -21,6 +21,7 @@ import com.radiosport.ninegradio.R
 import com.radiosport.ninegradio.content.*
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.usb.RtlSdrService
+import com.radiosport.ninegradio.modules.RadioModules
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import java.time.*
@@ -77,15 +78,16 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val modeRoot=pager.getViewAt(ControlsPagerAdapter.TAB_MODE)
         val host=modeRoot?.findViewById<GridLayout>(R.id.contentModeButtons)
         host?.removeAllViews()
-        listOf(16 to "SSTV",17 to "SAT",18 to "EiBi").forEachIndexed { cell,(module,label) ->
+        RadioModules.contentChoices.forEachIndexed { cell,descriptor ->
+            val module=ModulePanels.id(requireNotNull(descriptor.panel))
             host?.addView(ModeChoiceUi.button(activity).apply {
-                text=label;tag=module;layoutParams=ModeChoiceUi.cell(activity,cell)
+                text=descriptor.label;tag=module;layoutParams=ModeChoiceUi.cell(activity,cell)
                 setOnClickListener { select(module) }
             })
         }
         bindService(); refreshVisibility(); modeChanged(viewModel.demodMode.value)
     }
-    private fun id(kind: AudioContentKind)=15+kind.ordinal
+    private fun id(kind: AudioContentKind)=ModulePanels.content(kind)
     fun bindService() {
         val service=getService() ?: return
         if(observed === service) return
@@ -118,18 +120,17 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     fun select(module: Int) {
         selected=module
         prefs.edit().putInt("selected",module).apply()
-        if(module in 16..17) {
-            val kind=if(module==16) AudioContentKind.SSTV else AudioContentKind.SAT
+        ModulePanels.kind(module)?.takeIf { RadioModules.content(ContentConfig(it)).preset!=null }?.let { kind ->
             val panel=panels[kind] ?: return
             if(!panel.microphone.isChecked) prepareRf(kind)
         }
         refreshVisibility(); showModule(module); resize()
     }
     private fun prepareRf(kind: AudioContentKind, explicitFrequency: Long?=null) {
-        if(kind==AudioContentKind.CW) return
+        val preset=RadioModules.content(ContentConfig(kind)).preset ?: return
         val key="${kind}_frequency"
         val hz=explicitFrequency ?: if(viewModel.modeStationMemory.value)
-            prefs.getLong(key,if(kind==AudioContentKind.SAT) 145_800_000 else 14_230_000)
+            prefs.getLong(key,preset.frequencyHz)
             else viewModel.centerFreqHz.value
         restoring=true
         try {
@@ -138,8 +139,8 @@ class ContentModuleController(private val activity: MainActivity, private val pa
                 if(explicitFrequency!=null && viewModel.modeStationMemory.value)
                     prefs.edit().putLong(key,hz).apply()
             }
-            viewModel.setDemodMode(if(kind==AudioContentKind.SAT) DemodMode.NFM else DemodMode.USB,automatic=true)
-            viewModel.setIfBandwidth(if(kind==AudioContentKind.SAT) 50_000 else 3_000)
+            viewModel.setDemodMode(preset.mode,automatic=true)
+            viewModel.setIfBandwidth(preset.bandwidthHz)
         } finally { restoring=false }
     }
     fun frequencyChanged(hz: Long) {
@@ -193,7 +194,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val history=RadioDataTable(activity)
         var files=emptyList<java.io.File>()
         var mode=prefs.getString("${kind}_sstv","Auto") ?: "Auto"
-        var apt=prefs.getBoolean("sat_apt",false)
+        var apt=kind==AudioContentKind.SAT && prefs.getBoolean("sat_apt",false)
         var wpm=prefs.getInt("cw_wpm",0)
         var lastImage: android.graphics.Bitmap?=null
         init {
@@ -270,7 +271,13 @@ class ContentModuleController(private val activity: MainActivity, private val pa
             AlertDialog.Builder(activity).setTitle(if(kind==AudioContentKind.CW) "速度" else "图像模式").setSingleChoiceItems(values.toTypedArray(),checked) { dialog,which ->
                 getService()?.stopAudioContent()
                 if(kind==AudioContentKind.CW) { wpm=if(which==0) 0 else values[which].substringBefore(' ').toInt(); prefs.edit().putInt("cw_wpm",wpm).apply() }
-                else { apt=values[which]=="APT（历史）"; if(!apt) mode=values[which]; prefs.edit().putString("${kind}_sstv",mode).putBoolean("sat_apt",apt).apply() }
+                else {
+                    apt=kind==AudioContentKind.SAT && values[which]=="APT（历史）"
+                    if(!apt) mode=values[which]
+                    prefs.edit().putString("${kind}_sstv",mode).apply {
+                        if(kind==AudioContentKind.SAT) putBoolean("sat_apt",apt)
+                    }.apply()
+                }
                 updateOption(); dialog.dismiss()
                 if(apt) status.text="APT 历史录音 · NOAA-15/18/19 已退役"
             }.setNegativeButton("取消",null).show()

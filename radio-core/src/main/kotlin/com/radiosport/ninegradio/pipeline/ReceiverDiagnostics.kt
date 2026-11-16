@@ -7,10 +7,17 @@ data class ReceiverDiagnostics(val epoch:Long=0,val sampleRate:Int=0,val audioRa
     val decoderDroppedPackets:Long=0,val playbackDroppedPackets:Long=0,val playbackUnderruns:Int=0,
     val decoderOutputDroppedPackets:Long=0,val rawDecoderInputMissingSamples:Long=0,val rawDecoderDriverMissingSamples:Long=0,
     val externalDecoderDroppedPackets:Long=0,val externalDecoderStalePackets:Long=0,val externalDecoderPendingRelease:Boolean=false,
-    val dualAprsDroppedPairs:Long=0,val amState:String="",val amGainDb:Float=0f,val amLimitingPercent:Double=0.0) {
+    val dualAprsDroppedPairs:Long=0,val amState:String="",val amGainDb:Float=0f,val amLimitingPercent:Double=0.0,
+    val moduleId:String="",val moduleInput:String="",val moduleRoute:String="",val moduleResults:String="") {
     fun report(version:String):String = buildString {
         appendLine("9GRadio HF+ 接收链路诊断")
         appendLine("Version: ${version.take(80)}")
+        if(moduleId.isNotEmpty()) {
+            appendLine("接收模块: $moduleId")
+            appendLine("模块输入: $moduleInput")
+            appendLine("处理支路: $moduleRoute")
+            appendLine("结果出口: $moduleResults")
+        }
         appendLine("配置代次: $epoch")
         appendLine("IQ / Audio: $sampleRate / $audioRate Hz")
         appendLine("已处理 IQ 样本: $inputSamples")
