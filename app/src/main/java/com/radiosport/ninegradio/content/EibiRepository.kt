@@ -7,8 +7,25 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 class EibiRepository(private val context: Context) {
-    companion object { private val cacheLock=Any() }
+    companion object {
+        private val cacheLock=Any()
+        private val revision=kotlinx.coroutines.flow.MutableStateFlow(0L)
+        val updates:kotlinx.coroutines.flow.StateFlow<Long> = revision
+        private var sites:Map<String,EibiStationMatcher.Position>?=null
+        private var indexedData:Data?=null
+        private var indexed:EibiStationMatcher?=null
+    }
     data class Data(val entries: List<EibiEntry>, val season: String, val origin: String)
+    /** Call off the UI thread. Reuses the existing bundled source, without location/network requests. */
+    fun stationMatcher(data:Data):EibiStationMatcher = synchronized(cacheLock) {
+        if(indexedData!==data) {
+            val positions=sites ?: context.assets.open("eibi/README.TXT").use {
+                EibiStationMatcher.sites(it.readBytes().toString(Charsets.ISO_8859_1))
+            }.also { sites=it }
+            indexed=EibiStationMatcher(data.entries,positions);indexedData=data
+        }
+        checkNotNull(indexed)
+    }
     private val directory=File(context.filesDir,"eibi").apply { mkdirs() }
     private val cache=File(directory,"schedule.csv")
     private val meta=File(directory,"source.txt")
@@ -72,6 +89,7 @@ class EibiRepository(private val context: Context) {
             stream.writeUTF(season); stream.writeUTF(origin); stream.writeInt(bytes.size); stream.write(bytes); stream.flush()
             snapshot.finishWrite(output)
         } catch(e: Exception) { snapshot.failWrite(output); throw e }
+        revision.value=revision.value+1
         data
     }
     private fun parse(bytes: ByteArray,season: String,origin: String): Data {

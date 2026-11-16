@@ -8,6 +8,8 @@ An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](ht
 
 **Version:** `0.28.0-hfplus-alpha28` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
 
+**This architecture branch:** [preview 21](https://github.com/LarryWu233/9GRadio-HFPlus/releases/tag/hfplus-architecture-21) uses the separate `com.radiosport.ninegradio.hfplus.arch` package. It adds an expanded ETM results viewport and offline EiBi station-name hints, with location ranking all valid candidates and name-cell navigation without retuning. Earlier previews refactor the receiver pipeline and add AM/SAM choices. Main remains alpha28; AIS/LRPT are planned and are not provided by preview 21. See [validation](docs/validation/architecture-21.md) and the [next-module plan](docs/architecture/ais-lrpt-etm-plan.md).
+
 Alpha28 replaces the squeezed preset category strip with wrapping, fully labelled Material chips. Bookmark filters and saved rows now use theme colours; filters read All/Uncategorized as 全部/未分组 in the Chinese UI. Per-bookmark colour markings and stored data are preserved. See [alpha28 validation](docs/validation/2026-11-08-alpha28.md).
 
 Alpha27 extends the Settings surface through the status-bar inset, makes menu icons follow all seven themes, rounds both edges of the menu header at 16 dp, separates compact band ranges, and spaces audio-content actions. It removes the mode-label backing and adds an original text-free adaptive launcher icon with monochrome artwork. See [alpha27 validation](docs/validation/2026-11-08-alpha27.md).
@@ -89,6 +91,8 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
 **版本：**`0.28.0-hfplus-alpha28` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+**当前架构分支：**[预览 21](https://github.com/LarryWu233/9GRadio-HFPlus/releases/tag/hfplus-architecture-21) 使用独立包名 `com.radiosport.ninegradio.hfplus.arch`，修复 ETM 全展开表格高度，增加离线 EiBi 电台名称参考；定位仅排序、全部候选保留，点击名称查询不改频。此前预览包含接收管线重构和 AM/SAM 检波选项。主干仍为 alpha28；AIS/LRPT 在计划中，预览 21 尚未提供这两个解码器。详见[验证记录](docs/validation/architecture-21.md)与[后续模块计划](docs/architecture/ais-lrpt-etm-plan.md)。
 
 Alpha28 将预设分类改为可换行、完整显示文字的 Material 标签；收藏筛选与条目使用主题色，All／Uncategorized 改为“全部／未分组”。保留条目单独标记色及原数据。详见 [alpha28 验证](docs/validation/2026-11-08-alpha28.md)。
 

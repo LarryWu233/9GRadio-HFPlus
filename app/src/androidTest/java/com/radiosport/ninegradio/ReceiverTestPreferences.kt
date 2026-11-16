@@ -8,7 +8,8 @@ import java.io.Closeable
 internal class ReceiverTestPreferences(context: Context): Closeable {
     private val snapshots=listOf(context.getSharedPreferences("rtlsdr_prefs",Context.MODE_PRIVATE),
         PreferenceManager.getDefaultSharedPreferences(context),context.getSharedPreferences("screen_modules",Context.MODE_PRIVATE),
-        context.getSharedPreferences("radio_map",Context.MODE_PRIVATE),context.getSharedPreferences("audio_content",Context.MODE_PRIVATE))
+        context.getSharedPreferences("radio_map",Context.MODE_PRIVATE),context.getSharedPreferences("audio_content",Context.MODE_PRIVATE),
+        context.getSharedPreferences("etm_memories",Context.MODE_PRIVATE))
         .map { prefs -> prefs to prefs.all.mapValues { (_,value) -> if(value is Set<*>) value.toSet() else value } }
     override fun close() {
         snapshots.forEach { (prefs,values) ->

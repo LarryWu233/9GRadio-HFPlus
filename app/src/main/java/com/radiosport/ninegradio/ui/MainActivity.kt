@@ -420,7 +420,13 @@ class MainActivity : RadioThemedActivity() {
                 binding.frequencyView.setFrequency(hz)
                 binding.spectrumView.setCenterFrequency(hardwareCenterFreqHz(hz))
                 binding.waterfallView.setCenterFrequency(hardwareCenterFreqHz(hz))
-            }, { viewModel.autoDemod.value }, { viewModel.setAutoDemod(it) }, { !scanTabScanning })
+            }, { viewModel.autoDemod.value }, { viewModel.setAutoDemod(it) }, { !scanTabScanning },
+            { receiverLocation.position.value?.let { com.radiosport.ninegradio.content.EibiStationMatcher.Position(it.latitude,it.longitude) } },
+            { hz,time -> contentController?.openEibi(hz,time) })
+        lifecycleScope.launch { receiverLocation.position.collect {
+            if(::etm.isInitialized && ::pagerAdapter.isInitialized)
+                etm.setVisible(pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_SCAN)
+        } }
         setupFabMenu()
         observeViewModel()
 
@@ -2369,6 +2375,11 @@ class MainActivity : RadioThemedActivity() {
             0, android.view.View.MeasureSpec.UNSPECIFIED
         )
         page.measure(widthSpec, heightSpec)
+        if(position==ControlsPagerAdapter.TAB_SCAN && ::etm.isInitialized &&
+            page.findViewById<View>(R.id.etmContainer)?.isVisible==true) {
+            val viewport=binding.controlsScrollView.height-binding.controlsScrollView.paddingBottom-binding.controlsScrollView.paddingTop
+            if(etm.resizeTable(viewport,page.measuredHeight,panelFullscreen)) page.measure(widthSpec,heightSpec)
+        }
         val target = page.measuredHeight
         if (target <= 0) return
 
@@ -2583,8 +2594,7 @@ class MainActivity : RadioThemedActivity() {
                 contentDescription=if(full) "还原录音页" else "展开录音页"
             }
             binding.controlsScrollView.scrollTo(0,0)
-            if(::pagerAdapter.isInitialized && pagerAdapter.moduleAt(binding.controlViewPager.currentItem)==ControlsPagerAdapter.TAB_RECORDING)
-                binding.controlViewPager.post { resizePagerToCurrentPage() }
+            if(::pagerAdapter.isInitialized) binding.controlViewPager.post { resizePagerToCurrentPage() }
             for(id in listOf(R.id.btnAdsbPanelFull,R.id.btnAprsPanelFull)) findViewById<Button>(id)?.text=if(full) "还原" else "展开"
         }
         binding.root.invalidate()
@@ -4188,7 +4198,9 @@ class MainActivity : RadioThemedActivity() {
     private fun updateDigitalVisualization() {
         if(!::pagerAdapter.isInitialized) return
         val module=pagerAdapter.moduleAt(binding.controlViewPager.currentItem)
+        if(::etm.isInitialized) etm.setVisible(module==ControlsPagerAdapter.TAB_SCAN)
         receiverLocation.setActive(module==ControlsPagerAdapter.TAB_ADSB ||
+            module==ControlsPagerAdapter.TAB_SCAN ||
             (module==ControlsPagerAdapter.TAB_APRS && findViewById<View>(R.id.aprsMapHost)?.visibility==View.VISIBLE))
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB)?.let { page ->
             page.findViewById<View>(R.id.adsbMapHost)?.isVisible=adsbMapSelected
