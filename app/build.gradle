@@ -13,8 +13,8 @@ android {
         applicationId "com.radiosport.ninegradio.hfplus"
         minSdk 26
         targetSdk 35
-        versionCode 29
-        versionName "0.28.0-hfplus-alpha28"
+        versionCode 30
+        versionName "0.29.0-hfplus"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -33,12 +33,13 @@ android {
         archPreview {
             initWith debug
             applicationIdSuffix '.arch'
-            versionNameSuffix '-arch21'
+            versionNameSuffix '-arch22'
             matchingFallbacks = ['debug']
             externalNativeBuild { cmake { arguments '-DNINEGRADIO_PACKAGE_VARIANT=archPreview' } }
         }
         release {
-            minifyEnabled true
+            // Preserve the validated class graph for the first regular release.
+            minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {

@@ -21,7 +21,17 @@ $sdkNormalized = $SdkPath.Replace('\', '/')
 $cmakeNormalized = (Join-Path $ToolchainRoot 'cmake').Replace('\', '/')
 Set-Content -LiteralPath local.properties -Encoding ASCII -Value @("sdk.dir=$sdkNormalized", "cmake.dir=$cmakeNormalized")
 $javaPath = (Get-Command java.exe).Source
-& $javaPath "-javaagent:$gradleRoot/lib/agents/gradle-instrumentation-agent-8.13.jar" `
-    -classpath "$gradleRoot/lib/gradle-gradle-cli-main-8.13.jar" org.gradle.launcher.GradleMain `
-    --gradle-user-home "$GradleUserHome" --no-daemon --console plain "-PtargetAbi=$Abi" "-PtoolchainRoot=$ToolchainRoot" @Tasks
-exit $LASTEXITCODE
+# Windows PowerShell classifies native stderr (including ordinary javac warnings)
+# as NativeCommandError. Gradle's exit code determines build failure; retain stderr
+# without terminating the build on a successful compiler's warning.
+$buildErrorAction = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    & $javaPath "-javaagent:$gradleRoot/lib/agents/gradle-instrumentation-agent-8.13.jar" `
+        -classpath "$gradleRoot/lib/gradle-gradle-cli-main-8.13.jar" org.gradle.launcher.GradleMain `
+        --gradle-user-home "$GradleUserHome" --no-daemon --console plain "-PtargetAbi=$Abi" "-PtoolchainRoot=$ToolchainRoot" @Tasks
+    $buildExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $buildErrorAction
+}
+exit $buildExitCode

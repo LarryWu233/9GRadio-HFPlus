@@ -21,6 +21,8 @@ Continue on `refactor/receiver-pipeline`, preserving main, existing Views, map p
 
 ## 3. LRPT
 
+**Deferred by the user while prioritizing microphone CW decoding and SSTV gallery saving.** SatDump/VOLK probes remain private build artifacts; no LRPT mode or speculative decoder is shipped. Resume this section when the user asks to continue LRPT.
+
 - Prefer SatDump's mature Meteor LRPT chain, including its own synchronization, error correction and image processing. Pin the selected source and dependencies before integration; assess the minimal headless Android build and package size rather than copying its desktop UI or all satellite plugins.
 - Use raw IQ, with existing source-generation/gap/stop contracts and data-only monitoring policy. Preserve existing audio-based SSTV/APT and microphone/WAV behavior separately.
 - First version: manually selected supported Meteor LRPT profiles, live reception, supported IQ replay, synchronization/valid-frame/error-correction status, incremental image preview and save history. Satellite pass prediction, automatic scheduling and tracking/tuning are later work.
