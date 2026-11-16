@@ -1,5 +1,13 @@
 # 成熟实现的复用记录
 
+## 0.29.0：AIS 与麦克风 CW
+
+- AIS 复用 [AIS-catcher](https://github.com/jvde-github/AIS-catcher/tree/d5b1e0a50c68f81e8ef59a057899530bf365fc0a)，GPL-3.0-or-later。原始 `Source/`、CMake 和许可证保持不变，文件清单在 `cpp/vendor/ais-catcher/SHA256SUMS`。只构建无界面的 stdin/JSON 解码器；不启用第二套 USB 驱动、外发订阅、Web/API 或数据库。现有 Android 源提供 UInt8/Float32 IQ，设备仍由应用独占管理。
+- 麦克风及 WAV 的 CW 复用 [ggmorse](https://github.com/ggerganov/ggmorse/tree/7b4822a8cfdbb1addfe497f3ae8186f142a4ee79)，MIT。原始核心、滤波、FFT/Goertzel、速度分析和解码源码均保持不变，保留 FFT 原始来源注释及许可证；校验见 `cpp/vendor/ggmorse/SHA256SUMS`。接入自动音调检测和速度估计，保留固定 WPM。软件内窄带 CW 仍使用既有 multimon 实现。
+- `cw_audio_worker.cpp` 只负责 Float32 PCM、进程与结果帧；上游 stdout 转到私有 stderr，使用 `takeRxData` 输出文本。有限文件的 3 秒解码尾部排空沿用上游示例，仅用于解码器前瞻，不修改监听或录音。
+- SSTV 的 Robot36 核心未替换。“保存”通过 Android MediaStore 写入 `Pictures/9GRadio HF+`；未完成写入的记录保持 pending，失败删除该媒体记录并保留应用历史。后台自动历史仍留在应用目录，不自动塞满相册。
+- LRPT 应用户要求暂缓；SatDump/VOLK 构建探测不进入本次源码依赖与安装包。
+
 ## 架构预览 19：AM 频道选择性
 
 - 复用本项目预览 18 固定提交 `9558a8eb7fcf5b81809542451b64738ba69efdb2` 中的 `PolyphaseResampler` Blackman–Harris FIR 系数设计和 `cpp/include/volk_android.h` 的 VOLK 派生内积内核，GPL-3.0。两个文件保持原样，规范化 LF 的 SHA-256 在 `cpp/vendor/sources.json`。这里固定的是项目已包含的版本，不把现有头文件的上游提取版本说成已核实。

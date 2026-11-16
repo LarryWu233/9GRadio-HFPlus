@@ -13,6 +13,7 @@ extern const struct demod_param demod_morse;
 extern int cw_dit_length, cw_gap_length;
 extern bool cw_disable_auto_timing;
 extern void cw_remove_dc(short *pcm, int count);
+extern int cw_audio_decode(int wpm);
 
 void _verbprintf(int level, const char *fmt, ...) {
     if (level) return;
@@ -29,6 +30,7 @@ int main(int argc, char **argv) {
     prctl(PR_SET_PDEATHSIG, SIGTERM);
     if (getppid() == 1) return 1;
     if (argc < 2) return 2;
+    if (!strcmp(argv[1], "--cw-audio")) return cw_audio_decode(argc>2?atoi(argv[2]):0);
     if (!strcmp(argv[1], "--cw")) {
         if (argc > 2 && atoi(argv[2]) > 0) {
             cw_dit_length = cw_gap_length = 1200 / atoi(argv[2]);

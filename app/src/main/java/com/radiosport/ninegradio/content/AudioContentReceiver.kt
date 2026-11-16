@@ -118,10 +118,19 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
             return File(output,"CW-$stamp.txt").apply { writeText(current.text) }
         }
         return current.image?.let { bitmap ->
-            File(output,"${current.config?.kind}-$stamp-未完成.png").apply {
+            val incomplete=if(current.totalLines>0 && current.lines>=current.totalLines) "" else "-未完成"
+            File(output,"${current.config?.kind}-$stamp$incomplete.png").apply {
                 outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             }
         }
+    }
+    data class SavedContent(val file:File,val galleryUri:Uri?=null,val galleryError:String?=null)
+    /** Keep the established app history even if the shared media volume fails. */
+    fun saveForUser():SavedContent? {
+        val file=saveCurrent() ?: return null
+        if(file.extension!="png") return SavedContent(file)
+        return try { SavedContent(file,DecodedImageGallery.publish(context,file)) }
+        catch(error:Exception) { SavedContent(file,galleryError="已保存到应用内，相册保存失败") }
     }
     private inner class Session(val config: ContentConfig):AudioDecoderInput {
         val alive = AtomicBoolean(true)
@@ -361,6 +370,11 @@ class AudioContentReceiver(private val context: Context, private val softwareAva
                     val dit=fields[1].toIntOrNull() ?: 0
                     val wpm=if(dit>0) 1200.0*22050/dit/1000 else 0.0
                     publishDecoded(epoch,generation) { it.copy(mode="%.0f WPM · %s 字 · %s 错误".format(wpm,fields[2],fields[3])) }
+                } else if(fields[0]=="G" && fields.size>=3) {
+                    val pitch=fields[1].toFloatOrNull()?.takeIf { it.isFinite() && it>0 }
+                    val speed=fields[2].toFloatOrNull()?.takeIf { it.isFinite() && it>0 }
+                    publishDecoded(epoch,generation) { it.copy(mode=if(pitch!=null && speed!=null)
+                        "%.0f Hz · %.0f WPM".format(pitch,speed) else if(eof && it.mode.contains("Hz")) it.mode else "自动识别音调") }
                 }
             } }
         }

@@ -37,8 +37,9 @@ class AudioContentDecodeTest {
             java.io.RandomAccessFile(file,"rw").use { it.write(b.array()) }
         }
     }
-    private fun decode(config: ContentConfig,file: File,check: (ContentState)->Unit) {
+    private fun decode(config: ContentConfig,file: File,testGallery:Boolean=false,check: (ContentState)->Unit) {
         val receiver=AudioContentReceiver(context); val before=receiver.files().toSet()
+        var gallery:Uri?=null
         try {
             receiver.start(config.copy(input=ContentInput.WAV),Uri.fromFile(file))
             val end=System.currentTimeMillis()+90_000
@@ -47,7 +48,20 @@ class AudioContentDecodeTest {
             assertFalse("Decoder timeout: ${state.status}",state.running)
             assertEquals("录音处理结束",state.status)
             check(state)
-        } finally { receiver.stop(); receiver.files().filter { it !in before }.forEach { it.delete() }; file.delete() }
+            if(testGallery && android.os.Build.VERSION.SDK_INT>=29) {
+                val saved=receiver.saveForUser()!!;gallery=saved.galleryUri
+                assertNull(saved.galleryError);assertNotNull(gallery)
+                context.contentResolver.query(gallery!!,arrayOf(android.provider.MediaStore.Images.Media.DISPLAY_NAME,
+                    android.provider.MediaStore.Images.Media.RELATIVE_PATH,android.provider.MediaStore.Images.Media.IS_PENDING),null,null,null)!!.use {
+                    assertTrue(it.moveToFirst());assertEquals(saved.file.name,it.getString(0))
+                    assertTrue(it.getString(1).startsWith("Pictures/9GRadio HF+"));assertEquals(0,it.getInt(2))
+                }
+                context.contentResolver.openInputStream(gallery!!).use {
+                    val bitmap=android.graphics.BitmapFactory.decodeStream(it)!!
+                    assertEquals(state.image!!.width,bitmap.width);assertEquals(state.image.height,bitmap.height);bitmap.recycle()
+                }
+            }
+        } finally { gallery?.let { context.contentResolver.delete(it,null,null) };receiver.stop(); receiver.files().filter { it !in before }.forEach { it.delete() }; file.delete() }
     }
     @Test fun morseWavThroughNativeCoreAndResampler() {
         val file=File(context.cacheDir,"content-cw.wav")
@@ -79,7 +93,7 @@ class AudioContentDecodeTest {
             }
         }
         // A SAT-only saved option must never select the APT backend for SSTV.
-        decode(ContentConfig(AudioContentKind.SSTV,apt=true),file) { state ->
+        decode(ContentConfig(AudioContentKind.SSTV,apt=true),file,testGallery=true) { state ->
             assertEquals("Robot 36 Color",state.mode); assertEquals(240,state.lines)
             assertEquals(240,state.totalLines); assertEquals(320,state.image!!.width)
             val color=state.image!!.getPixel(160,120)

@@ -44,6 +44,11 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     private var observed: RtlSdrService?=null
     private var eibi: EibiPanel?=null
     private var restoring=false
+    private var pendingGallerySave:(()->Unit)?=null
+    private val galleryPermission=activity.registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        val action=pendingGallerySave;pendingGallerySave=null
+        if(granted) action?.invoke() else Toast.makeText(activity,"未获存储权限，未保存到相册",Toast.LENGTH_SHORT).show()
+    }
     private fun dp(n: Int)=(n*activity.resources.displayMetrics.density).toInt()
     private fun label(value: String, size: Float=12f)=TextView(activity).apply {
         text=value; textSize=size; setTextColor(UiThemes.color(context,R.attr.radioText)); gravity=Gravity.CENTER_VERTICAL
@@ -249,9 +254,20 @@ class ContentModuleController(private val activity: MainActivity, private val pa
             if(!state.running) renderFiles()
         }
         private fun save() {
+            if(kind!=AudioContentKind.CW && DecodedImageGallery.needsPermission(activity)) {
+                pendingGallerySave={ save() };galleryPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);return
+            }
             activity.lifecycleScope.launch {
-                val file=withContext(Dispatchers.IO) { getService()?.audioContent?.saveCurrent() }
-                if(file!=null) { renderFiles(); Toast.makeText(activity,"已保存",Toast.LENGTH_SHORT).show() }
+                val result=withContext(Dispatchers.IO) { runCatching { getService()?.audioContent?.saveForUser() } }
+                val saved=result.getOrNull()
+                renderFiles()
+                Toast.makeText(activity,when {
+                    result.isFailure -> "保存失败，请检查可用空间"
+                    saved==null -> "暂无可保存内容"
+                    saved.galleryError!=null -> saved.galleryError
+                    saved.galleryUri!=null -> "已保存到相册"
+                    else -> "已保存"
+                },Toast.LENGTH_SHORT).show()
             }
         }
         private fun renderFiles() {

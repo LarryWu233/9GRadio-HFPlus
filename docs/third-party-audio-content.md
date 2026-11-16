@@ -1,5 +1,7 @@
 # Audio content decoder sources
 
+0.29.0 adds unmodified [ggmorse](https://github.com/ggerganov/ggmorse/tree/7b4822a8cfdbb1addfe497f3ae8186f142a4ee79) (MIT) for microphone/WAV CW tone and speed tracking. The fixed source record and file hashes are in `cpp/vendor/ggmorse/`; the Android process adapter receives 48 kHz Float32 PCM. Software narrowband CW retains multimon-ng. SSTV explicit saves now publish a PNG through MediaStore while retaining app history; Robot36's decoding algorithm is unchanged.
+
 {
   "robot36": {
     "repo": "xdsopl/robot36",

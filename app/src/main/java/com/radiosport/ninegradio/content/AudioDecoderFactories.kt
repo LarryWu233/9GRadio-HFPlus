@@ -12,5 +12,6 @@ internal object AudioDecoderFactories {
         ModuleBackend.ROBOT36 to Binding(48000,imageFactory={ RadioSstvBridge(48000,it) }),
         ModuleBackend.APT to Binding(48000,"--apt")
     )
-    fun forConfig(config:ContentConfig)=bindings.getValue(RadioModules.content(config).backend)
+    fun forConfig(config:ContentConfig)=if(config.kind==AudioContentKind.CW && config.input!=ContentInput.SOFTWARE)
+        Binding(48000,"--cw-audio") else bindings.getValue(RadioModules.content(config).backend)
 }
