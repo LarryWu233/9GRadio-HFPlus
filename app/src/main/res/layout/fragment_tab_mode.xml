@@ -7,6 +7,7 @@
         android:textSize="14sp" android:textColor="?attr/radioText"/>
     <TextView android:layout_width="match_parent" android:layout_height="28dp" android:gravity="center_vertical" android:text="模拟信号" android:textSize="12sp" android:textColor="?attr/radioSecondary"/>
     <GridLayout android:id="@+id/chipGroupDemod" android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="3"/>
+    <FrameLayout android:id="@+id/amDetectorHost" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone"/>
     <TextView android:layout_width="match_parent" android:layout_height="32dp" android:gravity="center_vertical" android:text="数字信号与数据" android:textSize="12sp" android:textColor="?attr/radioSecondary"/>
     <GridLayout android:id="@+id/chipGroupDigital" android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="3"/>
     <TextView android:layout_width="match_parent" android:layout_height="32dp" android:gravity="center_vertical" android:text="图像与节目表" android:textSize="12sp" android:textColor="?attr/radioSecondary"/>

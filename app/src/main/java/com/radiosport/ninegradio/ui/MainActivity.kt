@@ -1111,6 +1111,33 @@ class MainActivity : RadioThemedActivity() {
         }
     }
 
+    private fun setupAmControls() {
+        val modeHost=pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_MODE)?.findViewById<android.widget.FrameLayout>(R.id.amDetectorHost) ?: return
+        val audioHost=pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById<android.widget.FrameLayout>(R.id.amAudioHost) ?: return
+        if(modeHost.childCount>0) return
+        val detector=AmDetectorControls(this) { value -> viewModel.setAmSettings(viewModel.amSettings.value.copy(detector=value)) }
+        val audio=AmAudioControls(this) { viewModel.setAmSettings(it) }
+        modeHost.addView(detector);audioHost.addView(audio)
+        lifecycleScope.launch {
+            var previousConfig:Triple<DemodMode,com.radiosport.ninegradio.dsp.AmSettings,Int>?=null
+            var previousLayout:Pair<Boolean,Boolean>?=null
+            combine(viewModel.demodMode,viewModel.amSettings,viewModel.ifBandwidthHz,viewModel.amStatus,viewModel.connectionState)
+                { mode,settings,width,status,connection -> Triple(Triple(mode,settings,width),status,connection) }
+                .collect { (config,status,connection) ->
+                    val (mode,settings,width)=config
+                    modeHost.isVisible=mode==DemodMode.AM;audioHost.isVisible=mode==DemodMode.AM
+                    detector.render(settings,status,connection is RtlSdrService.ConnectionState.Connected)
+                    audio.updateStatus(status)
+                    if(previousConfig!=config) {
+                        audio.render(settings,width,status);previousConfig=config
+                        if(mode==DemodMode.AM) binding.spectrumView.setDemodChannelBandwidth(channelHighlightHz(mode,width),channelHighlightSideband(mode))
+                    }
+                    val layout=(mode==DemodMode.AM) to (settings.detector!=com.radiosport.ninegradio.dsp.AmDetector.ENVELOPE)
+                    if(previousLayout!=layout) { previousLayout=layout;resizePagerToCurrentPage() }
+                }
+        }
+    }
+
     private fun setupControlsPanel() {
         setupTabsDrawer()
         // ViewPager2 inflates tab views on first layout pass.
@@ -1214,12 +1241,16 @@ class MainActivity : RadioThemedActivity() {
         syncNoiseProcessingControls()
 
         // Noise Reducer switch
+        setupAmControls()
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_RF)?.findViewById<android.widget.FrameLayout>(R.id.listeningAudioControls)?.let { host ->
             if(host.childCount==0) {
                 val controls=ListeningAudioControls(this,viewModel.listeningAudio.value) { viewModel.setListeningAudio(it) }
                 host.addView(controls)
                 lifecycleScope.launch { viewModel.listeningAudio.collect { controls.render(it) } }
                 lifecycleScope.launch { viewModel.demodMode.collect { controls.setMode(it) } }
+                lifecycleScope.launch { combine(viewModel.demodMode,viewModel.amSettings) { mode,settings ->
+                    mode==DemodMode.AM && settings.agc!=com.radiosport.ninegradio.dsp.AmAgc.OFF
+                }.collect { controls.setAmPrimaryAgc(it) } }
                 lifecycleScope.launch {
                     combine(viewModel.demodMode,viewModel.noiseBlankerEnabled,viewModel.noiseReducerEnabled,
                         viewModel.iqNbThreshold) { _,_,_,_ -> Unit }.collect { syncNoiseProcessingControls() }
@@ -2795,6 +2826,7 @@ class MainActivity : RadioThemedActivity() {
      *   all other modes -> 0 (symmetric, centred on the dial frequency)
      */
     private fun channelHighlightSideband(mode: DemodMode): Int = when (mode) {
+        DemodMode.AM -> viewModel.amSettings.value.detector.sideband
         DemodMode.USB -> 1
         DemodMode.LSB -> -1
         else -> 0
@@ -3015,11 +3047,16 @@ class MainActivity : RadioThemedActivity() {
         }
 
         lifecycleScope.launch {
-            combine(
-                viewModel.demodMode.map { it.displayName }.distinctUntilChanged(),
-                viewModel.sampleRate
-            ) { mode, rate -> mode to rate }.collect { (mode, displayRate) ->
-                binding.tvDemodMode.text = mode
+            combine(viewModel.demodMode,viewModel.sampleRate,viewModel.amSettings,viewModel.amStatus,viewModel.connectionState)
+                { mode,rate,settings,status,connection ->
+                    val sam=mode==DemodMode.AM && settings.detector!=com.radiosport.ninegradio.dsp.AmDetector.ENVELOPE
+                    Triple(if(sam) settings.detector.label else mode.displayName,rate,
+                        if(sam && connection is RtlSdrService.ConnectionState.Connected) status.state else -1)
+                }.distinctUntilChanged().collect { (mode, displayRate,state) ->
+                binding.tvDemodMode.text=if(mode.startsWith("SAM")) android.text.SpannableString("$mode ●").apply {
+                    setSpan(android.text.style.ForegroundColorSpan(when(state) { 2 -> 0xff66c58a.toInt();1 -> 0xffffb347.toInt();else -> 0xff87949e.toInt() }),length-1,length,0)
+                } else mode
+                binding.tvDemodMode.contentDescription=if(mode.startsWith("SAM")) "$mode ${viewModel.amStatus.value.label}" else mode
                 binding.tvSampleRate.text = if (displayRate >= 1_000_000)
                     "${"%.3f".format(displayRate / 1e6)} MS/s"
                 else "${displayRate / 1000} kS/s"

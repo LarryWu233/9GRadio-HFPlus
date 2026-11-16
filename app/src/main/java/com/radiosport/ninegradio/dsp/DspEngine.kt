@@ -173,7 +173,32 @@ class DspEngine(private val device: IqSource,
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Current demodulator
-    private val channel=ChannelProcessor(AndroidDemodPrimitives,iqResamplers)
+    private val channel=ChannelProcessor(AndroidDemodPrimitives,iqResamplers,NativeAmProcessor())
+    @Volatile private var amSettings=AmSettings()
+    private val _amStatus=MutableStateFlow(AmStatus())
+    val amStatusFlow=_amStatus.asStateFlow()
+    private var lastAmStatusNanos=0L
+    @Synchronized fun setAmSettings(settings:AmSettings,widthHz:Int?=null) {
+        val detectorChanged=amSettings.detector!=settings.detector
+        val sideChanged=amSettings.detector.sideband!=settings.detector.sideband
+        amSettings=settings
+        listeningAudio.amAgcActive=settings.agc!=AmAgc.OFF
+        if(demodMode==DemodMode.AM && widthHz!=null) ifBandwidthHz=widthHz
+        if(sideChanged) measurement.reset()
+        if(detectorChanged && demodMode==DemodMode.AM) {
+            // Pause/flush of an active AudioTrack can interrupt the next write
+            // with zero on this platform. Use the existing joined lifetime
+            // boundary for an explicit detector change; continuous tuning and
+            // the detector's internal lock/fallback crossfade do not reopen it.
+            if(playbackActive) stopPlayback()
+            session.discontinuity();configureDecoderEpoch();audioEngine.configureEpoch(session.snapshot.epoch)
+            voiceStage.configure(session.snapshot.epoch);pcmPacketizer.reset()
+            while(audioWriteChannel.tryReceive().isSuccess) { }
+            audioEngine.clearPendingAudio()
+            _amStatus.value=AmStatus(if(settings.detector==AmDetector.ENVELOPE) 0 else 1)
+            refreshPlayback()
+        }
+    }
     @Volatile private var demodMode = DemodMode.NFM
 
     // ─── IF Filter / Protocol Bandwidth ──────────────────────────────────────
@@ -357,14 +382,7 @@ class DspEngine(private val device: IqSource,
             AudioRoutingPolicy.canMonitor(demodMode,dataContent) && !externalCaptureMuted && !recordingPlaybackMuted
         if(wanted==playbackActive) return
         if(!wanted) {
-            playbackActive=false
-            audioEngine.interruptWrites()
-            runBlocking { audioWriterJob?.cancelAndJoin() }
-            audioWriterJob=null
-            clearingPlayback=true
-            try { while(audioWriteChannel.tryReceive().isSuccess) { } } finally { clearingPlayback=false }
-            pcmPacketizer.reset()
-            audioEngine.stop()
+            stopPlayback()
         } else {
             pcmPacketizer.reset();packetFramePosition=audioFramePosition
             audioEngine.start();audioEngine.configureEpoch(session.snapshot.epoch)
@@ -372,6 +390,16 @@ class DspEngine(private val device: IqSource,
             playbackActive=true
             startAudioWriter()
         }
+    }
+    private fun stopPlayback() {
+        playbackActive=false
+        audioEngine.interruptWrites()
+        runBlocking { audioWriterJob?.cancelAndJoin() }
+        audioWriterJob=null
+        clearingPlayback=true
+        try { while(audioWriteChannel.tryReceive().isSuccess) { } } finally { clearingPlayback=false }
+        pcmPacketizer.reset()
+        audioEngine.stop()
     }
     @Volatile private var receptionAvailable = true
     @Synchronized fun setReceptionAvailable(available: Boolean) {
@@ -1226,7 +1254,9 @@ class DspEngine(private val device: IqSource,
         externalDecoderDroppedPackets=externalDecoderStream.packetsDropped,
         externalDecoderStalePackets=externalDecoderStream.stalePackets,
         externalDecoderPendingRelease=externalDecoderStream.hasPendingRelease,
-        dualAprsDroppedPairs=dualAprsDroppedPairs.get())
+        dualAprsDroppedPairs=dualAprsDroppedPairs.get(),
+        amState=if(demodMode==DemodMode.AM) "${amSettings.detector.label} ${_amStatus.value.label}" else "",
+        amGainDb=_amStatus.value.gainDb,amLimitingPercent=_amStatus.value.limitingPercent)
     private fun recoverDiscontinuity() {
         session.discontinuity()
         configureDecoderEpoch()
@@ -1309,7 +1339,8 @@ class DspEngine(private val device: IqSource,
         val hardwareHz=device.getCenterFrequency()
         val measured=measurement.process(floatIq,getDialFrequencyHz(),hardwareHz,demodMode,
             ChannelPassband.widthHz(demodMode,ifBandwidthHz,device.capabilities.maxChannelBandwidth(rate)),
-            rate,if(isCw()) cwCenterOffsetHz else 0L,System.nanoTime())
+            rate,if(isCw()) cwCenterOffsetHz else 0L,System.nanoTime(),
+            if(demodMode==DemodMode.AM) amSettings.detector.sideband else ChannelPassband.sideband(demodMode))
         val sqlReading=measured.channel
         _squelchReading.value=sqlReading
         val squelchSignalDb=if(sqlReading.valid) sqlReading.levelDb else -200f
@@ -1337,7 +1368,8 @@ class DspEngine(private val device: IqSource,
         // The FFT spectrum gets its own block-mean removal inside FftEngine so
         // the two paths are decoupled (FFT still reads the raw uint8 buffer).
         // Conditionally applied — user can disable via Settings if it interferes.
-        if (dcBlockEnabled && !(isCw() && cwCenterOffsetHz==0L)) {
+        if (dcBlockEnabled && !(isCw() && cwCenterOffsetHz==0L) &&
+            AmCarrierProtection.allowsDc(demodMode,getDialFrequencyHz()-hardwareHz,rate)) {
             NativeDsp.removeDc(floatIq, dcState, DC_ALPHA)
         }
 
@@ -1463,7 +1495,11 @@ class DspEngine(private val device: IqSource,
         if(channelWasIdle) { channel.reset();channelWasIdle=false }
         val channelOutput=channel.process(floatIq,ChannelConfiguration(demodMode,deviceRate,audioSinkRate,
             ifBandwidthHz,device.capabilities.maxChannelBandwidth(deviceRate),deemphasisUs,
-            decoderOutput=needDecoder,monitorOutput=needMonitor && !isDigital))
+            decoderOutput=needDecoder,monitorOutput=needMonitor && !isDigital,am=amSettings,signalDb=signalDb))
+        val nowAm=System.nanoTime()
+        if(demodMode==DemodMode.AM && nowAm-lastAmStatusNanos>100_000_000) {
+            lastAmStatusNanos=nowAm;_amStatus.value=channel.amStatus
+        }
         val demodRate=channelOutput.ifRate
         val audio=channelOutput.demodulated
         val afterProcessing=session.snapshot

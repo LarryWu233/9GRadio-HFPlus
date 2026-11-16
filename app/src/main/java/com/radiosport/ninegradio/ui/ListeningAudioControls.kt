@@ -16,6 +16,7 @@ class ListeningAudioControls(context: Context, initial: Settings, private val ch
     private var config=initial
     private var syncing=false
     private var notchAllowed=true
+    private var amPrimaryAgc=false
     val leveling=MaterialSwitch(context).apply { id=R.id.switchAudioLeveling; text="响度补偿（AGC）" }
     val notch=MaterialSwitch(context).apply { id=R.id.switchAudioNotch; text="自动陷波（抑制啸叫）" }
     private val limitLabel=TextView(context)
@@ -42,16 +43,18 @@ class ListeningAudioControls(context: Context, initial: Settings, private val ch
         notch.text=if(notchAllowed) "自动陷波（抑制啸叫）" else "自动陷波（当前模式旁路）"
         render(config)
     }
+    fun setAmPrimaryAgc(active:Boolean) { amPrimaryAgc=active;render(config) }
     fun render(value: Settings) {
         syncing=true; config=value
-        leveling.isChecked=value.leveling && notchAllowed; notch.isChecked=value.notch && notchAllowed
+        leveling.text=if(amPrimaryAgc) "响度补偿（AM AGC 运行中）" else "响度补偿（AGC）"
+        leveling.isChecked=value.leveling && notchAllowed && !amPrimaryAgc; notch.isChecked=value.notch && notchAllowed
         limit.value=(value.limitDb/3).toInt().coerceIn(1,6)*3f
         speed.value=(value.notchSpeed*1000).toInt().coerceIn(1,10).toFloat()
         val native=NativeDsp.isNativeAvailable()
-        leveling.isEnabled=native && notchAllowed; notch.isEnabled=native && notchAllowed
+        leveling.isEnabled=native && notchAllowed && !amPrimaryAgc; notch.isEnabled=native && notchAllowed
         leveling.tooltipText=if(native) null else "原生音频模块未加载"
         notch.tooltipText=if(native) null else "原生音频模块未加载"
-        limit.isEnabled=native && value.leveling && notchAllowed; speed.isEnabled=native && value.notch && notchAllowed
+        limit.isEnabled=native && value.leveling && notchAllowed && !amPrimaryAgc; speed.isEnabled=native && value.notch && notchAllowed
         limitLabel.text="补偿上限　±${limit.value.toInt()} dB"
         speedLabel.text="陷波跟踪　${speed.value.toInt()}"
         syncing=false

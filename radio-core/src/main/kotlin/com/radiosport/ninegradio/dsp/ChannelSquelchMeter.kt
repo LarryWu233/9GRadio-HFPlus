@@ -14,7 +14,8 @@ object ChannelPassband {
 
 class ChannelSquelchMeter {
     data class Configuration(val frequencyHz: Long, val hardwareHz: Long, val mode: DemodMode,
-        val bandwidthHz: Int, val sampleRate: Int, val decimation: Int, val fftSize: Int)
+        val bandwidthHz: Int, val sampleRate: Int, val decimation: Int, val fftSize: Int,
+        val sidebandOverride:Int?=null)
     data class Reading(val sequence: Long = 0, val timestampNanos: Long = 0,
         val configuration: Configuration? = null, val peakDb: Float = -200f,
         val levelDb: Float = -200f, val complete: Boolean = false, val valid: Boolean = false)
@@ -41,7 +42,7 @@ class ChannelSquelchMeter {
         val span = config.sampleRate.toDouble() / config.decimation.coerceAtLeast(1)
         val binHz = span / spectrum.size.coerceAtLeast(1)
         val dial = (config.frequencyHz-config.hardwareHz).toDouble()
-        val side = ChannelPassband.sideband(config.mode)
+        val side = config.sidebandOverride ?: ChannelPassband.sideband(config.mode)
         val lo = dial + if(side == 1) 0.0 else if(side == -1) -config.bandwidthHz.toDouble() else -config.bandwidthHz/2.0
         val hi = dial + if(side == -1) 0.0 else if(side == 1) config.bandwidthHz.toDouble() else config.bandwidthHz/2.0
         val complete = lo >= -span/2 && hi <= span/2

@@ -215,6 +215,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         serviceFlowJob?.cancel()
         serviceFlowJob = viewModelScope.launch {
+        launch { svc.amStatusFlow.collect { _amStatus.value=it } }
         launch { svc.audioContent.state.collect { state ->
             _dataContentActive.value=state.running && state.config?.kind!=com.radiosport.ninegradio.content.AudioContentKind.CW
         } }
@@ -329,6 +330,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             prefs.getString("demod", "NFM")) ?: "NFM") }.getOrDefault(DemodMode.NFM)
     )
     val demodMode: StateFlow<DemodMode> = _demodMode
+    private val _amSettings=MutableStateFlow(com.radiosport.ninegradio.dsp.AmPreferences.read(application))
+    val amSettings=_amSettings.asStateFlow()
+    private val _amStatus=MutableStateFlow(com.radiosport.ninegradio.dsp.AmStatus())
+    val amStatus=_amStatus.asStateFlow()
+    fun setAmSettings(settings:com.radiosport.ninegradio.dsp.AmSettings) {
+        val before=_amSettings.value
+        var width:Int?=null
+        if(_demodMode.value==DemodMode.AM && (before.detector.sideband==0)!=(settings.detector.sideband==0)) {
+            val current=_ifBandwidthHz.value.takeIf { it>0 } ?: if(before.detector.sideband==0) 10000 else 5000
+            width=if(settings.detector.sideband==0) current*2 else (current/2).coerceAtLeast(100)
+            _ifBandwidthHz.value=width
+            prefs.edit().putInt("ifBandwidth",width).putInt(modeKey(DemodMode.AM,"ifBandwidth"),width).apply()
+        }
+        _amSettings.value=settings
+        com.radiosport.ninegradio.dsp.AmPreferences.write(getApplication(),settings)
+        sdrService?.setAmSettings(settings,width)
+        scheduleSave()
+    }
     private val _monitorRequested=MutableStateFlow(prefs.getBoolean("monitor_${_demodMode.value.name}",true))
     private val _dataContentActive=MutableStateFlow(false)
     val monitorAllowed=combine(_demodMode,_dataContentActive) { mode,data ->

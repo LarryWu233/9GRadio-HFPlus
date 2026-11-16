@@ -5,6 +5,7 @@ class ListeningAudioProcessor : ListeningPostProcessor {
     data class Settings(val leveling: Boolean=false, val limitDb: Float=12f,
                         val notch: Boolean=false, val notchSpeed: Float=0.005f)
     @Volatile var settings=Settings()
+    @Volatile var amAgcActive=true
     private var handle=0L
     private var closed=false
     @Synchronized override fun process(stereo: FloatArray, rate: Int, mode: DemodMode) {
@@ -16,7 +17,7 @@ class ListeningAudioProcessor : ListeningPostProcessor {
         }
         // Preserve intentional CW tones. Data decoder audio never passes here.
         val notchAllowed=mode!=DemodMode.CW && mode!=DemodMode.CWR && mode!=DemodMode.RAW
-        nativeProcess(handle,stereo,rate,mode.ordinal,config.leveling,config.notch && notchAllowed,
+        nativeProcess(handle,stereo,rate,mode.ordinal,config.leveling && !(mode==DemodMode.AM && amAgcActive),config.notch && notchAllowed,
             config.limitDb.coerceIn(0f,18f),config.notchSpeed.coerceIn(0.0001f,0.02f))
     }
     @Synchronized override fun reset() {

@@ -14,8 +14,8 @@ class SignalAnalyzer {
     fun reset() { key=null;fft.resetSpectrumAveraging();meter.reset() }
 
     fun process(iq:FloatArray,frequencyHz:Long,hardwareHz:Long,mode:DemodMode,bandwidthHz:Int,
-                rate:Int,narrowCenterOffsetHz:Long,nowNanos:Long):Measurement {
-        val config=ChannelSquelchMeter.Configuration(frequencyHz,hardwareHz,mode,bandwidthHz,rate,1,2048)
+                rate:Int,narrowCenterOffsetHz:Long,nowNanos:Long,sideband:Int=ChannelPassband.sideband(mode)):Measurement {
+        val config=ChannelSquelchMeter.Configuration(frequencyHz,hardwareHz,mode,bandwidthHz,rate,1,2048,sideband)
         if(config!=key) { reset();key=config }
         fft.analysisIntervalSamples=(rate/60).coerceAtLeast(1)
         val spectrum=fft.processFloat(iq)

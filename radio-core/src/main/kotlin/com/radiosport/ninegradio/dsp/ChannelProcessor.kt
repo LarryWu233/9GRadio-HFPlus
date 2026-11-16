@@ -3,14 +3,16 @@ package com.radiosport.ninegradio.dsp
 /** Immutable channel request. Device capability calculation stays in the source adapter. */
 data class ChannelConfiguration(val mode:DemodMode,val sourceRate:Int,val sinkRate:Int,
     val bandwidthHz:Int,val maximumBandwidthHz:Int,val deemphasisUs:Int=75,
-    val decoderOutput:Boolean=true,val monitorOutput:Boolean=true)
+    val decoderOutput:Boolean=true,val monitorOutput:Boolean=true,
+    val am:AmSettings=AmSettings(),val signalDb:Float=-200f)
 
 /** Serial channel computation using the existing kernels. No USB, playback, recording or UI.
  * Scratch outputs are internal views valid until the next process call. Adapters must publish
  * owned blocks before asynchronous delivery, as the receiver's AudioBlockClock already does.
  */
 class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrimitives,
-                       private val resamplers:ComplexIqResamplerFactory=ReferenceIqResamplers):AutoCloseable {
+                       private val resamplers:ComplexIqResamplerFactory=ReferenceIqResamplers,
+                       private val amProcessor:AmProcessor?=null):AutoCloseable {
     data class Output(val iq:FloatArray,val ifRate:Int,val demodulated:FloatArray,
         val mono:FloatArray,val decoderPcm:FloatArray,val sinkPcm:FloatArray,
         val rdsMultiplex:FloatArray?,val planChanged:Boolean)
@@ -27,6 +29,8 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
     private val cw=CwChannelizer(primitives,resamplers)
     private var narrow:ComplexIqResampler?=null
     private var narrowRates=0 to 0
+    private var amFilterWidth=0
+    val amStatus get()=amProcessor?.status ?: AmStatus()
     private var wfm:ComplexIqResampler?=null
     private var wfmPlan=Triple(0,0,0)
     private var monoMix=FloatArray(0)
@@ -54,18 +58,19 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
     fun setMode(next:DemodMode) {
         check(!closed)
         if(next==mode) return
-        mode=next;demodulator=DemodulatorFactory.create(next,primitives);cw.reset();invalidateNarrow()
+        mode=next;demodulator=DemodulatorFactory.create(next,primitives);cw.reset();invalidateNarrow();amProcessor?.reset()
         // Preserve the previous mode-switch invalidation policy, including FM.
         if(next!=DemodMode.WFM && next!=DemodMode.WFM_STEREO) invalidateWfm()
     }
     fun reset() {
         check(!closed)
         demodulator=DemodulatorFactory.create(mode,primitives);cw.reset()
+        amProcessor?.reset()
         invalidateNarrow();invalidateWfm();decoder.reset();sink.reset()
     }
     override fun close() {
         if(closed) return
-        invalidateNarrow();invalidateWfm();cw.close();closed=true
+        invalidateNarrow();invalidateWfm();cw.close();amProcessor?.close();closed=true
     }
     fun process(input:FloatArray,config:ChannelConfiguration):Output {
         check(!closed)
@@ -81,6 +86,16 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
         val rate:Int
         val iq:FloatArray
         when {
+            mode==DemodMode.AM && amProcessor!=null -> {
+                val fullWidth=if(config.am.detector.sideband==0) width else width*2
+                rate=minOf(config.sourceRate,maxOf(48000,kotlin.math.ceil(fullWidth/.85).toInt()))
+                val next=config.sourceRate to rate
+                if(narrow==null || narrowRates!=next || amFilterWidth!=fullWidth) {
+                    val fresh=resamplers.create(config.sourceRate,rate,minOf(fullWidth/2.0,rate*.45))
+                    narrow?.close();narrow=fresh;narrowRates=next;amFilterWidth=fullWidth;changed=true
+                }
+                iq=narrow!!.process(input)
+            }
             mode==DemodMode.CW || mode==DemodMode.CWR -> {
                 rate=ChannelRatePolicy.narrow(config.sourceRate,config.sinkRate,mode,config.bandwidthHz,width)
                 iq=cw.process(input,config.sourceRate,rate,width)
@@ -109,7 +124,8 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
             else -> { rate=config.sourceRate;iq=input }
         }
         (demodulator as? WfmDemodulator)?.deemphasisUs=config.deemphasisUs
-        val audio=demodulator.demodulate(iq,rate)
+        val audio=if(mode==DemodMode.AM && amProcessor!=null) amProcessor.process(iq,rate,width,config.am,config.signalDb)
+            else demodulator.demodulate(iq,rate)
         val mono=if(mode==DemodMode.WFM_STEREO && audio.size>=2 && audio.size%2==0) {
             if(monoMix.size!=audio.size/2) monoMix=FloatArray(audio.size/2)
             for(i in monoMix.indices) monoMix[i]=(audio[i*2]+audio[i*2+1])*.5f

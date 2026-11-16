@@ -277,6 +277,7 @@ class RtlSdrService : Service() {
                 source = next
                 externalDecoder.beginStream()
                 val engine = DspEngine(next,externalDecoderStream=externalDecoder)
+                engine.setAmSettings(com.radiosport.ninegradio.dsp.AmPreferences.read(this@RtlSdrService))
                 engine.setFmDeemphasis(androidx.preference.PreferenceManager.getDefaultSharedPreferences(this@RtlSdrService)
                     .getString("pref_deemph_us","75")?.toIntOrNull() ?: 75)
                 dspEngine = engine
@@ -428,6 +429,13 @@ class RtlSdrService : Service() {
     val statsFlow: Flow<DspEngine.DspStats> = connectionState.flatMapLatest { state ->
         if (state is ConnectionState.Connected) dspEngine?.statsFlow ?: emptyFlow()
         else emptyFlow()
+    }
+    val amStatusFlow:Flow<com.radiosport.ninegradio.dsp.AmStatus> = connectionState.flatMapLatest {
+        if(it is ConnectionState.Connected) dspEngine?.amStatusFlow ?: flowOf(com.radiosport.ninegradio.dsp.AmStatus())
+        else flowOf(com.radiosport.ninegradio.dsp.AmStatus())
+    }
+    fun setAmSettings(settings:com.radiosport.ninegradio.dsp.AmSettings,width:Int?=null)=control {
+        dspEngine?.setAmSettings(settings,width)
     }
 
     /** Unified source status (covers both USB DeviceStatus and TCP SourceStatus). */

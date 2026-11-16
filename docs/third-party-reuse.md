@@ -1,5 +1,14 @@
 # 成熟实现的复用记录
 
+## 架构预览 18：可插拔 AM 检波
+
+- SAM 直接编译 Warren Pratt 的 [WDSP 2.11 amd.c / amd.h](https://github.com/TAPR/OpenHPSDR-wdsp/tree/e69de50d1d702216098019013899ad87534c64e0/wdsp%202.11/Source)，固定提交 `e69de50d1d702216098019013899ad87534c64e0`，GPL-2.0-or-later。原始文件 SHA-256 在 `app/src/main/cpp/vendor/sources.json`；许可随源码与 APK 提供。
+- `xamd` 的 PLL、DSB 和 Hilbert 单边带分离内核保持原样。仅适配独立头文件、分配与排除上游 RXA 全局接口。JNI 负责所有权、配置重置、锁定状态观察、失锁时向包络的 20 ms 过渡，以及本项目 IQ 正频率约定与上游边带编号的转换。锁定状态是适配层观察值，不是上游提供的标志。
+- 载波 AGC 复用已固定的 [SDR++ AGC 包络跟踪](https://github.com/AlexandreRouma/SDRPlusPlus/blob/f10fb98af8b80de01de94e60c17608e4281e2515/core/src/dsp/loop/agc.h)，GPL-3.0；原文件已在 `vendor/sdrpp/agc-original.h`。设置归一化目标、快/慢时间常数、最大增益和低电平增益保持策略，并平滑增益。未接入 WDSP 的 `wcpAGC`，也未另写 PLL。
+- 包络幅度、音频去直流、Butterworth 低通与 tanh 保护沿用项目既有 AM 的数学形式；低通现在由 RF BW、所选边带、实际采样率及用户 Audio BW 限制。保护限幅保留并增加触发比例，未作为本轮主要音质改造。
+- 核心通过 `AmProcessor` 串行端口接入，Android 的 `NativeAmProcessor` 管理原生资源；不接触 USB、地图、数据库或播放设备。ACARS 保持原有检波器，仅共享居中载波的 IQ 去直流保护。普通 USB/LSB 不变，SAM USB/LSB 是保留载波锁定的 AM 子模式。
+- 默认包络 / Auto Audio BW / Slow AGC / 最大 40 dB。低于 −110 dBFS 时不继续抬升增益，持续 0.5 s 后平滑回到不超过单位增益；这不是额外静噪门。AM 主 AGC 开启时跳过监听响度补偿，原有保存值不改。
+
 ## SDR++ 显示重采样
 
 - 项目：[AlexandreRouma/SDRPlusPlus](https://github.com/AlexandreRouma/SDRPlusPlus)
