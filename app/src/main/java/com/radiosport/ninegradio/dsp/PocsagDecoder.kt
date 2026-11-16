@@ -78,6 +78,11 @@ class PocsagDecoder(private val audioRate: Int = 22_050) {
      * Feed audio from narrow-FM demodulator (mono, normalised −1..1).
      * Must be called from a single thread / coroutine — not thread-safe.
      */
+    fun resetSignalState() {
+        detectedBaud=1200; sampleCountSinceBit=0.0; prevSample=0f; prevBit=false
+        bitBuffer.clear(); codewordBuf.fill(0); codewordPos=0; synced=false; batchPos=0
+        currentRic=0; currentFunc=0; messageBits.clear(); zcWindow.fill(0f); zcPos=0; zcCount=0
+    }
     fun feed(samples: FloatArray) {
         // Auto-detect baud rate by measuring average zero-crossing interval
         autoBaud(samples)

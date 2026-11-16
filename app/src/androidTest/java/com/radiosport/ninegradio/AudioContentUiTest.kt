@@ -26,9 +26,16 @@ class AudioContentUiTest {
     private fun <T> field(a: MainActivity,name: String): T = MainActivity::class.java.getDeclaredField(name).apply { isAccessible=true }.get(a) as T
     private fun views(root: View): List<View> = listOf(root)+(if(root is ViewGroup) (0 until root.childCount).flatMap { views(root.getChildAt(it)) } else emptyList())
     private fun screenshot(name: String) { inst.uiAutomation.takeScreenshot()?.let { b -> File(context.cacheDir,name).outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) } } }
+    private fun foreground() {
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand(
+            "am start -W -n ${context.packageName}/${MainActivity::class.java.name}"
+        )).use { it.readBytes() }
+    }
     @Test fun tabsSourcesModeRestoreAndEibiTune() {
         ReceiverTestPreferences(context).use {
+            foreground()
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
                 Thread.sleep(3000)
                 scenario.onActivity { a ->
                     val vm=ViewModelProvider(a)[MainViewModel::class.java]
@@ -37,7 +44,7 @@ class AudioContentUiTest {
                     controller.select(16)
                     assertEquals(14_230_000L,vm.centerFreqHz.value)
                     assertEquals(DemodMode.USB,vm.demodMode.value)
-                    assertEquals(19,ControlsPagerAdapter.TAB_COUNT)
+                    assertEquals(20,ControlsPagerAdapter.TAB_COUNT)
                     val adapter=field<ControlsPagerAdapter>(a,"pagerAdapter")
                     for(i in 15..18) assertNotNull(adapter.getViewAt(i))
                     val panel=adapter.getViewAt(16)!!
@@ -116,7 +123,9 @@ class AudioContentUiTest {
     @Test fun microphoneRequiresPermissionAndStopsWhenBackgrounded() {
         val granted=androidx.core.content.ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==android.content.pm.PackageManager.PERMISSION_GRANTED
         ReceiverTestPreferences(context).use {
+            foreground()
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
                 Thread.sleep(3000)
                 inst.uiAutomation.grantRuntimePermission(context.packageName,Manifest.permission.RECORD_AUDIO)
                 lateinit var receiver: AudioContentReceiver

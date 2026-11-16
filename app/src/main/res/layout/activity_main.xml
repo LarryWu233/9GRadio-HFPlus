@@ -63,6 +63,11 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 />
 
+                <ImageButton android:id="@+id/btnMonitor"
+                    android:layout_width="48dp" android:layout_height="48dp"
+                    android:src="@drawable/ic_monitor_on" android:tint="?attr/radioAccent"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:padding="13dp" android:contentDescription="关闭监听"/>
                 <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
 
                 <ProgressBar

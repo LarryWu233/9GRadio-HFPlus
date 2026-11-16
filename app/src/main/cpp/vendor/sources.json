@@ -16,7 +16,11 @@
     "repository": "https://github.com/g0orx/wdsp",
     "commit": "49084f50c583a73644e03bcb56443fa9deb327de",
     "license": "GPL-2.0-or-later",
-    "files": ["anf.c", "anf.h", "COPYING"],
+    "files": [
+      "anf.c",
+      "anf.h",
+      "COPYING"
+    ],
     "changes": "Android standalone header and RXA interface guards; xanf unchanged"
   },
   {
@@ -32,7 +36,10 @@
     "repository": "https://github.com/TAPR/OpenHPSDR-wdsp",
     "commit": "e69de50d1d702216098019013899ad87534c64e0",
     "license": "GPL-2.0-or-later",
-    "upstream_files": ["wdsp 2.11/Source/nobII.c", "wdsp 2.11/Source/nobII.h"],
+    "upstream_files": [
+      "wdsp 2.11/Source/nobII.c",
+      "wdsp 2.11/Source/nobII.h"
+    ],
     "changes": "Standalone Android types and serialized ownership; allocation capacity based on actual sample rate; xnob kernel unchanged"
   },
   {
@@ -42,22 +49,32 @@
     "license": "GPL-3.0-only",
     "upstream_file": "core/src/dsp/noise_reduction/noise_blanker.h",
     "changes": "Standalone interleaved IQ gain API; 10ms amplitude tracking; used for FM and NFM"
-  }
-  ,{
+  },
+  {
     "name": "SDR++ CW graph and float AGC",
     "repository": "https://github.com/AlexandreRouma/SDRPlusPlus",
     "commit": "f10fb98af8b80de01de94e60c17608e4281e2515",
     "license": "GPL-3.0-only",
-    "upstream_files": ["core/src/dsp/demod/cw.h", "core/src/dsp/loop/agc.h", "core/src/dsp/channel/frequency_xlator.h"],
+    "upstream_files": [
+      "core/src/dsp/demod/cw.h",
+      "core/src/dsp/loop/agc.h",
+      "core/src/dsp/channel/frequency_xlator.h"
+    ],
     "changes": "Kotlin graph/AGC port; PCM normalization; existing FIR/resampler primitives; offset-tuning routing"
-  },{
+  },
+  {
     "name": "SDR++ CW graph and float AGC",
     "repository": "https://github.com/AlexandreRouma/SDRPlusPlus",
     "commit": "f10fb98af8b80de01de94e60c17608e4281e2515",
     "license": "GPL-3.0-only",
-    "upstream_files": ["core/src/dsp/demod/cw.h", "core/src/dsp/loop/agc.h", "core/src/dsp/channel/frequency_xlator.h"],
+    "upstream_files": [
+      "core/src/dsp/demod/cw.h",
+      "core/src/dsp/loop/agc.h",
+      "core/src/dsp/channel/frequency_xlator.h"
+    ],
     "changes": "Kotlin graph/AGC port; PCM normalization; existing FIR/resampler primitives; offset-tuning routing"
-  },{
+  },
+  {
     "name": "multimon-ng MORSE_CW",
     "repository": "https://github.com/EliasOenal/multimon-ng",
     "commit": "b5f7d71c5e9b5a76093ba55c515968dc40f92804",
@@ -84,5 +101,54 @@
     "commit": "2af2390954aa248725042ba6b1332bbcca68c357",
     "license": "0BSD",
     "changes": "Unmodified core and inputs; same-package snapshot/WAV adapter"
+  },
+  {
+    "name": "WDSP 2.11 AM/SAM detector",
+    "repository": "https://github.com/TAPR/OpenHPSDR-wdsp",
+    "commit": "e69de50d1d702216098019013899ad87534c64e0",
+    "license": "GPL-2.0-or-later",
+    "upstream_files": [
+      "wdsp 2.11/Source/amd.c",
+      "wdsp 2.11/Source/amd.h"
+    ],
+    "sha256": {
+      "amd.c": "1b1bd5573b53a7544f2d11ecdcc7754cf987fd21d1d895c0c58d35beebf25993",
+      "amd.h": "1df0254f7bdd6ec916b8f379a1ef219d9447889a7c76b931b558bc54ade12bf2"
+    },
+    "changes": "Standalone allocation/types and RXA interface guard only; xamd PLL and sideband separation kernel unchanged. Wrapper owns reset, telemetry, crossfade and the receiver IQ sideband convention mapping."
+  },
+  {
+    "name": "SDR++ complex-envelope AM AGC",
+    "repository": "https://github.com/AlexandreRouma/SDRPlusPlus",
+    "commit": "f10fb98af8b80de01de94e60c17608e4281e2515",
+    "license": "GPL-3.0-only",
+    "upstream_file": "core/src/dsp/loop/agc.h",
+    "changes": "Reuse existing vendored complex amplitude tracking; normalized target, gain ceiling, RF low-level hold and smoothed gain adapter. No wcpAGC adoption."
+  },
+  {
+    "name": "Existing VOLK-derived dot product and channel FIR design",
+    "repository": "https://github.com/LarryWu233/9GRadio-HFPlus",
+    "commit": "9558a8eb7fcf5b81809542451b64738ba69efdb2",
+    "license": "GPL-3.0",
+    "sha256_canonical_lf": {
+      "app/src/main/cpp/include/volk_android.h": "99fcad080c84043e6aa1da68ef8fbb676d7cca2bbf6baf51029c266be1459c4e",
+      "radio-core/src/main/kotlin/com/radiosport/ninegradio/dsp/PolyphaseResampler.kt": "e0d40cbe904b84e8841d2c2bdde2e8eede942aa7a186e67864b3620c08241286"
+    },
+    "changes": "Both baseline files unchanged. AM uses 96 existing-design taps at channel rate, with a JNI overlap/ownership adapter calling the existing VOLK-derived dot-product kernel. This pins the consumed project copy, not an unverified upstream VOLK revision."
+  },
+  {
+    "name": "AIS-catcher",
+    "repository": "https://github.com/jvde-github/AIS-catcher",
+    "commit": "d5b1e0a50c68f81e8ef59a057899530bf365fc0a",
+    "license": "GPL-3.0-or-later",
+    "changes": "Unmodified headless core, CU8/CF32 stdin and JSON IPC; external drivers, web/API and database disabled. File manifest: ais-catcher/SHA256SUMS."
+  },
+  {
+    "name": "ggmorse microphone and WAV CW decoder",
+    "repository": "https://github.com/ggerganov/ggmorse",
+    "commit": "7b4822a8cfdbb1addfe497f3ae8186f142a4ee79",
+    "license": "MIT",
+    "archive_sha256": "250b6a5ca4e7ca678554fdd68a601bdf08fab11c9a017d738b893217763bbf9c",
+    "changes": "Unmodified core; Android PCM/process adapter outside vendor. File manifest: ggmorse/SHA256SUMS."
   }
 ]

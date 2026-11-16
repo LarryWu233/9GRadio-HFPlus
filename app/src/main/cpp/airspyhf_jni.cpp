@@ -72,6 +72,10 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(nativeStop)(JNIEnv*, jobject, jlong
     std::lock_guard<std::mutex> lock(controls);
     airspyhf_stop(receiver(h)->device);
 }
+extern "C" JNIEXPORT jboolean JNICALL JNI_METHOD(nativeStreaming)(JNIEnv*, jobject, jlong h) {
+    std::lock_guard<std::mutex> lock(controls);
+    return airspyhf_is_streaming(receiver(h)->device) != 0;
+}
 extern "C" JNIEXPORT jintArray JNICALL JNI_METHOD(nativeRates)(JNIEnv* env, jobject, jlong h) {
     std::lock_guard<std::mutex> lock(controls);
     uint32_t count = 0;

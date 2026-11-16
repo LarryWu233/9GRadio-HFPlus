@@ -5,6 +5,31 @@ import org.junit.Test
 import kotlin.math.*
 
 class FftInputTest {
+    @Test fun fullSpanRetainsTheSameWindowAcrossWrapsAndOversizedBlocks() {
+        val bytes=ByteArray(32000).also { kotlin.random.Random(7).nextBytes(it) }
+        val floats=FloatArray(bytes.size) { ((bytes[it].toInt() and 255)-127.5f)/128f }
+        val random=kotlin.random.Random(11)
+        val precise=FloatArray(bytes.size) { (random.nextFloat()-.5f)*.25f }
+        for(useBytes in listOf(false,true)) {
+            val input=if(useBytes) floats else precise
+            val actual=FftEngine(256).apply { smoothingAlpha=0f }
+            var position=0
+            for(count in listOf(1,17,255,256,257,4097,3,512,5193,0,121)) {
+                val start=position;position+=count
+                val bins=if(useBytes) actual.processUint8(bytes.copyOfRange(start*2,position*2))
+                    else actual.processFloat(input.copyOfRange(start*2,position*2))
+                if(position>=256) {
+                    // Independent, chronological last-window input; no ring wrap
+                    // or overwritten prefix is involved in the expected transform.
+                    val reference=FftEngine(256).apply { smoothingAlpha=0f }
+                    val expected=reference.processFloat(input.copyOfRange((position-256)*2,position*2))
+                    assertArrayEquals("format=$useBytes samples=$position",expected,bins,0.000001f)
+                    reference.close()
+                }
+            }
+            actual.close()
+        }
+    }
     private fun tone(samples: Int) = FloatArray(samples * 2) { index ->
         val phase = 2 * PI * 8 * (index / 2) / (256 * 64)
         (0.125 * if (index % 2 == 0) cos(phase) else sin(phase)).toFloat()

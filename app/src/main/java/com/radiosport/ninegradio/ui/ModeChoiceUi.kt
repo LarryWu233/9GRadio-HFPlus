@@ -26,13 +26,13 @@ internal object ModeChoiceUi {
         strokeWidth=(density*0.5f).toInt().coerceAtLeast(1)
     }
 
-    fun cell(context:Context,index:Int):GridLayout.LayoutParams {
+    fun cell(context:Context,index:Int,columns:Int=3):GridLayout.LayoutParams {
         val density=context.resources.displayMetrics.density
         val halfGap=context.resources.getDimensionPixelSize(R.dimen.radio_space_xs)
-        return GridLayout.LayoutParams(GridLayout.spec(index/3),GridLayout.spec(index%3,1f)).apply {
+        return GridLayout.LayoutParams(GridLayout.spec(index/columns),GridLayout.spec(index%columns,1f)).apply {
             width=0;height=(48*density).toInt()
-            marginStart=if(index%3==0) 0 else halfGap
-            marginEnd=if(index%3==2) 0 else halfGap
+            marginStart=if(index%columns==0) 0 else halfGap
+            marginEnd=if(index%columns==columns-1) 0 else halfGap
             bottomMargin=halfGap*2
         }
     }

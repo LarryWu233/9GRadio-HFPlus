@@ -1,8 +1,10 @@
 set(APT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/aptdec/src)
 add_executable(audio_content_android audio_content_worker.c cw_dc_blocker.cpp vendor/multimon-ng/demod_morse.c
+    cw_audio_worker.cpp vendor/ggmorse/src/ggmorse.cpp vendor/ggmorse/src/resampler.cpp
     ${APT_ROOT}/color.c ${APT_ROOT}/dsp.c ${APT_ROOT}/filter.c ${APT_ROOT}/image.c
     ${APT_ROOT}/algebra.c ${APT_ROOT}/libs/median.c ${APT_ROOT}/util.c ${APT_ROOT}/calibration.c)
-target_include_directories(audio_content_android PRIVATE ${APT_ROOT})
+target_include_directories(audio_content_android PRIVATE ${APT_ROOT} vendor/ggmorse/include)
+target_compile_features(audio_content_android PRIVATE cxx_std_17)
 target_compile_options(audio_content_android PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=c11> -O2)
 target_link_libraries(audio_content_android m)
 target_link_options(audio_content_android PRIVATE -Wl,-z,max-page-size=16384)

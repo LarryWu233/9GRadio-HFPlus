@@ -12,6 +12,9 @@ import com.google.gson.reflect.TypeToken
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.scanner.FrequencyScanner
 import com.radiosport.ninegradio.usb.RtlSdrService
+import com.radiosport.ninegradio.content.*
+import java.time.ZonedDateTime
+import java.time.ZoneOffset
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
@@ -22,7 +25,9 @@ class EtmController(private val activity: AppCompatActivity,
     private val frequency: () -> Long,
     private val tune: (DemodMode, Long) -> Unit, private val preview: (Long) -> Unit,
     private val autoMode: () -> Boolean = { false }, private val restoreAuto: (Boolean) -> Unit = {},
-    private val canStart: () -> Boolean = { true }) : DefaultLifecycleObserver {
+    private val canStart: () -> Boolean = { true },
+    private val position: () -> EibiStationMatcher.Position? = { null },
+    private val showSchedule:(Long,ZonedDateTime)->Unit = { _,_ -> }) : DefaultLifecycleObserver {
     data class Station(val hz: Long, val power: Float, val mode: String)
     private val prefs = activity.getSharedPreferences("etm_memories", Context.MODE_PRIVATE)
     private var task: Job? = null
@@ -36,6 +41,34 @@ class EtmController(private val activity: AppCompatActivity,
     private var band = "SW"
     private val stations = sortedMapOf<Long, Station>()
     private var threshold = prefs.getInt("threshold", 14).coerceIn(10, 24)
+    private var matcher:EibiStationMatcher?=null
+    private var season=""
+    private var nameJob:Job?=null
+    private val names=mutableMapOf<Long,List<EibiEntry>>()
+    private var nameContext:Pair<Long,EibiStationMatcher.Position?>?=null
+    private var shownTime=ZonedDateTime.now(ZoneOffset.UTC)
+    private var visible=false
+    fun setVisible(value:Boolean) { visible=value;if(value) render() }
+    override fun onStart(owner:LifecycleOwner) {
+        nameJob=activity.lifecycleScope.launch {
+            launch { EibiRepository.updates.collect {
+                runCatching { withContext(Dispatchers.IO) {
+                    val repository=EibiRepository(activity);val data=repository.load()
+                    data to repository.stationMatcher(data)
+                } }.onSuccess { (data,index) -> season=data.season;matcher=index;names.clear();if(visible) render() }
+            } }
+            while(isActive) { delay(30_000);if(visible) render() }
+        }
+    }
+    /** Measure against the real remaining panel viewport, including its insets. */
+    fun resizeTable(available:Int,measuredPage:Int,expanded:Boolean):Boolean {
+        val table=list ?: return false
+        val density=activity.resources.displayMetrics.density
+        val target=if(expanded && available>0) (table.layoutParams.height+available-measuredPage)
+            .coerceAtLeast((120*density).toInt()) else (220*density).toInt()
+        if(table.layoutParams.height==target) return false
+        table.layoutParams=table.layoutParams.apply { height=target };return true
+    }
     init {
         activity.lifecycle.addObserver(this)
         if (!prefs.getBoolean("detector_v2", false)) prefs.edit().remove("SW").remove("FM").putBoolean("detector_v2", true).apply()
@@ -77,8 +110,8 @@ class EtmController(private val activity: AppCompatActivity,
         })
         content.addView(status)
         list=RadioDataTable(activity).apply {
-            setColumns(listOf(RadioDataTable.Column("序号",44),RadioDataTable.Column("频率 MHz",110),
-                RadioDataTable.Column("模式",64),RadioDataTable.Column("电平 dBFS",94)))
+            actionColumns=setOf(2)
+            onCellClick={ row,_ -> rows.getOrNull(row)?.let { showSchedule(it.hz,shownTime) } }
             onRowClick=selected@ { position ->
                 val station=rows.getOrNull(position) ?: return@selected
                 activity.lifecycleScope.launch {
@@ -110,9 +143,20 @@ class EtmController(private val activity: AppCompatActivity,
     private fun render() {
         if (list == null) return
         rows = stations.values.toList()
+        val now=ZonedDateTime.now(ZoneOffset.UTC);val here=position()
+        val context=now.toEpochSecond()/60 to here
+        if(nameContext!=context) { nameContext=context;names.clear() }
+        shownTime=now
+        val columns=listOf(RadioDataTable.Column("序号",44),RadioDataTable.Column("频率 MHz",110))+
+            (if(band=="SW") listOf(RadioDataTable.Column("电台名称（参考）",174)) else emptyList())+
+            listOf(RadioDataTable.Column("模式",64),RadioDataTable.Column("电平 dBFS",94))
+        if(list?.tag!=band) { list?.setColumns(columns);list?.actionColumns=if(band=="SW") setOf(2) else emptySet();list?.tag=band }
         if(task?.isCompleted!=false) status?.text="$band · 暂存 ${rows.size} 个电台"
         list?.submitRows(rows.mapIndexed { index,station -> RadioDataTable.Row(listOf((index+1).toString(),
-            "%.3f".format(station.hz/1e6),station.mode,"%.1f".format(station.power))) })
+            "%.3f".format(station.hz/1e6))+(if(band=="SW") {
+                val candidates=names.getOrPut(station.hz) { matcher?.candidates(station.hz,now,season,here).orEmpty() }
+                listOf(candidates.firstOrNull()?.station?.let { it+if(candidates.size>1) "…" else "" } ?: "—")
+            } else emptyList())+listOf(station.mode,"%.1f".format(station.power))) })
     }
 
     private fun start() {
@@ -134,6 +178,7 @@ class EtmController(private val activity: AppCompatActivity,
         if (ranges.isEmpty() || !source.capabilities.supportsMode(desiredMode)) { status?.text = "当前接收源不支持此范围。"; return }
         val previousHz = frequency()
         val previousMode = mode()
+        val previousListening=svc.dspEngine?.isListeningRequested() ?: true
         val previousAuto = autoMode()
         selector?.isEnabled = false
         thresholdControl?.isEnabled = false
@@ -147,7 +192,8 @@ class EtmController(private val activity: AppCompatActivity,
                 tune(desiredMode, ranges.first().first)
                 svc.awaitControls()
                 svc.dspEngine?.setListeningEnabled(false)
-                sc = FrequencyScanner(source, onRetune = { hz ->
+                val activeSource=svc.source ?: error("接收机连接已改变")
+                sc = FrequencyScanner(activeSource,tuner=svc.scannerTuner(activeSource), onRetune = { hz ->
                     svc.dspEngine?.fftEngine?.resetSpectrumAveraging()
                     activity.runOnUiThread { if (task?.isActive == true) preview(hz) }
                 })
@@ -182,8 +228,9 @@ class EtmController(private val activity: AppCompatActivity,
                     hitJob?.cancelAndJoin(); statusJob?.cancelAndJoin(); renderJob?.cancelAndJoin()
                     save(); render()
                     if (svc.source === source) {
-                        svc.dspEngine?.setListeningEnabled(true)
                         tune(previousMode, previousHz)
+                        svc.awaitControls()
+                        svc.dspEngine?.setListeningEnabled(previousListening)
                         restoreAuto(previousAuto)
                         preview(previousHz)
                     }
@@ -197,5 +244,5 @@ class EtmController(private val activity: AppCompatActivity,
     }
     val isRunning get() = task?.isCompleted == false
     fun stop() { task?.cancel() }
-    override fun onStop(owner: LifecycleOwner) { stop() }
+    override fun onStop(owner: LifecycleOwner) { stop();nameJob?.cancel();nameJob=null }
 }

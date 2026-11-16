@@ -21,6 +21,7 @@ import com.radiosport.ninegradio.R
 import com.radiosport.ninegradio.content.*
 import com.radiosport.ninegradio.dsp.DemodMode
 import com.radiosport.ninegradio.usb.RtlSdrService
+import com.radiosport.ninegradio.modules.RadioModules
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import java.time.*
@@ -43,6 +44,11 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     private var observed: RtlSdrService?=null
     private var eibi: EibiPanel?=null
     private var restoring=false
+    private var pendingGallerySave:(()->Unit)?=null
+    private val galleryPermission=activity.registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        val action=pendingGallerySave;pendingGallerySave=null
+        if(granted) action?.invoke() else Toast.makeText(activity,"未获存储权限，未保存到相册",Toast.LENGTH_SHORT).show()
+    }
     private fun dp(n: Int)=(n*activity.resources.displayMetrics.density).toInt()
     private fun label(value: String, size: Float=12f)=TextView(activity).apply {
         text=value; textSize=size; setTextColor(UiThemes.color(context,R.attr.radioText)); gravity=Gravity.CENTER_VERTICAL
@@ -77,15 +83,16 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val modeRoot=pager.getViewAt(ControlsPagerAdapter.TAB_MODE)
         val host=modeRoot?.findViewById<GridLayout>(R.id.contentModeButtons)
         host?.removeAllViews()
-        listOf(16 to "SSTV",17 to "SAT",18 to "EiBi").forEachIndexed { cell,(module,label) ->
+        RadioModules.contentChoices.forEachIndexed { cell,descriptor ->
+            val module=ModulePanels.id(requireNotNull(descriptor.panel))
             host?.addView(ModeChoiceUi.button(activity).apply {
-                text=label;tag=module;layoutParams=ModeChoiceUi.cell(activity,cell)
+                text=descriptor.label;tag=module;layoutParams=ModeChoiceUi.cell(activity,cell)
                 setOnClickListener { select(module) }
             })
         }
         bindService(); refreshVisibility(); modeChanged(viewModel.demodMode.value)
     }
-    private fun id(kind: AudioContentKind)=15+kind.ordinal
+    private fun id(kind: AudioContentKind)=ModulePanels.content(kind)
     fun bindService() {
         val service=getService() ?: return
         if(observed === service) return
@@ -107,7 +114,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         if(restoring) return
         selected=if(mode in listOf(DemodMode.CW,DemodMode.CWR)) 15 else null
         prefs.edit().putInt("selected",selected ?: 0).apply()
-        if(getService()?.audioContent?.state?.value?.config?.input == ContentInput.SOFTWARE) getService()?.audioContent?.stop()
+        if(getService()?.audioContent?.state?.value?.config?.input == ContentInput.SOFTWARE) getService()?.stopAudioContent()
         refreshVisibility()
         if(selected==15) showModule(15)
     }
@@ -118,18 +125,17 @@ class ContentModuleController(private val activity: MainActivity, private val pa
     fun select(module: Int) {
         selected=module
         prefs.edit().putInt("selected",module).apply()
-        if(module in 16..17) {
-            val kind=if(module==16) AudioContentKind.SSTV else AudioContentKind.SAT
+        ModulePanels.kind(module)?.takeIf { RadioModules.content(ContentConfig(it)).preset!=null }?.let { kind ->
             val panel=panels[kind] ?: return
             if(!panel.microphone.isChecked) prepareRf(kind)
         }
         refreshVisibility(); showModule(module); resize()
     }
     private fun prepareRf(kind: AudioContentKind, explicitFrequency: Long?=null) {
-        if(kind==AudioContentKind.CW) return
+        val preset=RadioModules.content(ContentConfig(kind)).preset ?: return
         val key="${kind}_frequency"
         val hz=explicitFrequency ?: if(viewModel.modeStationMemory.value)
-            prefs.getLong(key,if(kind==AudioContentKind.SAT) 145_800_000 else 14_230_000)
+            prefs.getLong(key,preset.frequencyHz)
             else viewModel.centerFreqHz.value
         restoring=true
         try {
@@ -138,8 +144,8 @@ class ContentModuleController(private val activity: MainActivity, private val pa
                 if(explicitFrequency!=null && viewModel.modeStationMemory.value)
                     prefs.edit().putLong(key,hz).apply()
             }
-            viewModel.setDemodMode(if(kind==AudioContentKind.SAT) DemodMode.NFM else DemodMode.USB,automatic=true)
-            viewModel.setIfBandwidth(if(kind==AudioContentKind.SAT) 50_000 else 3_000)
+            viewModel.setDemodMode(preset.mode,automatic=true)
+            viewModel.setIfBandwidth(preset.bandwidthHz)
         } finally { restoring=false }
     }
     fun frequencyChanged(hz: Long) {
@@ -165,7 +171,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val kind=when(selected) { 16 -> AudioContentKind.SSTV; 17 -> AudioContentKind.SAT; else -> null }
         if(enabled && kind!=null && panels[kind]?.microphone?.isChecked==false) prepareRf(kind)
     }
-    fun onBackground() { getService()?.audioContent?.stopMicrophone() }
+    fun onBackground() { getService()?.stopMicrophoneContent() }
     fun microphoneResult(granted: Boolean) {
         val kind=permissionKind ?: return; permissionKind=null
         val panel=panels[kind] ?: return
@@ -179,6 +185,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         if(uri!=null) panels[kind]?.start(uri)
     }
     fun csvResult(uri: Uri?) { if(uri!=null) eibi?.import(uri) }
+    fun openEibi(hz:Long,time:ZonedDateTime) { select(18);eibi?.open(hz,time) }
     private inner class AudioPanel(val kind: AudioContentKind) {
         val root=column()
         val microphone=MaterialSwitch(activity).apply { contentDescription="软件内 / 麦克风"; gravity=Gravity.CENTER }
@@ -186,14 +193,14 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         val status=label("未启动")
         val details=label("",11f)
         val action=button("开始") { val state=getService()?.audioContent?.state?.value
-            if(state?.running==true && state.config?.kind==kind) getService()?.audioContent?.stop() else start() }
+            if(state?.running==true && state.config?.kind==kind) getService()?.stopAudioContent() else start() }
         val option=button("Auto") { chooseOptions() }
         val transcript=label("",14f).apply { typeface=Typeface.MONOSPACE; setTextIsSelectable(true); gravity=Gravity.TOP; setPadding(dp(8),dp(8),dp(8),dp(8)); setBackgroundResource(R.drawable.compact_section_card) }
         val image=ImageView(activity).apply { scaleType=ImageView.ScaleType.FIT_CENTER; setBackgroundColor(0xff000000.toInt()); contentDescription="接收图像" }
         val history=RadioDataTable(activity)
         var files=emptyList<java.io.File>()
         var mode=prefs.getString("${kind}_sstv","Auto") ?: "Auto"
-        var apt=prefs.getBoolean("sat_apt",false)
+        var apt=kind==AudioContentKind.SAT && prefs.getBoolean("sat_apt",false)
         var wpm=prefs.getInt("cw_wpm",0)
         var lastImage: android.graphics.Bitmap?=null
         init {
@@ -219,7 +226,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
             history.onRowClick={ index -> files.getOrNull(index)?.let { openFile(it) } }
             microphone.setOnCheckedChangeListener { _, checked ->
                 if(!ignore) {
-                    getService()?.audioContent?.stop()
+                    getService()?.stopAudioContent()
                     if(checked && ContextCompat.checkSelfPermission(activity,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
                         permissionKind=kind; permissionStart=false; requestMicrophone()
                     }
@@ -235,7 +242,7 @@ class ContentModuleController(private val activity: MainActivity, private val pa
             val service=getService() ?: run { status.text="服务尚未就绪"; return }
             selected=id(kind)
             val input=if(uri!=null) ContentInput.WAV else if(microphone.isChecked) ContentInput.MICROPHONE else ContentInput.SOFTWARE
-            service.audioContent.start(ContentConfig(kind,input,kind==AudioContentKind.SAT && apt,mode,wpm),uri)
+            service.startAudioContent(ContentConfig(kind,input,kind==AudioContentKind.SAT && apt,mode,wpm),uri)
         }
         fun render(state: ContentState) {
             if(state.config?.kind!=kind) { action.text="开始"; return }
@@ -247,9 +254,20 @@ class ContentModuleController(private val activity: MainActivity, private val pa
             if(!state.running) renderFiles()
         }
         private fun save() {
+            if(kind!=AudioContentKind.CW && DecodedImageGallery.needsPermission(activity)) {
+                pendingGallerySave={ save() };galleryPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);return
+            }
             activity.lifecycleScope.launch {
-                val file=withContext(Dispatchers.IO) { getService()?.audioContent?.saveCurrent() }
-                if(file!=null) { renderFiles(); Toast.makeText(activity,"已保存",Toast.LENGTH_SHORT).show() }
+                val result=withContext(Dispatchers.IO) { runCatching { getService()?.audioContent?.saveForUser() } }
+                val saved=result.getOrNull()
+                renderFiles()
+                Toast.makeText(activity,when {
+                    result.isFailure -> "保存失败，请检查可用空间"
+                    saved==null -> "暂无可保存内容"
+                    saved.galleryError!=null -> saved.galleryError
+                    saved.galleryUri!=null -> "已保存到相册"
+                    else -> "已保存"
+                },Toast.LENGTH_SHORT).show()
             }
         }
         private fun renderFiles() {
@@ -268,9 +286,15 @@ class ContentModuleController(private val activity: MainActivity, private val pa
                 else listOf("Auto","Robot 36 Color","Robot 72 Color","PD 50","PD 90","PD 120","PD 160","PD 180","PD 240","PD 290","Martin 1","Martin 2","Scottie 1","Scottie 2","Scottie DX","Wraase SC2–180")+if(kind==AudioContentKind.SAT) listOf("APT（历史）") else emptyList()
             val checked=values.indexOf(if(kind==AudioContentKind.CW) if(wpm==0) "Auto WPM" else "$wpm WPM" else if(apt && kind==AudioContentKind.SAT) "APT（历史）" else mode)
             AlertDialog.Builder(activity).setTitle(if(kind==AudioContentKind.CW) "速度" else "图像模式").setSingleChoiceItems(values.toTypedArray(),checked) { dialog,which ->
-                getService()?.audioContent?.stop()
+                getService()?.stopAudioContent()
                 if(kind==AudioContentKind.CW) { wpm=if(which==0) 0 else values[which].substringBefore(' ').toInt(); prefs.edit().putInt("cw_wpm",wpm).apply() }
-                else { apt=values[which]=="APT（历史）"; if(!apt) mode=values[which]; prefs.edit().putString("${kind}_sstv",mode).putBoolean("sat_apt",apt).apply() }
+                else {
+                    apt=kind==AudioContentKind.SAT && values[which]=="APT（历史）"
+                    if(!apt) mode=values[which]
+                    prefs.edit().putString("${kind}_sstv",mode).apply {
+                        if(kind==AudioContentKind.SAT) putBoolean("sat_apt",apt)
+                    }.apply()
+                }
                 updateOption(); dialog.dismiss()
                 if(apt) status.text="APT 历史录音 · NOAA-15/18/19 已退役"
             }.setNegativeButton("取消",null).show()
@@ -295,6 +319,11 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         var data: EibiRepository.Data?=null
         var entries=emptyList<EibiEntry>()
         var lastHz=0L
+        var lookupHz:Long?=null
+        fun open(hz:Long,instant:ZonedDateTime) {
+            lookupHz=hz;timeOverride=instant;languageCode=null;language.text="全部语言";query.setText("")
+            frequency.text="%.1f kHz".format(hz/1000.0);frequency.isChecked=true;now.isChecked=false;filter()
+        }
         val info=label("载入节目表",11f)
         var busy=false
         val refreshAction=button("更新") { update() }
@@ -337,7 +366,9 @@ class ContentModuleController(private val activity: MainActivity, private val pa
                 override fun onTextChanged(s: CharSequence?,start: Int,before: Int,count: Int) { filter() }
                 override fun afterTextChanged(s: android.text.Editable?) {}
             })
-            frequency.setOnCheckedChangeListener { _,_ -> filter() }; now.setOnCheckedChangeListener { _,_ -> filter() }
+            frequency.setOnCheckedChangeListener { _,checked ->
+                if(!checked) { lookupHz=null;frequency.text="当前频率" };filter()
+            }; now.setOnCheckedChangeListener { _,_ -> filter() }
             table.onRowClick={ index -> entries.getOrNull(index)?.let { entry ->
                 if(viewModel.setFrequency(entry.hz)) { viewModel.finishTuning()
                     val mode=when { entry.language=="-CW" -> DemodMode.CW; entry.days=="LSB" -> DemodMode.LSB; entry.days=="USB" -> DemodMode.USB; else -> DemodMode.AM }
@@ -373,18 +404,29 @@ class ContentModuleController(private val activity: MainActivity, private val pa
         fun filter() {
             val schedule=data ?: return
             filterJob?.cancel()
-            val text=query.text.toString().trim(); val hz=viewModel.centerFreqHz.value
+            val text=query.text.toString().trim(); val hz=lookupHz ?: viewModel.centerFreqHz.value
             val selectedLanguage=languageCode
             val currentOnly=frequency.isChecked; val active=now.isChecked
             val instant=if(active) ZonedDateTime.now(ZoneOffset.UTC) else timeOverride
             time.text=(instant ?: ZonedDateTime.now(ZoneOffset.UTC)).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm 'UTC'"))
             filterJob=activity.lifecycleScope.launch {
-                val results=withContext(Dispatchers.Default) { schedule.entries.filter {
+                val pinned=lookupHz!=null
+                val location=activity.getSharedPreferences("radio_map",0).let { prefs ->
+                    if(prefs.contains("receiverLat") && prefs.contains("receiverLon")) runCatching {
+                        EibiStationMatcher.Position(prefs.getFloat("receiverLat",Float.NaN).toDouble(),prefs.getFloat("receiverLon",Float.NaN).toDouble())
+                    }.getOrNull() else null
+                }
+                val results=withContext(Dispatchers.IO) {
+                    val candidates=if(pinned && currentOnly && instant!=null)
+                        repository.stationMatcher(schedule).candidates(hz,instant,schedule.season,location) else schedule.entries
+                    val filtered=candidates.filter {
                     (!currentOnly || kotlin.math.abs(it.hz-hz)<=1500) &&
                         (selectedLanguage==null || it.language==selectedLanguage) &&
                         (instant==null || it.activeAt(instant,schedule.season)) &&
                         (text.isEmpty() || "${it.station} ${it.language} ${it.target} ${it.country}".contains(text,true))
-                }.sortedBy { it.hz } }
+                    }
+                    if(pinned) filtered else filtered.sortedBy { it.hz }
+                }
                 entries=results
                 info.text="${schedule.origin} · ${schedule.season} · ${results.size} 项"+
                     if(!EibiSchedule.inSeason(java.time.LocalDate.now(ZoneOffset.UTC),schedule.season)) " · 非当前季节" else ""

@@ -307,7 +307,15 @@ void threadSignalJoin(threadT *thread) {
         return;
     }
     int err = 0;
-    #if defined(__APPLE__) || defined(__ANDROID__)
+    #if defined(__ANDROID__)
+    // Keep the upstream wake-before-join behavior without pthread_tryjoin_np.
+    // Synchronize with the worker's condition wait so its final wait cannot
+    // begin after the shutdown notification has already been lost.
+    pthread_mutex_lock(&thread->mutex);
+    pthread_cond_broadcast(&thread->cond);
+    pthread_mutex_unlock(&thread->mutex);
+    pthread_join(thread->pthread, NULL);
+    #elif defined(__APPLE__)
     pthread_join(thread->pthread, NULL);
     #else
     int64_t timeout = Modes.joinTimeout;

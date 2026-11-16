@@ -10,14 +10,14 @@
   (see app/src/main/cpp/mbelib-neo), matching how
   https://github.com/SarahRoseLives/Pocket25 bundles its own DSD-Neo build.
   The external vocoder-plugin loader has been removed entirely, so there is
-  no cleartext exception to grant. All traffic in the app now follows the
-  Android default: HTTPS only.
+  no vocoder cleartext exception to grant. App traffic follows HTTPS by
+  default, with the explicit EiBi schedule-metadata hosts below.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
     <!-- EiBi publishes schedule metadata on HTTP; only this host is allowed. -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain>www.eibispace.de</domain>
-        <domain>eibispace.de</domain>
+        <domain includeSubdomains="false">www.eibispace.de</domain>
+        <domain includeSubdomains="false">eibispace.de</domain>
     </domain-config>
 </network-security-config>

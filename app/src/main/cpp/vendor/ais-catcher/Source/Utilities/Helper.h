@@ -1,0 +1,58 @@
+/*
+	Copyright(c) 2021-2026 jvde.github@gmail.com
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#pragma once
+
+#include <chrono>
+#include <string>
+#include <vector>
+#include <cstdint>
+
+namespace Util
+{
+	class Helper
+	{
+	public:
+		static std::string readFile(const std::string &filename);
+		static bool writeFileAtomic(const std::string &path, const std::string &content, std::string &error, bool owner_only = false);
+		// Makes the temp file a save writes to, afresh, so a link left at its name
+		// is not followed: with the target's mode; a new target as the umask leaves
+		// it, or 0600 when owner_only. False when it cannot be made.
+		static bool createTemp(const std::string &tmp, const std::string &target, bool owner_only = false);
+		static bool syncFile(const std::string &path);
+		// below the other threads, so that under load the scheduler starves it before decoding
+		static void lowerThreadPriority();
+
+		// elapsed wall time for log lines
+		static long msSince(const std::chrono::steady_clock::time_point &t0)
+		{
+			return (long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+		}
+		static int lsb(uint64_t x);
+		static std::vector<std::string> getFilesWithExtension(const std::string &directory, const std::string &extension);
+		static std::vector<std::string> getFilesInDirectory(const std::string &directory);
+		static long getMemoryConsumption();
+		static std::string getOS();
+		static std::string getHardware();
+		static std::string getProcessor();
+		static uint16_t CRC16(const uint8_t *data, size_t length);
+		static bool isUUID(const std::string &s, bool lowercase = false);
+		// a file named in a configuration: ~/ is the home directory, and a
+		// relative name is in `base`, the configuration's directory, when there is one
+		static std::string resolvePath(const std::string &path, const std::string &base);
+	};
+}

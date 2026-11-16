@@ -51,11 +51,12 @@ class ControlsPagerAdapter(private val moduleOrder: List<Int> = (0 until TAB_COU
         const val TAB_SSTV      = 16
         const val TAB_SAT       = 17
         const val TAB_EIBI      = 18
-        const val TAB_COUNT     = 19
+        const val TAB_AIS       = 19
+        const val TAB_COUNT     = 20
 
         val TAB_TITLES = arrayOf(
             "Tune", "Mode", "RF", "Display", "Rec", "Settings",
-            "APRS", "ACARS", "DMR", "YSF", "D-STAR", "Dig", "Scan", "测向仪", "ADS-B", "CW", "SSTV", "SAT", "EiBi"
+            "APRS", "ACARS", "DMR", "YSF", "D-STAR", "Dig", "Scan", "测向仪", "ADS-B", "CW", "SSTV", "SAT", "EiBi", "AIS"
         )
 
         private val LAYOUTS = intArrayOf(
@@ -74,6 +75,7 @@ class ControlsPagerAdapter(private val moduleOrder: List<Int> = (0 until TAB_COU
             R.layout.fragment_tab_scan,
             R.layout.fragment_tab_rdf,
             R.layout.fragment_tab_adsb,
+            R.layout.fragment_tab_audio_content,
             R.layout.fragment_tab_audio_content,
             R.layout.fragment_tab_audio_content,
             R.layout.fragment_tab_audio_content,

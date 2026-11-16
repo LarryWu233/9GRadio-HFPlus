@@ -59,7 +59,7 @@ class RtlSdrDeviceSource(
 
     // ── IqSource: flow proxies ─────────────────────────────────────────────────
 
-    override val iqFlow: Flow<IqBlock> = device.iqFlow.map { IqBlock.Unsigned8(it.copyOf()) }
+    override val iqFlow: Flow<IqBlock> = device.iqFlow
     override val iqSubscriberCount: Int        get() = device.iqSubscriberCount
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────

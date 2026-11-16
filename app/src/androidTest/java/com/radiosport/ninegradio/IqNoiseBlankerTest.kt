@@ -129,5 +129,27 @@ class IqNoiseBlankerTest {
             }
             assertTrue(input.maxOf { abs(it) }<expected.maxOf { abs(it) }/5)
         }
+        // Same fixture/worker binary on the archived and optimized native adapter:
+        // warm the estimator while disabled, then exercise both fade directions.
+        val transitionInput=expected.copyOf()
+        val transitionOutput=FloatArray(transitionInput.size)
+        IqNoiseBlanker().use { nb ->
+            var offset=0;var block=0
+            while(offset<transitionInput.size) {
+                val end=minOf(transitionInput.size,offset+2*137)
+                val values=transitionInput.copyOfRange(offset,end)
+                val enabled=(block/83)%2==1
+                nb.process(values,rate,DemodMode.WFM,87800000,enabled)
+                if(block<83) assertArrayEquals(values,transitionInput.copyOfRange(offset,end),0f)
+                values.copyInto(transitionOutput,offset);offset=end;block++
+            }
+        }
+        val bytes=java.nio.ByteBuffer.allocate(transitionOutput.size*4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        transitionOutput.forEach { bytes.putFloat(it) }
+        val digest=java.security.MessageDigest.getInstance("SHA-256").digest(bytes.array())
+            .joinToString("") { "%02x".format(it.toInt() and 255) }
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendStatus(0,android.os.Bundle().apply {
+            putString("stream","\nFM_NB_TRANSITION_SHA256=$digest\n")
+        })
     }
 }

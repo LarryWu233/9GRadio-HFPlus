@@ -15,5 +15,8 @@ class PcmPacketizer(sampleRate: Int, private val channels: Int = 2, packetMs: In
             if(used==size) { val packet=buffer; buffer=FloatArray(size); used=0; emit(packet) }
         }
     }
+    fun flush(emit: (FloatArray)->Unit) {
+        if(used>0) { val tail=buffer.copyOf(used); reset(); emit(tail) }
+    }
     fun reset() { used=0; buffer=FloatArray(size) }
 }

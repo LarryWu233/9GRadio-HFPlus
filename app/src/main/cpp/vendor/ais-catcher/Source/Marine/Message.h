@@ -1,0 +1,394 @@
+/*
+	Copyright(c) 2021-2026 jvde.github@gmail.com
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#pragma once
+
+namespace JSON
+{
+	class JSON;
+}
+
+#include <string>
+#include <time.h>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <vector>
+#include <iomanip>
+#include <sstream>
+#include <cstring>
+#include <iostream>
+
+#include "Convert.h"
+#include "Keys.h"
+#include "MessageHistory.h"
+
+namespace AIS
+{
+
+#define MAX_AIS_LENGTH 1064
+#define MAX_AIS_BYTES ((MAX_AIS_LENGTH + 7) / 8)
+#define MAX_AIS_NMEA_LENGTH (((MAX_AIS_LENGTH + 5) / 6) * 6)
+#define MAX_AIS_FRAME_LENGTH (MAX_AIS_LENGTH + 16 + 7)
+#define MAX_AIS_FRAME_BYTES ((MAX_AIS_FRAME_LENGTH + 7) / 8)
+
+	// nanoseconds since the epoch as the decimal seconds of rxuxtime and toa: to the microsecond
+	inline double toSeconds(int64_t ns)
+	{
+		return (double)((ns + 500) / 1000) / 1000000.0;
+	}
+
+	class GPS
+	{
+		float lat = 0, lon = 0;
+		const std::string &source;
+		bool isJSON;
+
+		const std::string formatLatLon(float, bool) const;
+
+	public:
+		GPS(float lt, float ln, const std::string &src, bool json) : lat(lt), lon(ln), source(src), isJSON(json) {}
+
+		float getLat() const { return lat; }
+		float getLon() const { return lon; }
+
+		const std::string getNMEA() const;
+		const std::string getJSON() const;
+	};
+
+	// A control line on the input: a topic naming the payload object it carries
+	class Control
+	{
+	public:
+		int topic = 0;
+		const JSON::JSON *payload = nullptr; // valid for the duration of the Send
+	};
+
+	class Message
+	{
+	protected:
+		static constexpr int MAX_NMEA_CHARS = 56;
+		static std::atomic<int> ID;
+		static int nextSeqId();
+
+		uint8_t data[MAX_AIS_FRAME_BYTES + 4]; // Includes FCS/closing-flag capture and read padding.
+		int64_t rxtime; // nanoseconds since epoch: when this instance stamped the message
+		int64_t toa;	// nanoseconds since epoch: when the first receiver heard it, carried from upstream; 0 if none
+		int length;
+		char channel;
+		long long start_idx, end_idx;
+		int station = -1; // the station that heard it, as the input stamps it; -1 for none
+		int own_mmsi = -1;
+
+		std::vector<std::string> NMEA;
+		size_t nmea_count = 0;
+
+	public:
+		struct NMEAView
+		{
+			const std::string *p;
+			size_t n;
+			const std::string *begin() const { return p; }
+			const std::string *end() const { return p + n; }
+			size_t size() const { return n; }
+			bool empty() const { return n == 0; }
+			const std::string &operator[](size_t i) const { return p[i]; }
+		};
+		NMEAView sentences() const { return {NMEA.data(), nmea_count}; }
+
+		void beginNMEA() { nmea_count = 0; }
+
+		void pushNMEA(const char *data, size_t len)
+		{
+			if (nmea_count < NMEA.size())
+			{
+				NMEA[nmea_count].assign(data, len);
+			}
+			else
+			{
+				NMEA.emplace_back();
+				NMEA.back().reserve(128);
+				NMEA.back().assign(data, len);
+			}
+			++nmea_count;
+		}
+		void pushNMEA(const std::string &s) { pushNMEA(s.data(), s.size()); }
+
+		void Stamp()
+		{
+			auto now = std::chrono::system_clock::now();
+			auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
+			rxtime = ns.count();
+		}
+
+		int getNMEAJSON(std::string &out, const TAG &tag, bool include_ss = false, const std::string &uid = "", const char *suffix = nullptr) const;
+		int getNMEATagBlock(std::string &out, const char *suffix = nullptr) const;
+		int getBinaryNMEA(std::string &out, const TAG &tag, bool crc = false) const;
+
+		std::string getRxTime() const
+		{
+			std::time_t t = (std::time_t)(rxtime / 1000000000);
+			return Util::Convert::toTimeStr(t);
+		}
+
+		std::time_t getRxTimeUnix() const
+		{
+			return (std::time_t)(rxtime / 1000000000);
+		}
+
+		int64_t getRxTimeNanos() const
+		{
+			return rxtime;
+		}
+
+		void setTOA(int64_t ns)
+		{
+			toa = ns;
+		}
+
+		int64_t getTOA() const
+		{
+			return toa;
+		}
+
+		void setRxTimeUnix(std::time_t t)
+		{
+			rxtime = (int64_t)t * 1000000000;
+		}
+
+		void setStartIdx(long long s)
+		{
+			start_idx = s;
+		}
+
+		void setEndIdx(long long e)
+		{
+			end_idx = e;
+		}
+
+		void clear()
+		{
+			length = 0;
+			toa = 0;
+			nmea_count = 0;
+			start_idx = 0;
+			end_idx = 0;
+			std::memset(data, 0, sizeof(data));
+		}
+
+		bool validate(TAG &tag);
+
+		unsigned type() const
+		{
+			return data[0] >> 2;
+		}
+
+		unsigned repeat() const
+		{
+			return data[0] & 3;
+		}
+
+		unsigned mmsi() const
+		{
+			return (data[1] << 22) | (data[2] << 14) | (data[3] << 6) | (data[4] >> 2);
+		}
+
+		// vessel position reports: class A (1-3), class B (18/19), long-range (27)
+		bool isPositionReport() const
+		{
+			const unsigned t = type();
+			return t == 1 || t == 2 || t == 3 || t == 18 || t == 19 || t == 27;
+		}
+
+		// Raw payload bytes; for hot decoders that bulk-load multiple fields.
+		// Buffer has four zero-padded bytes after the raw-frame capture area.
+		const uint8_t* raw() const { return data; }
+
+		unsigned getUint(int start, int len) const
+		{
+			if (start < 0 || start + len > MAX_AIS_LENGTH)
+				return 0;
+
+			// Branchless: 5-byte big-endian load covers any len<=32 with y<=7 (max 39 bits).
+			// data[] has +4 padding so data[x+4] is always in-bounds here.
+			const int x = start >> 3;
+			const int y = start & 7;
+
+			uint32_t hi;
+			std::memcpy(&hi, data + x, 4);
+			// Compiles to bswap/rev on every modern compiler (clang/gcc/MSVC).
+			hi = ((hi & 0xFFu) << 24) | ((hi & 0xFF00u) << 8) | ((hi & 0xFF0000u) >> 8) | ((hi & 0xFF000000u) >> 24);
+			const uint64_t w = ((uint64_t)hi << 8) | (uint64_t)data[x + 4];
+
+			const unsigned shift = 40u - (unsigned)y - (unsigned)len;
+			const uint32_t mask = (len >= 32) ? 0xFFFFFFFFu : ((1u << len) - 1u);
+			return (unsigned)((w >> shift) & mask);
+		}
+
+		uint64_t getUint64(int start, int len) const
+		{
+			if (len <= 32)
+				return getUint(start, len);
+			if (len > 64)
+				return 0;
+			return ((uint64_t)getUint(start, len - 32) << 32) | getUint(start + len - 32, 32);
+		}
+
+		int getInt(int start, int len) const
+		{
+			const unsigned ones = ~0u;
+			unsigned u = getUint(start, len);
+			if (u & (1u << (len - 1)))
+				u |= ones << len;
+			return (int)u;
+		}
+
+		void getText(int start, int len, std::string &str) const;
+		void setText(int start, int len, const char *str);
+
+		bool setUint(int start, int len, unsigned val);
+		bool setInt(int start, int len, int val);
+
+		void setByteRaw(int i, uint8_t b)
+		{
+			if (i >= 0 && i < MAX_AIS_BYTES)
+				data[i] = b;
+		}
+		void setBytes(const uint8_t *src, int nbytes)
+		{
+			if (nbytes > MAX_AIS_BYTES)
+				nbytes = MAX_AIS_BYTES;
+			std::memcpy(data, src, nbytes);
+		}
+
+		void setBit(int i, bool b)
+		{
+			if (i >= MAX_AIS_FRAME_LENGTH || i < 0)
+				return;
+
+			if (b)
+				data[i >> 3] |= (1 << (i & 7));
+			else
+				data[i >> 3] &= ~(1 << (i & 7));
+		}
+
+		bool getBit(int i) const
+		{
+			if (i >= MAX_AIS_FRAME_LENGTH || i < 0)
+				return false;
+
+			return data[i >> 3] & (1 << (i & 7));
+		}
+
+		char getLetter(int pos) const;
+		void setLetter(int pos, char c);
+		void appendLetter(char c) { setLetter(length / 6, c); }
+		void appendPayload(const char *src, int count);
+		void getPayload(char *dst, int pos, int count) const;
+		void reduceLength(int l) { length = MAX(length - l, 0); }
+
+		void setLength(int l)
+		{
+			if (l >= 0 && l <= MAX_AIS_LENGTH)
+				length = l;
+		}
+		int getLength() const { return length; }
+
+		void setChannel(char c) { channel = c; }
+		char getChannel() const { return channel; }
+
+		void setOrigin(char c, int s, int o)
+		{
+			channel = c;
+			station = s;
+			own_mmsi = o;
+		}
+		int getStation() const { return station; }
+		int getStationOrDefault() const { return station < 0 ? 0 : station; }
+		void setOwnMMSI(int m) { own_mmsi = m; }
+		void buildNMEA(TAG &tag, int id = -1);
+		bool isOwn() const { return own_mmsi == mmsi(); }
+
+		uint64_t getHash() const
+		{
+			uint64_t hash = 0;
+
+			// Bits 0-29: MMSI (30 bits)
+			hash |= (uint64_t)(mmsi() & 0x3FFFFFFF);
+
+			// Bit 30: Channel (1 bit)
+			hash |= ((uint64_t)(channel == 'B' ? 1 : 0)) << 30;
+
+			// Bits 31-35: Type (5 bits)
+			hash |= ((uint64_t)(type() & 0x1F)) << 31;
+
+			// Bits 36-63: Data content hash (28 bits)
+			// Simple FNV-1a-like hash of message data
+
+			uint32_t data_hash = 2166136261u;
+			int bytes = (length + 7) / 8;
+
+			for (int i = 0; i < bytes && i < MAX_AIS_BYTES; i++)
+			{
+				data_hash ^= data[i];
+				data_hash *= 16777619u;
+			}
+			hash |= ((uint64_t)(data_hash & 0x0FFFFFFF)) << 36;
+
+			return hash;
+		}
+	};
+
+	class Filter
+	{
+		static const uint32_t all = 0xFFFFFFFF;
+		uint32_t allow = all;
+		uint32_t allow_repeat = all;
+		bool on = false;
+		bool GPS = true, AIS = true;
+		std::vector<int> ID_allowed;
+		std::vector<int> MMSI_allowed;
+		std::vector<int> MMSI_blocked;
+		std::vector<int> stations_allowed;
+		std::string allowed_channels;
+
+		long int last_VDO = 0;
+
+		unsigned position_interval = 0;
+		unsigned unique_interval = 0;
+		unsigned own_interval = 0;
+
+		// Position downsampling per MMSI
+		PositionHistory position_history;
+		DuplicateHistory duplicate_history;
+
+		bool remove_empty = false;
+		uint16_t error_mask = 0;
+		uint16_t quality_mask = 0;
+		bool only_errors = false;
+
+	public:
+		bool SetOptionKey(AIS::Keys key, const std::string &arg);
+		std::string Get();
+		bool isOn() const { return on; }
+		bool hasIDFilter() const { return !ID_allowed.empty() || !MMSI_allowed.empty(); }
+		std::string getAllowed();
+		bool includeGPS() const { return on ? GPS : true; }
+		enum class Result { NotIncluded, Included, IncludedWithError };
+		Result include(const Message &msg, const TAG &tag);
+	};
+}

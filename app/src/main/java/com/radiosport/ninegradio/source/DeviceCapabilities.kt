@@ -31,11 +31,11 @@ data class DeviceCapabilities(
         val hi = minOf(stop, it.last)
         if (lo <= hi) lo..hi else null
     }
-    fun supportsMode(mode: DemodMode): Boolean {
-        if (mode == DemodMode.ADSB) return supportsFrequency(1_090_000_000) && 2_400_000 in sampleRates
-        if (mode == DemodMode.FLEX) return scanRanges(mode.minFreqHz, mode.maxFreqHz).isNotEmpty()
-        return mode.defaultBwHz <= sampleRates.max() * 0.86
-    }
+    fun moduleSupport()=com.radiosport.ninegradio.modules.ModuleSourceSupport(frequencyRanges,sampleRates,
+        setOf(if(floatIq) com.radiosport.ninegradio.pipeline.IqSampleFormat.FLOAT_32 else com.radiosport.ninegradio.pipeline.IqSampleFormat.UNSIGNED_8),
+        sampleRates.maxOrNull()?.let { maxChannelBandwidth(it) } ?: 0)
+    fun modeAvailability(mode:DemodMode)=com.radiosport.ninegradio.modules.RadioModules.mode(mode).availability(moduleSupport())
+    fun supportsMode(mode:DemodMode)=modeAvailability(mode).available
 
     companion object {
         val RTL = DeviceCapabilities("rtl", listOf(500_000L..1_766_000_000L),

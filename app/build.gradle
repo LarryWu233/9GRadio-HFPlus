@@ -13,8 +13,8 @@ android {
         applicationId "com.radiosport.ninegradio.hfplus"
         minSdk 26
         targetSdk 35
-        versionCode 29
-        versionName "0.28.0-hfplus-alpha28"
+        versionCode 30
+        versionName "0.29.0-hfplus"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -30,8 +30,16 @@ android {
     }
 
     buildTypes {
+        archPreview {
+            initWith debug
+            applicationIdSuffix '.arch'
+            versionNameSuffix '-arch22'
+            matchingFallbacks = ['debug']
+            externalNativeBuild { cmake { arguments '-DNINEGRADIO_PACKAGE_VARIANT=archPreview' } }
+        }
         release {
-            minifyEnabled true
+            // Preserve the validated class graph for the first regular release.
+            minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
@@ -39,9 +47,19 @@ android {
             jniDebuggable true
         }
     }
+    testBuildType = project.findProperty('testBuildType') ?: 'debug'
+    testOptions.unitTests.all {
+        if (project.hasProperty('nrFixtureDir')) {
+            def fixtureDir = rootProject.file(project.property('nrFixtureDir'))
+            systemProperty 'ninegradio.nrFixtureDir', fixtureDir.absolutePath
+            inputs.files(new File(fixtureDir, 'reference.f32'), new File(fixtureDir, 'noisy.f32'))
+                .withPathSensitivity(PathSensitivity.RELATIVE)
+        }
+    }
 
-    if (rootProject.file("build/toolchains/ndk/android-ndk-r28c").exists()) {
-        ndkPath rootProject.file("build/toolchains/ndk/android-ndk-r28c").absolutePath
+    def toolchains = rootProject.file(project.findProperty('toolchainRoot') ?: 'build/toolchains')
+    if (new File(toolchains, 'ndk/android-ndk-r28c').exists()) {
+        ndkPath new File(toolchains, 'ndk/android-ndk-r28c').absolutePath
     }
 
     compileOptions {
@@ -83,6 +101,7 @@ android.applicationVariants.all { variant ->
 }
 
 dependencies {
+    implementation project(':radio-core')
     implementation 'androidx.media3:media3-exoplayer:1.7.1'
     implementation 'androidx.media3:media3-session:1.7.1'
     implementation project(':blurview')
@@ -109,6 +128,7 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0'
     testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
 }

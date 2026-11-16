@@ -34,6 +34,7 @@ class AdsbActivity : RadioThemedActivity() {
     private val aircraft = HashMap<String, AdsbDecoder.AdsbFrame>()
     private lateinit var aircraftTable: AdsbAircraftTable
     private val distances by lazy { AdsbDistanceTracker(this) }
+    private val receiverLocation by lazy { ReceiverLocationController(this) }
 
     // ─── Service binding for IQ magnitude flow ────────────────────────────────
 
@@ -76,7 +77,8 @@ class AdsbActivity : RadioThemedActivity() {
                     }
                 }.collect { tvStatus.text=it }
             }
-            svc.adsbReceiver.aircraft.collect { frames -> renderAircraft(frames) }
+            kotlinx.coroutines.flow.combine(svc.adsbReceiver.aircraft,receiverLocation.position) { frames,_ -> frames }
+                .collect { frames -> renderAircraft(frames) }
         }
     }
 
@@ -92,6 +94,7 @@ class AdsbActivity : RadioThemedActivity() {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_adsb)
+        receiverLocation.setActive(true)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         title = "ADS-B 雷达 · 1090 MHz"
 
@@ -146,6 +149,8 @@ class AdsbRadarView @JvmOverloads constructor(
     private var ownLat = 0.0
     private var ownLon = 0.0
     private var positionKnown=false
+    private data class Plot(val aircraft:AdsbDecoder.AdsbFrame,val distanceNm:Double,val bearingRadians:Double)
+    private var plots=emptyList<Plot>()
     private var wantsAnimation=true
     private val receiverPrefs=context.getSharedPreferences("radio_map",android.content.Context.MODE_PRIVATE)
     private val locationListener=android.content.SharedPreferences.OnSharedPreferenceChangeListener { _,key ->
@@ -173,27 +178,43 @@ class AdsbRadarView @JvmOverloads constructor(
     } }
     fun setAnimating(active: Boolean) { wantsAnimation=active; updateAnimation() }
     private fun updateAnimation() {
-        if(wantsAnimation && isAttachedToWindow && windowVisibility==VISIBLE) {
+        if(wantsAnimation && isAttachedToWindow && isShown && width>0 && height>0 && windowVisibility==VISIBLE) {
             if(!sweepAnimator.isStarted) sweepAnimator.start()
         } else sweepAnimator.cancel()
     }
     private fun refreshReceiverPosition() {
         if(receiverPrefs.contains("receiverLat") && receiverPrefs.contains("receiverLon"))
             setOwnPosition(receiverPrefs.getFloat("receiverLat",0f).toDouble(),receiverPrefs.getFloat("receiverLon",0f).toDouble())
-        else { positionKnown=false; postInvalidate() }
+        else { positionKnown=false;rebuildPlots();postInvalidate() }
     }
     override fun onAttachedToWindow() {
         super.onAttachedToWindow(); refreshReceiverPosition()
         receiverPrefs.registerOnSharedPreferenceChangeListener(locationListener); updateAnimation()
     }
     override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); post { updateAnimation() } }
+    override fun onVisibilityAggregated(isVisible:Boolean) { super.onVisibilityAggregated(isVisible);post { updateAnimation() } }
+    override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) { super.onSizeChanged(w,h,oldw,oldh);updateAnimation() }
 
     fun updateAircraft(list: List<AdsbDecoder.AdsbFrame>) {
-        aircraftList = list.filter { it.latitude != null && it.longitude != null }
+        aircraftList = list.filter { it.latitude!=null && it.longitude!=null && it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 }
+        rebuildPlots()
         postInvalidate()
     }
 
-    fun setOwnPosition(lat: Double, lon: Double) { ownLat = lat; ownLon = lon; positionKnown=lat in -90.0..90.0 && lon in -180.0..180.0; postInvalidate() }
+    fun setOwnPosition(lat: Double, lon: Double) {
+        if(positionKnown && lat==ownLat && lon==ownLon) return
+        ownLat=lat;ownLon=lon;positionKnown=lat in -90.0..90.0 && lon in -180.0..180.0
+        rebuildPlots();postInvalidate()
+    }
+    private fun rebuildPlots() {
+        if(!positionKnown) { plots=emptyList();contentDescription="雷达 · 接收位置未知";return }
+        val result=FloatArray(2)
+        plots=aircraftList.map { ac ->
+            android.location.Location.distanceBetween(ownLat,ownLon,ac.latitude!!,ac.longitude!!,result)
+            Plot(ac,result[0]/1852.0,Math.toRadians(result[1].toDouble()))
+        }
+        contentDescription="雷达 · ${plots.size} 个定位目标"
+    }
     fun setRange(nm: Double) { rangeNm = nm }
 
     override fun onDraw(canvas: Canvas) {
@@ -231,12 +252,12 @@ class AdsbRadarView @JvmOverloads constructor(
             sweepPaint)
 
         // Aircraft blips
-        for (ac in aircraftList) {
+        for (plot in plots) {
             if(!positionKnown) break
-            val lat = ac.latitude ?: continue
-            val lon = ac.longitude ?: continue
-
-            val (px, py) = latLonToPixel(lat, lon, cx, cy, r)
+            val ac=plot.aircraft
+            val radius=(plot.distanceNm/rangeNm*r).toFloat().coerceAtMost(r)
+            val px=cx+(radius*Math.sin(plot.bearingRadians)).toFloat()
+            val py=cy-(radius*Math.cos(plot.bearingRadians)).toFloat()
 
             val ageSec = (System.currentTimeMillis() - ac.timestamp) / 1000L
             val alpha = (255 * (1.0 - ageSec / 120.0)).toInt().coerceIn(80, 255)
@@ -277,17 +298,6 @@ class AdsbRadarView @JvmOverloads constructor(
         textPaint.color = 0xFF00FF88.toInt()
         textPaint.textAlign = Paint.Align.LEFT
         if(!positionKnown) canvas.drawText("接收位置未知",12f,height-12f,textPaint)
-    }
-
-    private fun latLonToPixel(lat: Double, lon: Double, cx: Float, cy: Float, r: Float): Pair<Float, Float> {
-        val dLat = lat - ownLat
-        val dLon = (lon - ownLon) * Math.cos(Math.toRadians(ownLat))
-        val distNm = Math.sqrt(dLat * dLat + dLon * dLon) * 60.0
-        val bearing = Math.atan2(dLon, dLat)
-        val pixR = (distNm / rangeNm * r).toFloat().coerceAtMost(r)
-        val px = cx + pixR * Math.sin(bearing).toFloat()
-        val py = cy - pixR * Math.cos(bearing).toFloat()
-        return Pair(px, py)
     }
 
     override fun onDetachedFromWindow() {

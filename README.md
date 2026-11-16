@@ -6,7 +6,9 @@
 
 An experimental Android SDR derivative of [9GRadio by rkarikari / RadioSport](https://github.com/rkarikari/9GRadio), adding Airspy HF+ Discovery support and improving tuning, audio and integrated receiver tools.
 
-**Version:** `0.28.0-hfplus-alpha28` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+**Version:** `0.29.0-hfplus` · **Application ID:** `com.radiosport.ninegradio.hfplus` · **Android:** 8.0+ (API 26). Installs alongside the official app.
+
+**Current release:** [0.29.0](https://github.com/LarryWu233/9GRadio-HFPlus/releases/tag/v0.29.0) includes the receiver-pipeline work, AIS A/B raw-IQ decoding, expanded ETM/EiBi hints, tracked-tone microphone/WAV CW decoding and explicit SSTV saving to the system gallery. The normal package remains `com.radiosport.ninegradio.hfplus`; architecture previews remain separate. The release is tagged from this review branch; main is not silently merged. LRPT is deferred by the user. See [release validation and limits](docs/validation/release-0.29.0.md) and the [module plan](docs/architecture/ais-lrpt-etm-plan.md).
 
 Alpha28 replaces the squeezed preset category strip with wrapping, fully labelled Material chips. Bookmark filters and saved rows now use theme colours; filters read All/Uncategorized as 全部/未分组 in the Chinese UI. Per-bookmark colour markings and stored data are preserved. See [alpha28 validation](docs/validation/2026-11-08-alpha28.md).
 
@@ -44,17 +46,17 @@ The [upstream README](docs/upstream-README.md) and [initial source/APK compariso
 | Audio | FM playback-clock/continuity fixes, functional stereo and 50/75 μs de-emphasis, listening SQL, spectral NR, automatic notch and level compensation. WDSP/SDR++ components support pre-demodulation impulse suppression. Digital decoding bypasses listening noise processing; software audio decoders receive pre-NR audio. |
 | Scan and recording | Integrated shortwave/FM ETM and range scanning, improved noise rejection, optional regional recommendations; IQ/audio recording with automatic stop and SQL gating; floating-point IQ and SigMF metadata; configurable compressed/PCM audio and an internal audio player. |
 | Integrated tools | RTL-SDR Blog V4/readsb ADS-B, in-panel map/radar switching, distance/track information, compact aircraft rows, APRS map gestures and a basic compass/signal-strength direction-finding panel. Existing map providers are retained. |
-| New content tabs | **CW/CWR** Morse text using multimon-ng, **SSTV** using Robot36, **SAT** satellite SSTV and historical APT audio images using aptdec. Software audio, microphone and WAV input. **EiBi** shortwave programme schedule with UTC/language filters and click-to-tune; it is not an audio decoder. |
+| New content tabs | **AIS** dual-channel raw-IQ vessel decoding using AIS-catcher. **CW/CWR** Morse text using multimon-ng for narrowband software audio and ggmorse tone tracking for microphone/WAV, **SSTV** using Robot36 with explicit gallery saving, **SAT** satellite SSTV and historical APT audio images using aptdec. **EiBi** programme schedule with UTC/language filters, ETM hints and click-to-tune; it is not an audio decoder. |
 
 HF+ Discovery receives **500 Hz–31 MHz and 64–260 MHz**. Unsupported RTL-only controls, including bias power, are hidden. The 31–64 MHz gap can be browsed continuously but cannot be received; scanning skips it. First setup prefers a device-supported **768 kS/s** rate and **10 MHz / AM**. 1090 MHz ADS-B requires a suitable receiver such as RTL-SDR; HF+ cannot receive it.
 
 ### Limitations compared with the official app
 
-- This is an **alpha based on an older public application snapshot**. Missing official 1.83 implementations have not all been restored: full AIS, the original complete RDF/MLAT chain, newer multi-channel ACARS, satellite tracking, LRPT, Kal/PPM calibration and other newer backends are not supplied as equivalents. The basic direction-finding panel does not replace the original full module.
+- This is a **derivative based on an older public application snapshot**. Missing official 1.83 implementations have not all been restored: the original complete RDF/MLAT chain, newer multi-channel ACARS, satellite tracking, LRPT, Kal/PPM calibration and other newer backends are not supplied as equivalents. AIS is provided by a separately integrated AIS-catcher backend. The basic direction-finding panel does not replace the original full module.
 - The UI is primarily Chinese with common radio terms in English, without complete English localisation. UI/DSP regressions remain possible; keep the official app for comparison.
 - New CW/SSTV/SAT decoders passed known-sample tests; over-the-air acceptance and protocol decoding from an external radio through the microphone remain pending. APT supports **historical recordings**, not a claim that retired NOAA-15/18/19 satellites are broadcasting. The ISS preset does not imply an active SSTV event.
 - EiBi's bundled **B26** schedule and local CSV import work. On-device online refresh failed with connection/TLS errors in the test environment and remains unresolved. Schedule entries do not confirm reception. Online maps also depend on network availability.
-- The downloadable APK is an **arm64-v8a, debug-signed, debuggable test build**. Other ABIs have not received equivalent device validation. Android 16, actual 16 KB page-size hardware, the 60-second frame-rate target and 30-minute continuous reception remain unverified.
+- The regular 0.29.0 APK is a **non-debuggable Release build** containing arm64-v8a, armeabi-v7a and x86_64, signed with the existing HF+ certificate for upgrade compatibility. Device checks use Android 13 arm64; other ABIs lack equivalent hardware coverage. Architecture previews remain independent test builds. Android 16 follow-up, actual 16 KB runtime and remaining architecture acceptance are listed in the [release validation](docs/validation/release-0.29.0.md).
 
 ### Validation and build
 
@@ -76,6 +78,8 @@ Bootstrap downloads checksum-verified tools into ignored `build/toolchains`; the
 
 APK output: `app/build/outputs/apk/debug/`. Device scripts accept `--adb`, or find ADB via PATH, `ANDROID_SDK_ROOT` or `ANDROID_HOME`. Instrumentation tests need a separate test APK and authorised device; the application download contains no test APK. Raw device logs/screenshots, personal machine configuration, signing keys and developer checkout paths are excluded from publication; reproducible test sources are retained. Native build paths are mapped to a generic source prefix.
 
+For the regular build use `-Tasks ':app:assembleRelease' -Abi 'arm64-v8a,armeabi-v7a,x86_64'`. The unsigned output is under `app/build/outputs/apk/release/`; use Android `zipalign` and `apksigner` with your own private signing material. Signing keys are not in the repository. Updates to an existing installation require its matching signing identity.
+
 ### Licence and thanks
 
 Distributed under [GNU GPL v3](LICENSE), retaining upstream copyrights and bundled component licences. Exact sources, pinned revisions and modifications are documented in [third-party reuse](docs/third-party-reuse.md), [audio decoder provenance](docs/third-party-audio-content.md), [recording/player provenance](docs/third-party-recording-playback.md), [DSEG licensing](docs/third-party-DSEG.md) and bundled licence files.
@@ -88,7 +92,9 @@ Thank you to **rkarikari / RadioSport**, the original author of **9GRadio**, for
 
 基于 [rkarikari / RadioSport 的 9GRadio](https://github.com/rkarikari/9GRadio) 开发的 Android SDR 衍生测试版，增加 Airspy HF+ Discovery 支持，改进调谐、声音与集成接收工具。
 
-**版本：**`0.28.0-hfplus-alpha28` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+**版本：**`0.29.0-hfplus` · **包名：**`com.radiosport.ninegradio.hfplus` · **系统要求：**Android 8.0+（API 26）。可与官方版同时安装。
+
+**当前发布：**[0.29.0](https://github.com/LarryWu233/9GRadio-HFPlus/releases/tag/v0.29.0) 包含接收管线优化、AIS A/B 原始 IQ 解码、ETM 展开及 EiBi 名称参考、麦克风/WAV 的 CW 音调跟踪，以及 SSTV 保存到系统相册。常规包名仍为 `com.radiosport.ninegradio.hfplus`，可覆盖升级；架构预览继续独立。版本从当前审查分支打标签发布，未擅自合入主干。LRPT 应用户要求暂缓。详见[验证与限制](docs/validation/release-0.29.0.md)及[模块计划](docs/architecture/ais-lrpt-etm-plan.md)。
 
 Alpha28 将预设分类改为可换行、完整显示文字的 Material 标签；收藏筛选与条目使用主题色，All／Uncategorized 改为“全部／未分组”。保留条目单独标记色及原数据。详见 [alpha28 验证](docs/validation/2026-11-08-alpha28.md)。
 
@@ -126,17 +132,17 @@ Alpha19 增加解调模式“电台记忆”开关，关闭时冻结既有记忆
 | 声音 | 修复 FM 播放时钟与连续性，补齐立体声及 50/75 μs 去加重；监听静噪、频谱降噪、自动陷波、响度补偿；复用 WDSP／SDR++ 内容进行解调前脉冲抑制。数字解码旁路监听降噪，软件音频解码取得 NR 之前的信号。 |
 | 扫描与录制 | 整合短波／FM ETM 与范围扫描，改进噪声过滤，可选地区推荐；IQ／声音录制、定时停止、静噪门控；浮点 IQ 和 SigMF 元数据；可配置压缩／PCM 声音格式及页内播放器。 |
 | 集成功能 | RTL-SDR Blog V4／readsb ADS-B，模块内地图／雷达切换、距离与轨迹、紧凑飞机列表、APRS 地图手势；基础指南针／场强测向页。地图沿用原有服务方案。 |
-| 新增内容页 | **CW/CWR** 使用 multimon-ng 解摩尔斯；**SSTV** 使用 Robot36；**SAT** 为卫星 SSTV 和 aptdec 历史 APT 音频图像；可选软件内、麦克风或 WAV 输入。**EiBi** 为短波节目表，支持 UTC／语言筛选、点击调谐，不是音频解码器。 |
+| 新增内容页 | **AIS** 使用 AIS-catcher 解双频道原始 IQ；**CW/CWR** 软件内窄带使用 multimon-ng，麦克风/WAV 使用 ggmorse 音调跟踪；**SSTV** 使用 Robot36，手动保存可进入系统相册；**SAT** 为卫星 SSTV 和 aptdec 历史 APT 音频图像。**EiBi** 为短波节目表，支持 UTC／语言筛选、ETM 名称提示和点击调谐，不是音频解码器。 |
 
 HF+ Discovery 接收范围为 **500 Hz–31 MHz、64–260 MHz**；隐藏不适用的 RTL 控制项，包括偏置供电。31–64 MHz 空档可连续浏览，但不能接收，扫描会跳过。首次连接优先选用设备支持的 **768 kS/s**，从 **10 MHz / AM** 开始。1090 MHz ADS-B 需要 RTL-SDR 等适用接收机，HF+ 无法接收。
 
 ### 相比官方版的不足
 
-- 这是基于较早公开应用源码的 **alpha 测试版**。尚未补齐官方 1.83 中源码缺失的全部实现，包括完整 AIS、原版完整 RDF／MLAT 链路、新版多通道 ACARS、卫星跟踪、LRPT、Kal／PPM 校准及其他新版后端；基础指南针页不能代替原版完整测向模块。
+- 这是基于较早公开应用源码的**独立衍生版**。尚未补齐官方 1.83 中源码缺失的全部实现，包括原版完整 RDF／MLAT 链路、新版多通道 ACARS、卫星跟踪、LRPT、Kal／PPM 校准及其他新版后端；AIS 使用单独接入的 AIS-catcher。基础指南针页不能代替原版完整测向模块。
 - 界面以中文为主，常见无线电术语保留英文，尚未完成完整英文界面。界面和 DSP 改动仍可能存在回归，可保留官方版用于对照。
 - 新增 CW／SSTV／SAT 已通过已知样本验证；现场实收及外部接收机经麦克风输入的协议解码仍待验收。APT 面向**历史录音**，不表示已退役的 NOAA-15/18/19 仍在播出；ISS 预设也不代表当前存在 SSTV 活动。
 - EiBi 内置 **B26** 节目表和本地 CSV 导入可用；当前环境手机在线刷新出现连接／TLS 错误，尚未解决。节目表条目不等于实收确认，在线地图也取决于网络。
-- 下载的 APK 为 **arm64-v8a、debug 签名且可调试的测试构建**，其他 ABI 未获得同等真机验证。Android 16、真实 16 KB 页设备、连续 60 秒帧率目标及 30 分钟连续接收尚未验收。
+- 常规 0.29.0 APK 为**不可调试的 Release 构建**，包含 arm64-v8a、armeabi-v7a 和 x86_64，沿用此前 HF+ 签名以支持覆盖升级。真机检查以 Android 13 arm64 为主，其他 ABI 未获得同等硬件覆盖；架构预览仍为独立测试包。Android 16 后验、实际 16 KB 运行环境和剩余架构验收见[发布验证](docs/validation/release-0.29.0.md)。
 
 ### 验证与构建
 
@@ -157,6 +163,8 @@ python scripts/bootstrap_toolchains.py
 ```
 
 APK 位于 `app/build/outputs/apk/debug/`。设备脚本支持 `--adb`，也会从 PATH、`ANDROID_SDK_ROOT` 或 `ANDROID_HOME` 查找 ADB。真机测试需要另行构建测试 APK 并连接已授权设备，应用下载包不包含测试 APK。发布内容不包含原始设备日志／截图、个人机器配置、签名私钥及开发者本机路径，保留可复现的测试源码；原生编译路径映射为通用源码前缀。
+
+常规构建使用 `-Tasks ':app:assembleRelease' -Abi 'arm64-v8a,armeabi-v7a,x86_64'`，未签名 APK 位于 `app/build/outputs/apk/release/`。使用 Android `zipalign`、`apksigner` 和你自己的私有签名材料完成签名；签名私钥不进入仓库。覆盖现有安装需使用匹配的签名。
 
 ### 许可与致谢
 

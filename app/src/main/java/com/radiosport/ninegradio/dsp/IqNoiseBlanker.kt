@@ -27,6 +27,7 @@ class IqNoiseBlanker : AutoCloseable {
         resetPending=false; previousMode=mode; previousRate=rate; previousFrequency=frequency
     }
     @Synchronized fun stats()=Stats(active,latency,processed,repaired)
+    @Synchronized fun reset() { resetPending=true }
     @Synchronized override fun close() {
         closed=true; active=false
         if(handle!=0L) nativeDestroy(handle)

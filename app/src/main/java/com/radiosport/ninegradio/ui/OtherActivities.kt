@@ -9,6 +9,8 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.Lifecycle
 import androidx.preference.*
 import androidx.recyclerview.widget.*
 import androidx.recyclerview.widget.ListAdapter
@@ -745,9 +747,11 @@ class SpectrumActivity : RadioThemedActivity() {
         }
 
         lifecycleScope.launch {
-            viewModel.spectrumData.collectLatest { data ->
-                specView.updateSpectrum(data, viewModel.peakData.value)
-                wfView.addLine(data)
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.spectrumData.collectLatest { data ->
+                    specView.updateSpectrum(data, viewModel.peakData.value)
+                    wfView.addLine(data)
+                }
             }
         }
         lifecycleScope.launch {

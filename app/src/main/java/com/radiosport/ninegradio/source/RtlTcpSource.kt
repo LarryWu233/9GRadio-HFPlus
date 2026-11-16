@@ -124,13 +124,10 @@ class RtlTcpSource(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var streamingJob: Job? = null
 
-    private val _iqFlow = MutableSharedFlow<IqBlock>(
-        replay = 1,
-        extraBufferCapacity = 16,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-    override val iqFlow: SharedFlow<IqBlock> = _iqFlow.asSharedFlow()
-    override val iqSubscriberCount: Int get() = _iqFlow.subscriptionCount.value
+    private val _iqFlow = com.radiosport.ninegradio.pipeline.IqStream()
+    private val captureClock = com.radiosport.ninegradio.pipeline.CaptureClock()
+    override val iqFlow = _iqFlow.flow
+    override val iqSubscriberCount: Int get() = _iqFlow.subscriberCount
 
     private val _statusFlow = MutableStateFlow(IqSource.SourceStatus())
     override val statusFlow: StateFlow<IqSource.SourceStatus> = _statusFlow.asStateFlow()
@@ -146,14 +143,14 @@ class RtlTcpSource(
     // ── IqSource : open / close ───────────────────────────────────────────────
 
     override fun open(): Boolean {
+        var opening:Socket?=null
         return try {
             Log.i(TAG, "Connecting to rtl_tcp at $host:$port")
             DebugBus.setStatus(DebugBus.STAGE_USB_OPEN, DebugBus.StageStatus.OK, "Connecting to $host:$port…")
 
-            val s = Socket()
+            val s = Socket().also { opening=it }
             s.connect(InetSocketAddress(host, port), connectTimeoutMs)
             s.tcpNoDelay = true
-            s.soTimeout = 0   // blocking reads in streaming coroutine
 
             val ins  = s.getInputStream()
             val outs = s.getOutputStream()
@@ -161,8 +158,9 @@ class RtlTcpSource(
             // Read and parse the 12-byte magic header
             val magic = ByteArray(MAGIC_SIZE)
             var read = 0
-            val deadline = System.currentTimeMillis() + 5_000L
-            while (read < MAGIC_SIZE && System.currentTimeMillis() < deadline) {
+            val deadline = System.nanoTime() + 5_000_000_000L
+            while (read < MAGIC_SIZE && System.nanoTime() < deadline) {
+                s.soTimeout=((deadline-System.nanoTime())/1_000_000).coerceIn(1,5000).toInt()
                 val n = ins.read(magic, read, MAGIC_SIZE - read)
                 if (n < 0) {
                     Log.e(TAG, "Connection closed before magic received")
@@ -194,6 +192,8 @@ class RtlTcpSource(
                 "Connected to $host:$port  tuner=$tunerType gains=$serverGainCount")
 
             socket       = s
+            s.soTimeout = 500 // cancellation budget applies after the handshake
+            opening=null
             outputStream = outs
             inputStream  = ins
             _isOpen      = true
@@ -212,6 +212,7 @@ class RtlTcpSource(
             )
             true
         } catch (e: Exception) {
+            runCatching { opening?.close() }
             Log.e(TAG, "open() failed", e)
             DebugBus.setError(DebugBus.STAGE_USB_OPEN, "TCP connect failed: ${e.message}")
             _statusFlow.value = _statusFlow.value.copy(connected = false, error = e.message)
@@ -223,6 +224,7 @@ class RtlTcpSource(
         if (!_isOpen) { Log.e(TAG, "startStreaming() called on closed source"); return }
         if (_isStreaming) { Log.w(TAG, "startStreaming() called while already streaming"); return }
         _isStreaming = true
+        captureClock.restart()
 
         DebugBus.setStatus(DebugBus.STAGE_IQ_STREAM, DebugBus.StageStatus.OK,
             "TCP stream started  $host:$port  ${_sampleRate/1000} kS/s")
@@ -237,19 +239,27 @@ class RtlTcpSource(
                     // matching the bulk-USB chunk size the DspEngine expects.
                     var filled = 0
                     while (filled < readBuf.size) {
-                        val n = ins.read(readBuf, filled, readBuf.size - filled)
+                        currentCoroutineContext().ensureActive()
+                        val n = try { ins.read(readBuf, filled, readBuf.size - filled) }
+                        catch (_: java.net.SocketTimeoutException) { continue }
                         if (n < 0) {
                             Log.w(TAG, "TCP stream EOF")
+                            val validBytes=filled-filled%2
+                            if(validBytes>0) {
+                                val meta=captureClock.stamp(validBytes/2,_sampleRate,_centerFreqHz)
+                                _iqFlow.offer(IqBlock.Unsigned8(readBuf.copyOf(validBytes),meta))
+                            }
                             _statusFlow.value = _statusFlow.value.copy(
                                 streamRestartRequired = true,
-                                error = "TCP stream closed by server"
+                                error = if(filled%2==0) "TCP stream closed by server" else "TCP stream ended with a truncated IQ sample"
                             )
                             return@launch
                         }
                         filled += n
                     }
                     // Emit a copy — the pool isn't needed for TCP (no DMA constraints)
-                    _iqFlow.tryEmit(IqBlock.Unsigned8(readBuf.copyOf()))
+                    val meta = captureClock.stamp(readBuf.size / 2, _sampleRate, _centerFreqHz)
+                    _iqFlow.offer(IqBlock.Unsigned8(readBuf.copyOf(), meta))
                 }
             } catch (e: SocketException) {
                 if (_isStreaming) {  // not a deliberate close
@@ -275,8 +285,10 @@ class RtlTcpSource(
 
     override fun stopStreaming() {
         _isStreaming = false
-        streamingJob?.cancel()
+        val oldJob = streamingJob
+        oldJob?.cancel()
         streamingJob = null
+        runBlocking { oldJob?.join() }
         DebugBus.setStatus(DebugBus.STAGE_IQ_STREAM, DebugBus.StageStatus.IDLE, "TCP stream stopped")
     }
 
@@ -294,26 +306,22 @@ class RtlTcpSource(
 
     // ── Tuning commands ───────────────────────────────────────────────────────
     //
-    // All hardware-command methods update local state immediately (so callers
-    // get consistent getCenterFrequency() / getSampleRate() values at once)
-    // and then dispatch the actual socket write to the IO scope so they are
-    // never executed on the main thread.  Concurrent writes are serialised by
-    // the synchronized(outs) block inside sendCommand().
+    // Called by the service's serial control executor, never by the UI thread.
+    // Frequency/rate state is committed only after the command has been written.
 
     override fun setCenterFrequency(freqHz: Long): Boolean {
+        if (!sendCommand(CMD_SET_FREQ, freqHz)) return false
         _centerFreqHz = freqHz
         _statusFlow.value = _statusFlow.value.copy(centerFreqHz = freqHz)
-        // Dispatch socket write off the calling thread (may be main thread).
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_FREQ, freqHz) }
         return true
     }
 
     override fun getCenterFrequency(): Long = _centerFreqHz
 
     override fun setSampleRate(rateHz: Int): Boolean {
+        if (!sendCommand(CMD_SET_SAMPLE_RATE, rateHz.toLong())) return false
         _sampleRate = rateHz
         _statusFlow.value = _statusFlow.value.copy(sampleRate = rateHz)
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_SAMPLE_RATE, rateHz.toLong()) }
         return true
     }
 
@@ -324,14 +332,14 @@ class RtlTcpSource(
         _gainMode = mode
         _statusFlow.value = _statusFlow.value.copy(gainMode = mode)
         val arg = if (mode == RtlSdrDevice.GAIN_MODE_MANUAL) 1L else 0L
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_GAIN_MODE, arg) }
+        sendCommand(CMD_SET_GAIN_MODE, arg)
     }
 
     override fun setGain(gainIndex: Int) {
         val idx = gainIndex.coerceIn(0, gainTable.lastIndex)
         _gainIndex = idx
         _statusFlow.value = _statusFlow.value.copy(gainDb10 = gainTable.getOrElse(idx) { 0 })
-        scope.launch(Dispatchers.IO) {
+        run {
             // Prefer the index-based command (rtl_tcp_andro extension 0x0D) so the
             // server can apply the correct hardware step directly.
             if (!sendCommand(CMD_SET_GAIN_BY_INDEX, idx.toLong())) {
@@ -350,27 +358,27 @@ class RtlTcpSource(
         _statusFlow.value = _statusFlow.value.copy(tunerAgcEnabled = enable)
         // Tuner AGC in rtl_tcp is controlled via gain_mode: 0 = AGC, 1 = manual
         val arg = if (enable) 0L else 1L
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_GAIN_MODE, arg) }
+        sendCommand(CMD_SET_GAIN_MODE, arg)
     }
 
     override fun setHardwareAgcEnabled(enable: Boolean) {
         _hardwareAgc = enable
         _statusFlow.value = _statusFlow.value.copy(hardwareAgcEnabled = enable)
         val arg = if (enable) 1L else 0L
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_AGC_MODE, arg) }
+        sendCommand(CMD_SET_AGC_MODE, arg)
     }
 
     override fun setBiasTee(enable: Boolean) {
         _biasTee = enable
         _statusFlow.value = _statusFlow.value.copy(biasTee = enable)
         val arg = if (enable) 1L else 0L
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_BIAS_TEE, arg) }
+        sendCommand(CMD_SET_BIAS_TEE, arg)
     }
 
     override fun setDirectSampling(mode: Int) {
         _directSampling = mode
         _statusFlow.value = _statusFlow.value.copy(directSampling = mode)
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_DIRECT_SAMPLING, mode.toLong()) }
+        sendCommand(CMD_SET_DIRECT_SAMPLING, mode.toLong())
     }
 
     override fun getDirectSampling(): Int = _directSampling
@@ -378,7 +386,7 @@ class RtlTcpSource(
     override fun setPpmCorrection(ppm: Int) {
         _ppm = ppm
         _statusFlow.value = _statusFlow.value.copy(ppmCorrection = ppm)
-        scope.launch(Dispatchers.IO) { sendCommand(CMD_SET_FREQ_CORRECTION, ppm.toLong()) }
+        sendCommand(CMD_SET_FREQ_CORRECTION, ppm.toLong())
     }
 
     override fun getPpmCorrection(): Int = _ppm

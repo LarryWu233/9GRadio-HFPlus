@@ -1,5 +1,30 @@
 # 成熟实现的复用记录
 
+## 0.29.0：AIS 与麦克风 CW
+
+- AIS 复用 [AIS-catcher](https://github.com/jvde-github/AIS-catcher/tree/d5b1e0a50c68f81e8ef59a057899530bf365fc0a)，GPL-3.0-or-later。原始 `Source/`、CMake 和许可证保持不变，文件清单在 `cpp/vendor/ais-catcher/SHA256SUMS`。只构建无界面的 stdin/JSON 解码器；不启用第二套 USB 驱动、外发订阅、Web/API 或数据库。现有 Android 源提供 UInt8/Float32 IQ，设备仍由应用独占管理。
+- 麦克风及 WAV 的 CW 复用 [ggmorse](https://github.com/ggerganov/ggmorse/tree/7b4822a8cfdbb1addfe497f3ae8186f142a4ee79)，MIT。原始核心、滤波、FFT/Goertzel、速度分析和解码源码均保持不变，保留 FFT 原始来源注释及许可证；校验见 `cpp/vendor/ggmorse/SHA256SUMS`。接入自动音调检测和速度估计，保留固定 WPM。软件内窄带 CW 仍使用既有 multimon 实现。
+- `cw_audio_worker.cpp` 只负责 Float32 PCM、进程与结果帧；上游 stdout 转到私有 stderr，使用 `takeRxData` 输出文本。有限文件的 3 秒解码尾部排空沿用上游示例，仅用于解码器前瞻，不修改监听或录音。
+- SSTV 的 Robot36 核心未替换。“保存”通过 Android MediaStore 写入 `Pictures/9GRadio HF+`；未完成写入的记录保持 pending，失败删除该媒体记录并保留应用历史。后台自动历史仍留在应用目录，不自动塞满相册。
+- LRPT 应用户要求暂缓；SatDump/VOLK 构建探测不进入本次源码依赖与安装包。
+
+## 架构预览 19：AM 频道选择性
+
+- 复用本项目预览 18 固定提交 `9558a8eb7fcf5b81809542451b64738ba69efdb2` 中的 `PolyphaseResampler` Blackman–Harris FIR 系数设计和 `cpp/include/volk_android.h` 的 VOLK 派生内积内核，GPL-3.0。两个文件保持原样，规范化 LF 的 SHA-256 在 `cpp/vendor/sources.json`。这里固定的是项目已包含的版本，不把现有头文件的上游提取版本说成已核实。
+- `channel_filter_jni.cpp` 只适配连续块的历史重叠、系数顺序和通道私有缓冲所有权，直接调用现有 `gnuradio_volk_32f_x2_dot_prod_32f`；未另写卷积、窗函数或滤波器设计。
+- 原源速率抽取滤波保留。AM 在降低后的频道采样率再做 96 taps 的 RF 选择，以避免固定短 FIR 在高输入采样率下的宽过渡带让相邻载波进入非线性检波。96 是完整的六组 16-float 内积，避免 ARM 路径的标量尾部；x86_64 使用既有标量内核。
+- 核心通过 `ComplexChannelFilter` 串行端口接入，和 `AmProcessor` 检波端口分开。输入为频道私有 IQ，可原地处理；原始 IQ 录制、独立测量和源数据不变。只作用于新 AM 路径，其他模式不启用；未切换重采样器、FFT 或音频后端。
+- 代价为 48 kHz 频道率下约 0.99 ms 的固定 FIR 群延迟。针对性混合载波、通带、任意块边界、重置及同源 CPU 对照见[预览 19 验证](validation/architecture-19.md)。
+
+## 架构预览 18：可插拔 AM 检波
+
+- SAM 直接编译 Warren Pratt 的 [WDSP 2.11 amd.c / amd.h](https://github.com/TAPR/OpenHPSDR-wdsp/tree/e69de50d1d702216098019013899ad87534c64e0/wdsp%202.11/Source)，固定提交 `e69de50d1d702216098019013899ad87534c64e0`，GPL-2.0-or-later。原始文件 SHA-256 在 `app/src/main/cpp/vendor/sources.json`；许可随源码与 APK 提供。
+- `xamd` 的 PLL、DSB 和 Hilbert 单边带分离内核保持原样。仅适配独立头文件、分配与排除上游 RXA 全局接口。JNI 负责所有权、配置重置、锁定状态观察、失锁时向包络的 20 ms 过渡，以及本项目 IQ 正频率约定与上游边带编号的转换。锁定状态是适配层观察值，不是上游提供的标志。
+- 载波 AGC 复用已固定的 [SDR++ AGC 包络跟踪](https://github.com/AlexandreRouma/SDRPlusPlus/blob/f10fb98af8b80de01de94e60c17608e4281e2515/core/src/dsp/loop/agc.h)，GPL-3.0；原文件已在 `vendor/sdrpp/agc-original.h`。设置归一化目标、快/慢时间常数、最大增益和低电平增益保持策略，并平滑增益。未接入 WDSP 的 `wcpAGC`，也未另写 PLL。
+- 包络幅度、音频去直流、Butterworth 低通与 tanh 保护沿用项目既有 AM 的数学形式；低通现在由 RF BW、所选边带、实际采样率及用户 Audio BW 限制。保护限幅保留并增加触发比例，未作为本轮主要音质改造。
+- 核心通过 `AmProcessor` 串行端口接入，Android 的 `NativeAmProcessor` 管理原生资源；不接触 USB、地图、数据库或播放设备。ACARS 保持原有检波器，仅共享居中载波的 IQ 去直流保护。普通 USB/LSB 不变，SAM USB/LSB 是保留载波锁定的 AM 子模式。
+- 默认包络 / Auto Audio BW / Slow AGC / 最大 40 dB。低于 −110 dBFS 时不继续抬升增益，持续 0.5 s 后平滑回到不超过单位增益；这不是额外静噪门。AM 主 AGC 开启时跳过监听响度补偿，原有保存值不改。
+
 ## SDR++ 显示重采样
 
 - 项目：[AlexandreRouma/SDRPlusPlus](https://github.com/AlexandreRouma/SDRPlusPlus)
@@ -21,7 +46,7 @@
 
 - ADS-B 复用 [wiedehopf/readsb](https://github.com/wiedehopf/readsb) 固定提交 `5d13a0c2b2a6d22949b8b13c5424f28b7f3e1ead`，GPL-3.0-or-later。源码、COPYING、版本和归档 SHA-256 在 `cpp/vendor/readsb/`；链接 zstd v1.5.7，按 BSD-3-Clause 使用，完整许可在 `cpp/vendor/zstd/`。
 - 原样编译 `demod_2400.c`、Mode S、CRC、CPR 与跟踪内核，独立进程从 stdin 接收 **2.4 MS/s UC8 原始 IQ**。Android 继续独占 USB；不启用 readsb 的原生 USB 后端，不将监听 NR/NB/SQL 音频送进解码器。
-- Android 适配仅涉及 `readsb.h` 中的 `posix_memalign` 兼容分配、`util.c` 使用现有 POSIX `pthread_join` 路径、CMake/PIE 打包和进程/JSON 生命周期管理。未另写或修改 ADS-B 解调及定位算法。
+- Android 适配涉及 `readsb.h` 的 `posix_memalign` 兼容分配、`util.c` 的条件唤醒与 POSIX `pthread_join`、CMake/PIE 打包，以及 stdin／进程／最终 JSON 的生命周期管理。架构分支另外修复启动期退出请求、正常 EOF 状态竞态，并移除退出信号处理器中会重入 libc 时间锁的日志调用。具体改动在 `cpp/vendor/readsb/UPSTREAM.json`；未另写或修改 ADS-B 解调及定位算法。
 - 地图复用 [MapLibre Native Android 13.7.1](https://maplibre.org/maplibre-native/android/api/) 的 OpenGL 包；原版 APK 使用的 OSM 栅格地址作为默认来源。地图与雷达在接收模块内切换，目标数据由接收服务维护。MapLibre 保留 HTTP 缓存；请求携带应用 User-Agent，按 [OSM 瓦片政策](https://operations.osmfoundation.org/policies/tiles/) 显示署名，不批量下载公共瓦片。
 - 指南针由 Android [方向传感器 API](https://developer.android.com/develop/sensors-and-location/sensors/sensors_position) 提供磁北朝向，显示层只绘制刻度，不将手机朝向称为无线电信号方位。距离使用 Android `Location.distanceBetween`，不从信号强度推算距离。
 

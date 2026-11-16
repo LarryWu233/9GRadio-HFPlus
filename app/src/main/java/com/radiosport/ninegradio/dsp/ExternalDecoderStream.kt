@@ -1,11 +1,15 @@
 package com.radiosport.ninegradio.dsp
 
 import android.util.Log
+import com.radiosport.ninegradio.pipeline.AudioBlock
+import com.radiosport.ninegradio.pipeline.AudioBlockClock
+import com.radiosport.ninegradio.pipeline.AudioDecoderInput
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 /**
@@ -43,7 +47,7 @@ import kotlin.concurrent.thread
  * continuity for the *local* decoders must never depend on an external
  * listener being present or fast enough.
  */
-class ExternalDecoderStream {
+class ExternalDecoderStream(private val resolve:(String)->InetAddress=InetAddress::getByName):AudioDecoderInput {
 
     companion object {
         private const val TAG = "ExternalDecoderStream"
@@ -54,136 +58,133 @@ class ExternalDecoderStream {
         private const val QUEUE_CAPACITY = 32
     }
 
-    @Volatile private var host: String = DEFAULT_HOST
-    @Volatile private var port: Int = DEFAULT_PORT
-    private val enabled = AtomicBoolean(false)
+    private data class Destination(val host:String,val port:Int)
+    @Volatile private var destination=Destination(DEFAULT_HOST,DEFAULT_PORT)
+    private val lifecycleLock=Any()
+    private val inputEpoch=AtomicLong()
+    @Volatile private var legacyClock=AudioBlockClock()
+    @Volatile private var session:SenderSession?=null
+    @Volatile private var finishing:SenderSession?=null
+    @Volatile private var lastSession:SenderSession?=null
+    @Volatile private var startError:String?=null
+    val isEnabled get()=session?.active?.get()==true
+    val hasPendingRelease get()=finishing?.worker?.isAlive==true
+    val packetsSent get()=(session ?: lastSession)?.sent?.get() ?: 0L
+    val packetsDropped get()=(session ?: lastSession)?.dropped?.get() ?: 0L
+    val stalePackets get()=(session ?: lastSession)?.stale?.get() ?: 0L
+    val lastError get()=if(hasPendingRelease) "外部解码发送线程仍在关闭，请稍候"
+        else startError ?: (session ?: lastSession)?.error
 
-    private val queue = ArrayBlockingQueue<ShortArray>(QUEUE_CAPACITY)
-    private var senderThread: Thread? = null
-    private val running = AtomicBoolean(false)
-
-    @Volatile var packetsSent: Long = 0
-        private set
-    @Volatile var packetsDropped: Long = 0
-        private set
-    @Volatile var lastError: String? = null
-        private set
-
-    /** Update the destination. Safe to call at any time, including while enabled. */
-    @Synchronized
-    fun configure(host: String, port: Int) {
-        this.host = host.ifBlank { DEFAULT_HOST }
-        this.port = if (port in 1..65535) port else DEFAULT_PORT
+    /** A replacement DSP owns a fresh epoch namespace. Previous production is joined first. */
+    fun beginStream():Unit=synchronized(lifecycleLock) {
+        check(!isEnabled) { "Stop external decoder input before replacing its stream" }
+        inputEpoch.set(0);legacyClock=AudioBlockClock();lastSession=null;startError=null
     }
 
-    val isEnabled: Boolean get() = enabled.get()
-
-    fun setEnabled(on: Boolean) {
-        if (on) start() else stop()
+    fun configure(host:String,port:Int) {
+        val next=Destination(host.ifBlank { DEFAULT_HOST },if(port in 1..65535) port else DEFAULT_PORT)
+        if(next!=destination) destination=next
     }
-
-    private fun start() {
-        if (!enabled.compareAndSet(false, true)) return
-        packetsSent = 0
-        packetsDropped = 0
-        lastError = null
-        queue.clear()
-        running.set(true)
-        senderThread = thread(name = "ExternalDecoderStream-sender", isDaemon = true) {
-            runSenderLoop()
-        }
-        Log.i(TAG, "Started -> udp://$host:$port (PCM16LE mono)")
-    }
-
-    private fun stop() {
-        if (!enabled.compareAndSet(true, false)) return
-        running.set(false)
-        // Wake the sender thread if it's blocked on queue.take().
-        queue.offer(ShortArray(0))
-        senderThread?.join(500)
-        senderThread = null
-        Log.i(TAG, "Stopped (sent=$packetsSent dropped=$packetsDropped)")
-    }
-
-    /**
-     * Enqueue a block of [-1, 1] float samples (the same representation
-     * DigitalVoiceDecoder.feed() takes) for transmission as PCM16LE. No-op
-     * when disabled. Never blocks the caller (the DSP thread) -- drops the
-     * oldest queued block instead of applying backpressure.
-     */
-    fun send(samples: FloatArray) {
-        if (!enabled.get() || samples.isEmpty()) return
-        // Convert to int16 here (same [-1,1] -> PCM16 scaling DigitalVoiceDecoder
-        // uses) and copy: the caller's float buffer may be reused/mutated on
-        // the next block.
-        val pcm = ShortArray(samples.size)
-        for (i in samples.indices) {
-            pcm[i] = (samples[i] * 32767f).toInt().coerceIn(-32768, 32767).toShort()
-        }
-        if (!queue.offer(pcm)) {
-            queue.poll() // drop oldest
-            packetsDropped++
-            queue.offer(pcm)
+    override fun configure(epoch:Long) {
+        val old=inputEpoch.getAndAccumulate(epoch,::maxOf)
+        if(epoch>old) session?.let { current ->
+            while(current.queue.poll()!=null) current.stale.incrementAndGet()
         }
     }
-
-    fun shutdown() {
-        stop()
-    }
-
-    // ── Sender thread ───────────────────────────────────────────────────────
-
-    private fun runSenderLoop() {
-        var socket: DatagramSocket? = null
-        try {
-            socket = DatagramSocket()
-        } catch (e: Exception) {
-            lastError = e.message
-            Log.e(TAG, "Failed to open UDP socket", e)
-            running.set(false)
-            enabled.set(false)
-            return
+    fun setEnabled(on:Boolean) { if(on) start() else stop() }
+    private fun start():Unit=synchronized(lifecycleLock) {
+        if(isEnabled) return@synchronized
+        if(session!=null || finishing!=null) stop()
+        // A DNS call may ignore interruption. Retain its owner and refuse reuse
+        // instead of letting an old worker join the next session's run flag/queue.
+        if(finishing?.worker?.isAlive==true) {
+            startError="外部解码发送线程仍在关闭，请稍候";return@synchronized
         }
+        finishing=null;startError=null
+        val next=SenderSession()
+        session=next;lastSession=next
+        next.launch()
+    }
+    private fun stop(timeoutMs:Long=500):Unit=synchronized(lifecycleLock) {
+        val old=session ?: finishing ?: return@synchronized
+        session=null;finishing=old
+        old.cancel()
+        old.worker?.let { if(it!==Thread.currentThread()) it.join(timeoutMs.coerceAtLeast(1)) }
+        if(old.worker?.isAlive!=true) finishing=null
+    }
+    /** Legacy copied PCM entry; typed callers avoid a redundant publication copy. */
+    fun send(samples:FloatArray) {
+        if(!isEnabled || samples.isEmpty()) return
+        accept(legacyClock.publish(samples,48000,1,inputEpoch.get()))
+    }
+    override fun accept(block:AudioBlock) {
+        val current=session ?: return
+        if(!current.active.get() || block.frameCount==0) return
+        require(block.sampleRate==48000 && block.channels==1) { "External decoder PCM must be 48 kHz mono" }
+        if(block.epoch>inputEpoch.get()) configure(block.epoch)
+        if(block.epoch!=inputEpoch.get()) { current.stale.incrementAndGet();return }
+        if(!current.queue.offer(block)) {
+            if(current.queue.poll()!=null) current.dropped.incrementAndGet()
+            if(!current.queue.offer(block)) current.dropped.incrementAndGet()
+        }
+    }
+    fun shutdown() { stop(5000) }
 
-        var scratch = ByteArray(4096)
-
-        while (running.get()) {
-            val block = try {
-                queue.take()
-            } catch (e: InterruptedException) {
-                break
-            }
-            if (block.isEmpty()) continue // wake-up sentinel from stop()
-
-            val needed = block.size * 2
-            if (scratch.size < needed) scratch = ByteArray(needed)
-
-            // Signed PCM16LE, mono, headerless -- exactly the dsd-neo/dsd-fme
-            // "-i udp" wire format.
-            var o = 0
-            for (s in block) {
-                scratch[o]     = (s.toInt() and 0xFF).toByte()
-                scratch[o + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
-                o += 2
-            }
-
+    private inner class SenderSession {
+        val active=AtomicBoolean(true)
+        val queue=ArrayBlockingQueue<AudioBlock>(QUEUE_CAPACITY)
+        val sent=AtomicLong()
+        val dropped=AtomicLong()
+        val stale=AtomicLong()
+        @Volatile var error:String?=null
+        @Volatile var socket:DatagramSocket?=null
+        @Volatile var worker:Thread?=null
+        fun launch() {
+            val next=thread(start=false,name="ExternalDecoderStream-sender",isDaemon=true) { run() }
+            worker=next;next.start()
+        }
+        fun cancel() {
+            active.set(false);socket?.close();worker?.interrupt();queue.clear()
+        }
+        private fun run() {
             try {
-                val addr = InetAddress.getByName(host)
-                val packet = DatagramPacket(scratch, needed, addr, port)
-                socket.send(packet)
-                packetsSent++
-            } catch (e: Exception) {
-                // Typical causes: DNS failure for a bad hostname, or (on some
-                // devices) an ICMP port-unreachable surfaced back as an
-                // exception when nothing is listening yet. Either way, don't
-                // spam the log or crash the sender thread -- just drop this
-                // block and keep going; the next enabled listener will start
-                // receiving audio immediately once it comes up.
-                lastError = e.message
-                packetsDropped++
-            }
+                val output=DatagramSocket()
+                socket=output
+                if(!active.get()) return
+                var scratch=ByteArray(4096)
+                var resolvedDestination:Destination?=null
+                var address:InetAddress?=null
+                while(active.get()) {
+                    val block=queue.take()
+                    if(block.epoch!=inputEpoch.get()) { stale.incrementAndGet();continue }
+                    val target=destination
+                    try {
+                        if(resolvedDestination!==target || address==null) {
+                            address=resolve(target.host);resolvedDestination=target
+                        }
+                        if(!active.get() || session!==this) break
+                        if(destination!==target || block.epoch!=inputEpoch.get()) { stale.incrementAndGet();continue }
+                        val needed=block.samples.size*2
+                        if(scratch.size<needed) scratch=ByteArray(needed)
+                        var offset=0
+                        for(value in block.samples) {
+                            val sample=(value*32767f).toInt().coerceIn(-32768,32767)
+                            scratch[offset++]=(sample and 255).toByte()
+                            scratch[offset++]=((sample shr 8) and 255).toByte()
+                        }
+                        output.send(DatagramPacket(scratch,needed,address,target.port))
+                        sent.incrementAndGet()
+                    } catch(error:Exception) {
+                        if(active.get()) {
+                            this.error=error.message;dropped.incrementAndGet()
+                            address=null
+                        }
+                    }
+                }
+            } catch(_:InterruptedException) { /* cancellation */ }
+            catch(error:Exception) {
+                if(active.get()) { this.error=error.message;Log.w(TAG,"External decoder sender failed",error) }
+            } finally { active.set(false);socket?.close();queue.clear() }
         }
-
-        socket.close()
     }
 }

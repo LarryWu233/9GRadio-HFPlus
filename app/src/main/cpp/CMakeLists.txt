@@ -8,6 +8,7 @@ add_compile_options(
     "-fdebug-prefix-map=${NINEGRADIO_SOURCE_ROOT}=/src/9gradio")
 include(readsb.cmake)
 include(audio_content.cmake)
+include(ais.cmake)
 
 # Pinned upstream sources and their licenses are kept under vendor/.
 set(USB_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libusb)
@@ -158,8 +159,13 @@ target_link_libraries(dsd_neo
 )
 
 # ── ninegradio_dsp: existing NEON/VOLK DSP library ───────────────────────────
-add_library(ninegradio_dsp SHARED ninegradio_dsp_jni.cpp listening_audio_jni.cpp iq_noise_blanker_jni.cpp
-    vendor/wdsp/anf.c vendor/wdsp-nb/nobII.c)
+set(PFFFT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/mbelib-neo/src/external/pffft)
+add_library(receiver_pffft STATIC ${PFFFT_ROOT}/pffft.c ${PFFFT_ROOT}/fftpack.c)
+target_compile_options(receiver_pffft PRIVATE -O3)
+target_include_directories(receiver_pffft PUBLIC ${PFFFT_ROOT})
+add_library(ninegradio_dsp SHARED ninegradio_dsp_jni.cpp listening_audio_jni.cpp iq_noise_blanker_jni.cpp am_jni.cpp channel_filter_jni.cpp
+    pffft_jni.cpp vendor/wdsp/anf.c vendor/wdsp-nb/nobII.c vendor/wdsp-am/amd.c)
 target_compile_definitions(ninegradio_dsp PRIVATE NINEGRADIO_STANDALONE_ANF=1)
+set_source_files_properties(vendor/wdsp-am/amd.c PROPERTIES COMPILE_DEFINITIONS NINEGRADIO_STANDALONE_AM=1)
 target_compile_options(ninegradio_dsp PRIVATE -O3 -ffast-math)
-target_link_libraries(ninegradio_dsp ${log-lib} android)
+target_link_libraries(ninegradio_dsp ${log-lib} android receiver_pffft)

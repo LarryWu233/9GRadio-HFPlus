@@ -148,8 +148,8 @@ class AcarsDecoder(private val sampleRate: Int = 48_000) {
     // ── AFSK demodulator ──────────────────────────────────────────────────────
 
     private val samplesPerBit = sampleRate / BAUD_RATE
-    private val markBpf  = IirBpf(MARK_HZ,  sampleRate, q = 10.0)
-    private val spaceBpf = IirBpf(SPACE_HZ, sampleRate, q = 10.0)
+    private var markBpf  = IirBpf(MARK_HZ,  sampleRate, q = 10.0)
+    private var spaceBpf = IirBpf(SPACE_HZ, sampleRate, q = 10.0)
     private var samplesSinceBit = 0.0
     private var lastRawBit      = false
 
@@ -187,6 +187,11 @@ class AcarsDecoder(private val sampleRate: Int = 48_000) {
      * Feed demodulated AM audio into the ACARS bit detector.
      * [samples] must be at [sampleRate], mono, normalised −1…1.
      */
+    fun resetSignalState() {
+        markBpf=IirBpf(MARK_HZ,sampleRate,q=10.0); spaceBpf=IirBpf(SPACE_HZ,sampleRate,q=10.0)
+        samplesSinceBit=0.0; lastRawBit=false; bitCount=0; currentByte=0; prevBit=false
+        crcByte0=0; crcByte1=0; resetState()
+    }
     fun feed(samples: FloatArray) {
         val halfBit = samplesPerBit / 2.0
         for (s in samples) {

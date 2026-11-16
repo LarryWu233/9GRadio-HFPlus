@@ -1,0 +1,626 @@
+/*
+	Copyright(c) 2021-2026 jvde.github@gmail.com
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#include <cstring>
+
+#include "HTTPServer.h"
+#include "Convert.h"
+#include "Logger.h"
+
+namespace IO
+{
+	static std::string httpDate(time_t t)
+	{
+		struct tm tm_utc;
+#ifdef _WIN32
+		gmtime_s(&tm_utc, &t);
+#else
+		gmtime_r(&t, &tm_utc);
+#endif
+		char buf[40];
+		strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_utc);
+		return buf;
+	}
+
+	// HTTP Server
+	void HTTPServer::processClients()
+	{
+		const std::time_t now_t = std::time(nullptr);
+
+		for (auto &c : client)
+		{
+			if (!c.isConnected())
+				continue;
+			// a stream reads nothing after the request that opened it, nor does a response that closes
+			if (c.close_after_send || c.no_timeout)
+			{
+				c.msg.clear();
+				continue;
+			}
+
+			// timer runs while a request is arriving but not yet complete
+			if (c.msg.empty() || c.hasSendBuffer())
+				c.request_start = 0;
+			else if (c.request_start == 0)
+				c.request_start = now_t;
+
+			// the next request waits until the last response has gone out: a
+			// client that does not read gets no more queued for it
+			while (!c.hasSendBuffer())
+			{
+				HTTPRequest request;
+				std::size_t length;
+				if (!nextRequest(c, request, length))
+					break;
+				answer(c, request);
+				c.msg.erase(0, length);
+				c.continue_sent = false;
+				c.request_start = c.msg.empty() ? 0 : now_t;
+				// closing after this response, or now a stream; ignore any pipelined requests
+				if (c.close_after_send || c.no_timeout)
+					break;
+			}
+
+			if (c.msg.size() > Limits::REQUEST_SIZE)
+				reject(c, 431, "accumulated message too large");
+			// drop never-completing requests so slow senders can't exhaust slots (slowloris)
+			else if (!c.close_after_send && !c.msg.empty() && c.request_start != 0 && now_t - c.request_start > Limits::REQUEST_TIMEOUT)
+				reject(c, 408, "request header timeout");
+		}
+
+		// reclaims dead SSE slots even when no events flow
+		auto now = std::chrono::steady_clock::now();
+		if (now - last_sse_ping >= std::chrono::seconds(Limits::STREAM_PING_S))
+		{
+			last_sse_ping = now;
+			for (auto &s : sse)
+				s.Ping();
+			cleanupSSE();
+		}
+	}
+
+	bool HTTPServer::nextRequest(IO::TCPServerConnection &c, HTTPRequest &request, std::size_t &length)
+	{
+		static const std::string EOF_MSG = "\r\n\r\n";
+
+		// RFC 9112 2.2: empty lines before the request line are ignored,
+		// not mistaken for the request itself
+		std::size_t skip = 0;
+		while (c.msg.compare(skip, 2, "\r\n") == 0)
+			skip += 2;
+		if (skip)
+			c.msg.erase(0, skip);
+
+		const std::size_t pos = c.msg.find(EOF_MSG);
+		if (pos == std::string::npos ? c.msg.size() > Limits::HEADER_SIZE : pos > Limits::HEADER_SIZE)
+		{
+			reject(c, 431, "header section too large");
+			return false;
+		}
+		if (pos == std::string::npos)
+			return false;
+
+		std::string error;
+		const int status = parseHeaders(c.msg, pos, request, error);
+		if (status)
+		{
+			reject(c, status, error);
+			return false;
+		}
+		// a server of this machine alone answers only what names it as such: a
+		// page whose own name was pointed here (DNS rebinding) is turned away
+		if (localOnly() && !addressedHere(request.host))
+		{
+			reject(c, 403, "a request for another host on a server of this machine");
+			return false;
+		}
+
+		length = pos + 4;
+		if (length > Limits::REQUEST_SIZE || request.content_length > Limits::REQUEST_SIZE - length)
+		{
+			reject(c, 413, "total request size too large");
+			return false;
+		}
+		length += request.content_length;
+		if (c.msg.size() < length)
+		{
+			// RFC 9110 10.1.1: the body only arrives once we say so
+			if (request.expect_continue && !c.continue_sent)
+			{
+				static const char cont[] = "HTTP/1.1 100 Continue\r\n\r\n";
+				c.continue_sent = true;
+				Send(c, cont, sizeof(cont) - 1);
+			}
+			return false;
+		}
+
+		if (request.method == "POST" && request.content_length > 0)
+			request.body = c.msg.substr(pos + 4, request.content_length);
+		request.peer = Net::ipv4String(c.peer_ipv4);
+		request.local = c.peer_local;
+		// a proxy on this machine speaks for a client elsewhere: that client is the peer, and not local
+		if (c.peer_local && !request.forwarded_for.empty())
+		{
+			request.peer = request.forwarded_for;
+			request.local = false;
+		}
+		return true;
+	}
+
+	void HTTPServer::answer(IO::TCPServerConnection &c, HTTPRequest &request)
+	{
+		c.close_after_send = !request.keep_alive;
+		// HEAD is GET without the body; ResponseRaw suppresses it
+		c.head_request = request.method == "HEAD";
+		if (c.head_request)
+			request.method = "GET";
+
+		if (request.method == "OPTIONS")
+			Options(c, request);
+		else if (request.method == "GET" || request.method == "POST")
+		{
+			request.owner = isOwner(request);
+			if (!dispatchMount(c, request, request.accept_gzip))
+				Request(c, request, request.accept_gzip);
+		}
+		else
+			Response(c, "text/plain", std::string("Method not allowed."), Reply(405).with("Allow: GET, HEAD, POST, OPTIONS"));
+		c.head_request = false;
+	}
+
+	void HTTPServer::NotFound(IO::TCPServerConnection &c)
+	{
+		c.close_after_send = true;
+		Response(c, "text/html", std::string("Page not found."), Reply(404));
+	}
+
+	// Send an error response and drop the connection once it is flushed;
+	// whatever is left in the input buffer cannot be trusted after a
+	// malformed request.
+	bool HTTPServer::localOnly() const
+	{
+		return IP_BIND == "localhost" || IP_BIND == "::1" || IP_BIND.compare(0, 4, "127.") == 0;
+	}
+
+	// localhost or an address: a name no one else can point at this machine
+	bool HTTPServer::addressedHere(const std::string &host)
+	{
+		if (host.empty() || host[0] == '[')
+			return true;
+		std::string name = host.substr(0, host.rfind(':'));
+		Util::Convert::toLower(name);
+		if (name == "localhost")
+			return true;
+		int dots = 0;
+		for (char ch : name)
+			if (ch == '.')
+				dots++;
+			else if (ch < '0' || ch > '9')
+				return false;
+		return dots == 3;
+	}
+
+	// Someone on this machine itself: its own address, no proxy passing someone else on,
+	// a name no one else can point here (DNS rebinding), and not a page of another origin
+	// reaching in, which the viewer's open CORS would let read the answer.
+	bool HTTPServer::isOwner(const HTTPRequest &r)
+	{
+		if (!r.local || r.forwarded || r.host.empty() || !addressedHere(r.host))
+			return false;
+		if (r.origin.empty())
+			return true;
+		const std::size_t scheme = r.origin.find("://");
+		return scheme != std::string::npos && Util::Convert::toLowerCopy(r.origin.substr(scheme + 3)) == Util::Convert::toLowerCopy(r.host);
+	}
+
+	void HTTPServer::reject(IO::TCPServerConnection &c, int status, const std::string &reason)
+	{
+		// the reason may quote the request: short, and no control characters for the log or a terminal
+		std::string safe = reason.substr(0, MAX_REASON_SIZE);
+		for (char &ch : safe)
+			if ((unsigned char)ch < 0x20 || (unsigned char)ch >= 0x7f)
+				ch = '?';
+		std::string tail;
+		if (rejects.due(std::time(nullptr), tail))
+			Warning() << "Server: closing connection, " << safe << tail;
+		c.close_after_send = true;
+		Response(c, "text/plain", safe, Reply(status));
+		c.msg.clear();
+	}
+
+	void HTTPServer::Request(IO::TCPServerConnection &c, const HTTPRequest &, bool)
+	{
+		NotFound(c);
+	}
+
+	bool HTTPServer::dispatchMount(IO::TCPServerConnection &c, const HTTPRequest &r, bool accept_gzip)
+	{
+		const std::string path = r.path();
+
+		// the mount is looked up under the lock and answered outside it: a mounted
+		// server is never removed, only replaced
+		std::string prefix;
+		HTTPServer *target = nullptr;
+		{
+			std::lock_guard<std::mutex> lock(mounts_mtx);
+			for (const auto &m : mounts)
+				if (path.rfind(m.first, 0) == 0 && (path.size() == m.first.size() || path[m.first.size()] == '/'))
+				{
+					prefix = m.first;
+					target = m.second;
+					break;
+				}
+		}
+		if (!target)
+			return false;
+
+		// What a mount serves is relative, so the browser must believe it is
+		// inside a directory.
+		if (path.size() == prefix.size())
+		{
+			Response(c, "text/plain", std::string(), Reply(301).with("Location: " + prefix + "/"));
+			return true;
+		}
+
+		HTTPRequest sub = r;
+		sub.target = r.target.substr(prefix.size());
+		sub.owner = r.owner || ownerOfMount(r);
+		target->Request(c, sub, accept_gzip);
+		return true;
+	}
+
+	int HTTPServer::parseHeaders(const std::string &msg, std::size_t header_end, HTTPRequest &r, std::string &error)
+	{
+		r = HTTPRequest();
+
+		std::string version, connection, expect;
+		std::size_t line_start = 0;
+		bool first_line = true;
+		bool seen_content_length = false;
+		bool seen_host = false;
+
+		while (line_start < header_end)
+		{
+			std::size_t line_end = msg.find("\r\n", line_start);
+			if (line_end == std::string::npos || line_end > header_end)
+				line_end = header_end;
+
+			std::string line = msg.substr(line_start, line_end - line_start);
+			line_start = line_end + 2;
+
+			if (first_line)
+			{
+				first_line = false;
+
+				std::size_t sp1 = line.find(' ');
+				std::size_t sp2 = sp1 == std::string::npos ? std::string::npos : line.find(' ', sp1 + 1);
+
+				// exactly three tokens: a space anywhere else is ambiguous framing, not a target we should guess at
+				if (sp1 == std::string::npos || sp1 == 0 || sp2 == std::string::npos ||
+					sp2 == sp1 + 1 || sp2 + 1 == line.size() || line.find(' ', sp2 + 1) != std::string::npos)
+				{
+					error = "malformed request line";
+					return 400;
+				}
+
+				r.method = line.substr(0, sp1);
+				r.target = line.substr(sp1 + 1, sp2 - sp1 - 1);
+				version = line.substr(sp2 + 1);
+				Util::Convert::toUpper(r.method);
+				Util::Convert::toUpper(version);
+
+				if (version.size() != 8 || version.compare(0, 7, "HTTP/1.") != 0 || version[7] < '0' || version[7] > '9')
+				{
+					error = "unsupported HTTP version: " + version;
+					return 505;
+				}
+
+				if (r.target[0] != '/')
+				{
+					std::size_t scheme = r.target.find("://");
+					if (scheme == std::string::npos)
+					{
+						error = "unsupported request target: " + r.target;
+						return 400;
+					}
+
+					std::size_t slash = r.target.find('/', scheme + 3);
+					r.target = slash == std::string::npos ? "/" : r.target.substr(slash);
+				}
+				continue;
+			}
+
+			// obs-fold: a continuation line can hide framing headers from this parser
+			if (line.empty() || line[0] == ' ' || line[0] == '\t')
+			{
+				error = "malformed header field";
+				return 400;
+			}
+
+			std::size_t colon = line.find(':');
+			if (colon == std::string::npos || colon == 0)
+			{
+				error = "malformed header field";
+				return 400;
+			}
+
+			std::string key = line.substr(0, colon);
+			// whitespace before the colon is the classic request-smuggling desync
+			if (key.back() == ' ' || key.back() == '\t')
+			{
+				error = "whitespace before header colon";
+				return 400;
+			}
+
+			std::string value = line.substr(colon + 1);
+			Util::Convert::toUpper(key);
+			value.erase(0, value.find_first_not_of(" \t"));
+			std::size_t value_end = value.find_last_not_of(" \t");
+			value.erase(value_end == std::string::npos ? 0 : value_end + 1);
+
+			if (key == "ACCEPT-ENCODING")
+			{
+				r.accept_gzip = value.find("gzip") != std::string::npos;
+			}
+			else if (key == "COOKIE")
+			{
+				r.cookie = value;
+			}
+			else if (key == "HOST")
+			{
+				if (seen_host)
+				{
+					error = "duplicate Host header";
+					return 400;
+				}
+				seen_host = true;
+				r.host = value;
+			}
+			else if (key == "ORIGIN")
+			{
+				r.origin = value;
+			}
+			else if (key == "FORWARDED" || key == "X-REAL-IP" || key.compare(0, 12, "X-FORWARDED-") == 0)
+			{
+				r.forwarded = true;
+				if (key == "X-FORWARDED-HOST")
+					r.forwarded_host = value;
+				else if (key == "X-FORWARDED-FOR" || (key == "X-REAL-IP" && r.forwarded_for.empty()))
+				{
+					std::string first = value.substr(0, value.find(','));
+					const std::size_t from = first.find_first_not_of(" \t"), to = first.find_last_not_of(" \t");
+					first = from == std::string::npos ? std::string() : first.substr(from, to - from + 1);
+					if (!first.empty() && first.size() <= 45 && first.find_first_not_of("0123456789abcdefABCDEF.:") == std::string::npos)
+						r.forwarded_for = first;
+				}
+			}
+			else if (key == "X-SETUP-CODE")
+			{
+				r.setup_code = value;
+			}
+			else if (key == "AUTHORIZATION")
+			{
+				r.authorization = value;
+			}
+			else if (key == "CONNECTION")
+			{
+				connection = value;
+				Util::Convert::toLower(connection);
+			}
+			else if (key == "EXPECT")
+			{
+				expect = value;
+				Util::Convert::toLower(expect);
+			}
+			else if (key == "TRANSFER-ENCODING")
+			{
+				// unsupported framing must be rejected, not misparsed
+				error = "Transfer-Encoding not supported";
+				return 501;
+			}
+			else if (key == "CONTENT-LENGTH")
+			{
+				if (seen_content_length)
+				{
+					error = "duplicate Content-Length header";
+					return 400;
+				}
+				seen_content_length = true;
+
+				if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos)
+				{
+					error = "invalid Content-Length: " + value;
+					return 400;
+				}
+
+				try
+				{
+					r.content_length = std::stoul(value);
+				}
+				catch (...)
+				{
+					error = "invalid Content-Length: " + value;
+					return 400;
+				}
+				if (r.content_length > Limits::REQUEST_SIZE)
+				{
+					error = "Content-Length too large: " + value;
+					return 413;
+				}
+			}
+		}
+
+		if (first_line)
+		{
+			error = "missing request line";
+			return 400;
+		}
+
+		// Host is mandatory from HTTP/1.1 on, and 1.0 predates it
+		if (version != "HTTP/1.0" && !seen_host)
+		{
+			error = "missing Host header";
+			return 400;
+		}
+
+		r.expect_continue = expect.find("100-continue") != std::string::npos;
+
+		// HTTP/1.0 is close-by-default, HTTP/1.1 keep-alive-by-default
+		if (version == "HTTP/1.0")
+			r.keep_alive = connection.find("keep-alive") != std::string::npos;
+		else
+			r.keep_alive = connection.find("close") == std::string::npos;
+
+		return 0;
+	}
+
+	static const char *statusText(int status)
+	{
+		switch (status)
+		{
+		case 204:
+			return "No Content";
+		case 400:
+			return "Bad Request";
+		case 401:
+			return "Unauthorized";
+		case 403:
+			return "Forbidden";
+		case 404:
+			return "Not Found";
+		case 405:
+			return "Method Not Allowed";
+		case 408:
+			return "Request Timeout";
+		case 413:
+			return "Content Too Large";
+		case 429:
+			return "Too Many Requests";
+		case 431:
+			return "Request Header Fields Too Large";
+		case 500:
+			return "Internal Server Error";
+		case 501:
+			return "Not Implemented";
+		case 503:
+			return "Service Unavailable";
+		default:
+			return "OK";
+		}
+	}
+
+	void HTTPServer::Options(IO::TCPServerConnection &c, const HTTPRequest &)
+	{
+		Response(c, "text/plain", std::string(), Reply(204).with("Allow: GET, HEAD, POST, OPTIONS"));
+	}
+
+	void HTTPServer::Response(IO::TCPServerConnection &c, const std::string &type, const std::string &content, const Reply &reply)
+	{
+		Response(c, type, content.c_str(), (int)content.size(), reply);
+	}
+
+	void HTTPServer::Response(IO::TCPServerConnection &c, const std::string &type, const char *data, int len, const Reply &reply)
+	{
+		Reply raw = reply;
+#ifdef HASZLIB
+		if (reply.gzip && len >= (int)GZIP_MIN_LENGTH && zip.zip(data, len))
+		{
+			ResponseRaw(c, type, (const char *)zip.getOutputPtr(), zip.getOutputLength(), raw);
+			return;
+		}
+#endif
+		raw.gzip = false;
+		ResponseRaw(c, type, data, len, raw);
+	}
+
+	// Headers identical for every response, rebuilt only when the frame_*
+	// settings change.
+	std::string HTTPServer::commonHeaders()
+	{
+		std::lock_guard<std::mutex> lock(headers_mtx);
+		if (common_headers.empty())
+		{
+			common_headers = "\r\nServer: AIS-catcher";
+			common_headers += "\r\nContent-Security-Policy: default-src 'self'; "
+				"script-src " + csp_script_src + "; "
+				"style-src 'self' 'unsafe-inline'; "
+				"img-src 'self' data: blob: http: https:; "
+				"connect-src 'self' http: https: ws: wss:; "
+				"font-src 'self' data:; "
+				"frame-src " + frame_src + "; "
+				"form-action 'self'; "
+				"frame-ancestors " + frame_ancestors + "; "
+				"base-uri 'self'";
+			common_headers += "\r\nX-Content-Type-Options: nosniff";
+			common_headers += "\r\nReferrer-Policy: strict-origin-when-cross-origin";
+			common_headers += "\r\nVary: Accept-Encoding";
+		}
+		return common_headers;
+	}
+
+	void HTTPServer::ResponseRaw(IO::TCPServerConnection &c, const std::string &type, const char *data, int len, const Reply &reply)
+	{
+		std::string header = "HTTP/1.1 " + std::to_string(reply.status) + " " + statusText(reply.status) +
+							 "\r\nContent-Type: " + type + commonHeaders();
+		header += "\r\nDate: " + httpDate(time(nullptr));
+
+		if (!reply.header.empty())
+			header += "\r\n" + reply.header;
+
+		if (reply.cors)
+			header += "\r\nAccess-Control-Allow-Origin: *";
+
+		if (reply.gzip)
+			header += "\r\nContent-Encoding: gzip";
+
+		// a header line that sets Cache-Control speaks for the response
+		if (reply.header.find("Cache-Control:") != std::string::npos)
+		{
+		}
+		else if (reply.cache)
+		{
+			header += "\r\nCache-Control: max-age=31536000, stale-while-revalidate=604800, stale-if-error=604800";
+			header += "\r\nExpires: " + httpDate(time(nullptr) + 31536000);
+		}
+		else
+		{
+			header += "\r\nCache-Control: private, no-store, max-age=0, s-maxage=0";
+		}
+
+		header += std::string("\r\nConnection: ") + (c.close_after_send ? "close" : "keep-alive") +
+				  "\r\nContent-Length: " + std::to_string(len) + "\r\n\r\n";
+
+		if (!Send(c, header.c_str(), header.length()))
+		{
+			Error() << "Server: closing client socket.";
+			c.Close();
+			return;
+		}
+		bytes_out += header.length();
+
+		if (c.head_request)
+			return;
+
+		bytes_out += len;
+		if (!Send(c, data, len))
+		{
+			Error() << "Server: closing client socket.";
+			c.Close();
+			return;
+		}
+	}
+}

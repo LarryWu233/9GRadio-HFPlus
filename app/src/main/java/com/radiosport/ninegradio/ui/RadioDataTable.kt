@@ -16,6 +16,9 @@ open class RadioDataTable @JvmOverloads constructor(context: Context,attrs: Attr
     data class Row(val values: List<String>,val active: Boolean=false)
     var onRowClick: ((Int)->Unit)?=null
     var onRowLongClick: ((Int)->Boolean)?=null
+    /** Optional action columns. Other cells retain the existing row gestures. */
+    var actionColumns:Set<Int> = emptySet()
+    var onCellClick:((Int,Int)->Unit)?=null
     private var columns=emptyList<Column>()
     private var rows=emptyList<Row>()
     private val body=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL }
@@ -45,7 +48,16 @@ open class RadioDataTable @JvmOverloads constructor(context: Context,attrs: Attr
             }
             val row=rows[position]
             line.setBackgroundColor(if(row.active) UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSelected) else if(position%2==0) UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioSurface) else UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioCard))
-            columns.indices.forEach { (line.getChildAt(it) as TextView).text=row.values.getOrElse(it) { "—" } }
+            columns.indices.forEach { column -> (line.getChildAt(column) as TextView).apply {
+                text=row.values.getOrElse(column) { "—" }
+                if(column in actionColumns && onCellClick!=null) {
+                    setOnClickListener { onCellClick?.invoke(position,column) }
+                    setTextColor(UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioAccent))
+                } else {
+                    setOnClickListener(null);isClickable=false
+                    setTextColor(UiThemes.color(context,com.radiosport.ninegradio.R.attr.radioText))
+                }
+            } }
             line.contentDescription=columns.mapIndexed { i,col -> "${col.title} ${row.values.getOrElse(i) { "—" }}" }.joinToString("，")
             return line
         }

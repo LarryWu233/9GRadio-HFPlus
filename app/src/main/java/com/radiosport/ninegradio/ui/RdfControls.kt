@@ -14,6 +14,11 @@ class RdfControls(context: Context): LinearLayout(context) {
     private val location=TextView(context)
     private val compass=ReceiverCompassView(context)
     private var live=true
+    private var active=false
+    private var lastDb=Float.NaN
+    private var lastConnected=false
+    private var lastFrequency=0L
+    private var hasReading=false
     private fun dp(v: Int)=(v*resources.displayMetrics.density).toInt()
     init {
         orientation=VERTICAL; setPadding(dp(16),dp(12),dp(16),dp(16))
@@ -37,7 +42,7 @@ class RdfControls(context: Context): LinearLayout(context) {
         addView(frequency.apply { textSize=16f; typeface=android.graphics.Typeface.MONOSPACE; setTextColor(0xffdbe5eb.toInt()) })
         addView(MaterialSwitch(context).apply {
             text="实时电平"; isChecked=true
-            setOnCheckedChangeListener { _,on -> live=on }
+            setOnCheckedChangeListener { _,on -> live=on; if(on && active && hasReading) bindReading() }
         },LayoutParams(-1,dp(48)))
         addView(location.apply { textSize=13f; setTextColor(0xffa9bdc8.toInt()) })
         addView(Button(context).apply {
@@ -46,14 +51,25 @@ class RdfControls(context: Context): LinearLayout(context) {
         },LayoutParams(-1,dp(48)))
         ControlColors.apply(this,ControlColors.Group.RADIO)
     }
-    fun setActive(active: Boolean) { compass.setActive(active) }
+    fun setActive(active: Boolean) {
+        val changed=this.active!=active
+        this.active=active;compass.setActive(active)
+        if(changed && active && hasReading) bindReading()
+    }
     fun render(db: Float,connected: Boolean,hz: Long) {
-        if(live || !connected) {
-            level.text=if(connected && db.isFinite()) "%.1f dBFS".format(db) else "—"
-            state.text=if(connected) "接收中" else "已关闭"
-            frequency.text="当前频率　${"%.6f".format(hz/1e6)} MHz"
+        lastDb=db;lastConnected=connected;lastFrequency=hz;hasReading=true
+        if(active) bindReading()
+    }
+    private fun setTextIfChanged(view:TextView,value:String) {
+        if(view.text.toString()!=value) view.text=value
+    }
+    private fun bindReading() {
+        if(live || !lastConnected) {
+            setTextIfChanged(level,if(lastConnected && lastDb.isFinite()) "%.1f dBFS".format(lastDb) else "—")
+            setTextIfChanged(state,if(lastConnected) "接收中" else "已关闭")
+            setTextIfChanged(frequency,"当前频率　${"%.6f".format(lastFrequency/1e6)} MHz")
         }
         val prefs=context.getSharedPreferences("radio_map",Context.MODE_PRIVATE)
-        location.text=if(prefs.contains("receiverLat")) "接收位置　${prefs.getFloat("receiverLat",0f)}, ${prefs.getFloat("receiverLon",0f)}" else "接收位置未设置"
+        setTextIfChanged(location,if(prefs.contains("receiverLat")) "接收位置　${prefs.getFloat("receiverLat",0f)}, ${prefs.getFloat("receiverLon",0f)}" else "接收位置未设置")
     }
 }

@@ -5,7 +5,9 @@
     <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical">
         <TextView android:id="@+id/tvAdsbPanelCount" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:text="飞机：0" android:textColor="?attr/radioAccent" android:textSize="15sp"/>
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        <TextView android:id="@+id/btnAdsbPanelRadar" android:layout_width="wrap_content" android:layout_height="48dp"
+            android:minWidth="48dp" android:gravity="center" android:clickable="true" android:focusable="true"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="显示雷达"
             android:text="雷达" android:textColor="?attr/radioSecondary" android:textSize="12sp"/>
         <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/btnAdsbPanelMap"
             android:layout_width="wrap_content" android:layout_height="48dp" android:text="地图" android:checked="true"
@@ -15,6 +17,10 @@
     </LinearLayout>
     <TextView android:id="@+id/tvAdsbPanelStatus" android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="等待 ADS-B 输入" android:textColor="?attr/radioSecondary" android:textSize="11sp"/>
+    <TextView android:id="@+id/tvAdsbReceiverLocation" android:layout_width="match_parent" android:layout_height="48dp"
+        android:gravity="center_vertical" android:text="未设置接收位置" android:clickable="true" android:focusable="true"
+        android:background="?attr/selectableItemBackground" android:contentDescription="接收位置"
+        android:textColor="?attr/radioLink" android:textSize="11sp"/>
     <LinearLayout android:layout_width="match_parent" android:layout_height="36dp" android:gravity="center_vertical">
         <TextView android:id="@+id/tvAdsbRecordDistance" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="match_parent" android:gravity="center_vertical" android:text="记录距离：—"

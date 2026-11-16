@@ -1,0 +1,317 @@
+/*
+	Copyright(c) 2021-2026 jvde.github@gmail.com
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#include <cstring>
+
+#include "RTLTCP.h"
+#include "Logger.h"
+
+namespace Device
+{
+
+	//---------------------------------------
+	// Device RTLTCP
+
+	void RTLTCP::Play()
+	{
+
+		switch (Protocol)
+		{
+		case PROTOCOL::MQTT:
+			session = tcp.add(&mqtt);
+			mqtt.setOptionKey(AIS::KEY_SETTING_SUBSCRIBE, "on");
+			break;
+		case PROTOCOL::MQTTS:
+			session = tcp.add(&tls);
+			session = tls.add(&mqtt);
+			mqtt.setOptionKey(AIS::KEY_SETTING_SUBSCRIBE, "on");
+			break;
+		case PROTOCOL::TLS:
+			session = tcp.add(&tls);
+			break;
+		case PROTOCOL::GPSD:
+			session = tcp.add(&gpsd);
+			break;
+		case PROTOCOL::RTLTCP:
+			session = tcp.add(&rtltcp);
+			tcp.setOptionKey(AIS::KEY_SETTING_TIMEOUT, "2");
+			break;
+		case PROTOCOL::ZMQ:
+			session = tcp.add(&zmq);
+			break;
+		case PROTOCOL::WS:
+			session = tcp.add(&ws);
+			break;
+		case PROTOCOL::WSS:
+			session = tcp.add(&tls);
+			session = tls.add(&ws);
+			break;
+		case PROTOCOL::WSMQTT:
+			session = tcp.add(&ws);
+			session = ws.add(&mqtt);
+			ws.setOptionKey(AIS::KEY_SETTING_PROTOCOLS, "mqtt");
+			ws.setOptionKey(AIS::KEY_SETTING_BINARY, "on");
+			mqtt.setOptionKey(AIS::KEY_SETTING_SUBSCRIBE, "on");
+			break;
+		case PROTOCOL::WSSMQTT:
+			session = tcp.add(&tls);
+			session = tls.add(&ws);
+			session = ws.add(&mqtt);
+			ws.setOptionKey(AIS::KEY_SETTING_PROTOCOLS, "mqtt");
+			ws.setOptionKey(AIS::KEY_SETTING_BINARY, "on");
+			mqtt.setOptionKey(AIS::KEY_SETTING_SUBSCRIBE, "on");
+			break;
+		default:
+			break;
+		}
+
+		rtltcp.setOptionKey(AIS::KEY_SETTING_FREQUENCY, std::to_string(frequency));
+		rtltcp.setOptionKey(AIS::KEY_SETTING_SAMPLE_RATE, std::to_string(sample_rate));
+		rtltcp.setOptionKey(AIS::KEY_SETTING_FREQOFFSET, std::to_string(freq_offset));
+		rtltcp.setOptionKey(AIS::KEY_SETTING_BANDWIDTH, std::to_string(tuner_bandwidth));
+
+		if (!session->connect())
+		{
+			throw std::runtime_error(getProduct() + ": cannot open connection with " + tcp.getHost() + ":" + tcp.getPort());
+		}
+
+		if (!session->waitConnected(2))
+			Warning() << getProduct() << ": not connected to " << tcp.getHost() << ":" << tcp.getPort() << ", retrying every 10 s.";
+
+		Device::Play();
+
+		if (getFormat() != Format::TXT && getFormat() != Format::BASESTATION && getFormat() != Format::BEAST && getFormat() != Format::RAW1090)
+		{
+			fifo.Init(BUFFER_SIZE, 2 * buffer_count);
+		}
+		else
+		{
+			fifo.Init(text_buffer, buffer_count * (BUFFER_SIZE / text_buffer));
+		}
+
+
+		async_thread = std::thread(&RTLTCP::RunAsync, this);
+		run_thread = std::thread(&RTLTCP::Run, this);
+
+		SleepSystem(10);
+	}
+
+	void RTLTCP::Stop()
+	{
+		if (Device::isStreaming())
+		{
+
+			Device::Stop();
+			fifo.Halt();
+
+			if (async_thread.joinable())
+				async_thread.join();
+			if (run_thread.joinable())
+				run_thread.join();
+		}
+		session->disconnect();
+	}
+
+	void RTLTCP::RunAsync()
+	{
+		if (buffer.size() < TRANSFER_SIZE)
+			buffer.resize(TRANSFER_SIZE);
+
+		try
+		{
+			while (isStreaming())
+			{
+				session->poll();
+				connected = session->isConnected();
+				if (!connected)
+				{
+					SleepSystem(50);
+					continue;
+				}
+
+				int len = session->read(buffer.data(), TRANSFER_SIZE, 1);
+
+				if (len < 0)
+				{
+					Error() << getProduct() << ": error receiving data from remote host, connecting again.";
+					session->disconnect();
+					SleepSystem(1000);
+					continue;
+				}
+				else if (isStreaming() && !fifo.Push(buffer.data(), len))
+					Error() << getProduct() << ": buffer overrun.";
+			}
+		}
+		catch (const std::exception &e)
+		{
+			lost = true;
+			Error() << getProduct() << ": " << e.what();
+		}
+	}
+
+	void RTLTCP::Run()
+	{
+		std::vector<char> output(fifo.BlockSize());
+		RAW r = {getFormat(), NULL, fifo.BlockSize()};
+
+		while (isStreaming())
+		{
+			if (fifo.Wait())
+			{
+				int nblocks = -1;
+				r.data = fifo.Front(nblocks);
+				r.size = nblocks * fifo.BlockSize();
+
+				Send(&r, 1, tag);
+				fifo.Pop(nblocks);
+			}
+			else
+			{
+				if (isStreaming() && (format == Format::CU8 || format == Format::CS8 || format == Format::CS16 || format == Format::CF32))
+				{
+					if(tcp.getState() == Protocol::TCP::State::READY)
+					{
+						Error() << getProduct() << " [" << tcp.getHost() <<  ":" << tcp.getPort() << "]: timeout.";
+					}
+				}
+			}
+		}
+	}
+
+	void RTLTCP::getDeviceList(std::vector<Description> &DeviceList)
+	{
+		DeviceList.push_back(Description(getName(), getName(), getName(), (uint64_t)0, getDriver()));
+	}
+
+	Setting &RTLTCP::applyKey(AIS::Keys key, const std::string &arg)
+	{
+		switch (key)
+		{
+		case AIS::KEY_SETTING_URL:
+		{
+			std::string prot, host, port, path, username, password;
+			bool has_password = false;
+			Util::Parse::URL(arg, prot, username, password, host, port, path, &has_password);
+
+			if (!host.empty())
+				SetKey(AIS::KEY_SETTING_HOST, host);
+			if (!port.empty())
+				SetKey(AIS::KEY_SETTING_PORT, port);
+			if (!prot.empty())
+				SetKey(AIS::KEY_SETTING_PROTOCOL, prot);
+			if (!username.empty())
+				SetKey(AIS::KEY_SETTING_USERNAME, username);
+			if (has_password)
+				SetKey(AIS::KEY_SETTING_PASSWORD, password);
+			ws.setPath(path);
+			break;
+		}
+		case AIS::KEY_SETTING_ENDPOINT:
+		{
+			std::string prot, user, pass, host, port, path;
+			Util::Parse::URL(arg, prot, user, pass, host, port, path);
+			if (prot != "tcp" || host.empty() || port.empty())
+				throw std::runtime_error("ZMQ: endpoint \"" + arg + "\" is not tcp://host:port, the only kind supported.");
+			SetKey(AIS::KEY_SETTING_HOST, host);
+			SetKey(AIS::KEY_SETTING_PORT, port);
+			break;
+		}
+		case AIS::KEY_SETTING_USERNAME:
+		case AIS::KEY_SETTING_PASSWORD:
+			mqtt.setOptionKey(key, arg);
+			ws.setOptionKey(key, arg);
+			break;
+		case AIS::KEY_SETTING_TEXT_BUFFER:
+			text_buffer = Util::Parse::Integer(arg, 1, 256, "TEXT_BUFFER");
+			break;
+		case AIS::KEY_SETTING_BUFFER_COUNT:
+			buffer_count = Util::Parse::Integer(arg, 1, 100, "BUFFER_COUNT");
+			break;
+		case AIS::KEY_SETTING_PROTOCOL:
+		{
+			if (!Util::Parse().Protocol(arg, Protocol))
+				throw std::runtime_error("RTLTCP: unknown protocol: " + arg);
+
+			switch (Protocol)
+			{
+			case PROTOCOL::NONE:
+				setFormat(Format::TXT);
+				break;
+			case PROTOCOL::RTLTCP:
+			case PROTOCOL::ZMQ:
+				setFormat(Format::CU8);
+				break;
+			case PROTOCOL::WS:
+			case PROTOCOL::WSS:
+			case PROTOCOL::WSSMQTT:
+				if (tcp.getPort().empty())
+					SetKey(AIS::KEY_SETTING_PORT, Protocol == PROTOCOL::WS ? "80" : "443");
+				setFormat(Format::TXT);
+				break;
+			case PROTOCOL::MQTTS:
+				if (tcp.getPort().empty())
+					SetKey(AIS::KEY_SETTING_PORT, "8883");
+				setFormat(Format::TXT);
+				break;
+			case PROTOCOL::GPSD:
+			case PROTOCOL::MQTT:
+			case PROTOCOL::WSMQTT:
+			case PROTOCOL::TLS:
+			case PROTOCOL::TXT:
+				setFormat(Format::TXT);
+				break;
+			case PROTOCOL::BASESTATION:
+				setFormat(Format::BASESTATION);
+				break;
+			case PROTOCOL::BEAST:
+				setFormat(Format::BEAST);
+				break;
+			case PROTOCOL::RAW1090:
+				setFormat(Format::RAW1090);
+				break;
+			default:
+				throw std::runtime_error("RTLTCP: unsupported protocol: " + arg);
+			}
+			break;
+		}
+		case AIS::KEY_SETTING_PERSIST:
+			Warning() << "RTLTCP: \"persist\" is no longer used and is ignored; it reconnects by itself";
+			break;
+		case AIS::KEY_SETTING_LOSSLESS:
+			lossless = Util::Parse::Switch(arg);
+			fifo.setWait(lossless);
+			break;
+		default:
+			if (!tcp.setOptionKey(key, arg) && !tls.setOptionKey(key, arg) && !mqtt.setOptionKey(key, arg) && !gpsd.setOptionKey(key, arg) && !rtltcp.setOptionKey(key, arg) && !ws.setOptionKey(key, arg))
+				Device::applyKey(key, arg);
+			break;
+		}
+		return *this;
+	}
+
+	std::string RTLTCP::Get()
+	{
+		Protocol::ProtocolBase *p = session;
+		std::string str = "protocol " + Util::Convert::toString(Protocol) + " lossless " + Util::Convert::toString(lossless) + " buffer_count " + std::to_string(buffer_count) + " " + Device::Get() + "\n";
+		while (p)
+		{
+			str += "  " + p->getLayer() + ": " + p->getValues() + "\n";
+			p = p->getPrev();
+		}
+		return str;
+	}
+}

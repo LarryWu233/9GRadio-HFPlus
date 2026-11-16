@@ -1,0 +1,32 @@
+# Architecture preview 07 — decoder boundaries and native release
+
+Base: `1f4e2cc` on `refactor/receiver-pipeline`. Version: `0.28.0-hfplus-alpha28-arch07`. Main and the stable application's data remain unchanged.
+
+## Changes
+
+- Audio decoder ports now have an explicit configuration barrier and continuity tracker. Queued old-generation PCM and late native results cannot enter a replacement configuration. Gaps reset stateful CW/APT/SSTV decoders and their resamplers after the old native worker and reader have joined. Robot36 receives its own copy because its upstream processing is in-place.
+- Digital voice publishes owned, timestamped 8 kHz PCM blocks and counts its output queue losses separately. The existing 48 kHz interpolation is preserved exactly. Other output rates use the existing rational resampler rather than an integer approximation; 44.1 kHz no longer accidentally produces 40 kHz worth of samples.
+- The external UDP decoder adapter owns each sender, socket, destination, clock and queue as one session. A non-cancellable DNS lookup retains ownership and prevents replacement until it exits. PCM encoding runs on its worker. The service retains this owner across DSP replacement, avoiding abandoned workers and delayed packets from old sessions.
+- ADS-B processing owns its IQ pipe, native child, observers and final snapshot. It detects duplicate blocks and gaps, joins the old decoder before resynchronization, drains normal file EOF and exposes final targets before reporting completion. Map updates are in the application service rather than the decoder adapter.
+- A reproducible native startup/stop deadlock was traced to a timestamp logger inside Android's SIGTERM handler re-entering libc's time conversion lock. The Android handler now only requests exit; normal threads retain logging. The upstream demodulation, CRC, CPR and tracking algorithms are unchanged. Android startup ordering, stdin cancellation and wake-before-join adapters are documented in the vendored provenance file.
+- HF+ liveness checks run through the control executor. Device disappearance, a stopped native stream or a silent callback stream causes an explicit failure and manual recovery, without automatic OPEN/CLOSED oscillation. Closed-state diagnostics retain losses and pending native ownership.
+
+## Validation and limitations
+
+125 JVM tests pass (22 core, 103 application), with no failures or skipped fixture tests. Cases include audio epochs/gaps/format changes, vocoder chunk continuity and exact sample counts, UDP ownership under blocked DNS and overflow, and existing receiver regressions. All three application ABIs build.
+
+Four targeted Android 13 arm64 ADS-B tests pass in 6.753 seconds, including 30 native start/stop cycles with the original five-second release bound, gap/duplicate handling, normal EOF/final-snapshot checks and an independent RF fixture. Native-release failures before the signal-handler fix remain part of the development record; neither timeout nor assertion was relaxed to obtain a pass.
+
+The independent fixture comes from `antirez/dump1090@testfiles/modes1.bin`, commit `efe64db3c6ba1520291331628a33c1e208e851a6`. Its 2 MS/s unsigned-IQ SHA-256 is `3a33e16025da8669149c780075950b4e908ca036ea21f9583c113f60d5fb3094`. NumPy 2.3.5 / SciPy 1.16.2 `resample_poly`, ratio 6/5, Kaiser beta 12 and constant padding produce 428,242 complex samples at 2.4 MS/s. The derived unsigned-IQ SHA-256 is `7b7a619d4ed796e9d1fb6608c2af6aca123c50df02c370f0199e465e601602fc`. The test checks this hash, full input consumption, valid decoded messages, nonempty targets and zero application input gaps. This is an independent recording with documented conversion, not an untouched 2.4 MS/s capture or complete protocol coverage. No recording or decoded personal target data is included in releases.
+
+The first combined Android regression passes 35 of 36 cases; high-rate CW fails its decoding assertion. Two isolated repetitions also exceed its unchanged 15% realtime allowance (12.262 / 11.948 seconds for 6.840 seconds of IQ). A competing stable receiver was found consuming about two CPU cores; battery temperature was approximately 44 °C. Stopping that receiver alone did not resolve the timing failure. A same-binary comparison of archived arch06 and current arch07 also fails (9.894 / 9.865 seconds). These close single measurements are not proof of performance equivalence; neither version qualifies under these conditions. Thermal contention remains a hypothesis, not an accepted explanation or a passing result.
+
+After the USB permission was renewed, current arch07 HF+ USB/SSB reception passes a 30-second stable window after five seconds of warm-up at 768 kS/s. IQ application and driver losses, playback drops and underruns all have zero increments within the stable window; two playback packet drops occur during warm-up. CPU time is 26,660 ms and maximum observed allocated heap is 81,972,736 bytes. This is a short headless check, not a 30-minute, UI or matched resource acceptance result.
+
+The packaged 24 ELF libraries pass static alignment checks (16 KB on 16 arm64/x86_64 libraries; 4 KB on eight 32-bit libraries). APK `zipalign -c -P 16 4` passes. Artifact scanning finds no development Windows paths, device endpoint, private-key headers or GitHub token patterns. Only the application APK, checksum, static-alignment report and sanitized validation are released.
+
+Earlier arch06 HF+ AM reception completes a 30-minute stable window at 768 kS/s with zero increments in application IQ loss, driver loss, playback drops and underruns. It accumulates two playback packet drops during warm-up (final cumulative two). Its SSB attempt is interrupted after about 329 seconds when the USB device disappears from Android; it is not counted as a successful long run. The receiver was subsequently reconnected. These measurements have no UI subscriber and do not establish UI frame times, CPU regression or a memory trend.
+
+Oboe, liquid-dsp and SpeexDSP remain isolated evaluation candidates; none is enabled in production reception. All three candidate builds cover the three supported ABIs with static alignment checks. Full-path adoption gates remain pending. Android 16 manual acceptance, actual 16 KB-page execution, RTL long runs, complete independent decoder coverage and matched UI/resource measurements remain pending. This preview is not ready to merge.
+
+中文：本阶段补齐解码支路的代次隔离、音频缺口恢复和原生组件释放，修复真实复现的 ADS-B 停止死锁，并将地图更新移出解码器。当前保留高采样率 CW 回归失败记录，未放宽门槛；尚未满足全部验收条件，主干保持不变。

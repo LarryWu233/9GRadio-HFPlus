@@ -157,41 +157,8 @@ object NativeDsp {
      *   NFM:  gainHz = fs / (2π × 5 000)
      *   WFM:  gainHz = fs / (2π × 75 000)
      */
-    fun fmDemodulateStateful(
-        iq: FloatArray,
-        state: FloatArray,          // float[2]: [prevI, prevQ] — updated in-place
-        gainHz: Float
-    ): FloatArray {
-        val n = iq.size / 2
-        val out = FloatArray(n)
-        if (nativeAvailable) {
-            // Use the existing fmDiscriminator native — it takes prevI/prevQ by value
-            // and processes the full block in NEON/VOLK.  We then extract the last IQ
-            // sample from the buffer to update state for the next block, giving us the
-            // same inter-block continuity as a truly stateful native call at zero cost
-            // (one extra read per block, not per sample).
-            fmDiscriminator(iq, out, n, state[0], state[1], gainHz)
-            if (n > 0) {
-                state[0] = iq[2 * (n - 1)]
-                state[1] = iq[2 * (n - 1) + 1]
-            }
-        } else {
-            var prevPhase = Math.atan2(state[1].toDouble(), state[0].toDouble()).toFloat()
-            for (i in 0 until n) {
-                val ci = iq[2 * i]; val cq = iq[2 * i + 1]
-                val phase = Math.atan2(cq.toDouble(), ci.toDouble()).toFloat()
-                var diff = phase - prevPhase
-                if (diff > Math.PI.toFloat()) diff -= (2f * Math.PI.toFloat())
-                if (diff < -Math.PI.toFloat()) diff += (2f * Math.PI.toFloat())
-                out[i] = diff * gainHz
-                prevPhase = phase
-            }
-            if (n > 0) {
-                state[0] = iq[2 * (n - 1)]
-                state[1] = iq[2 * (n - 1) + 1]
-            }
-        }
-        return out
+    fun fmDemodulateStateful(iq:FloatArray,state:FloatArray,gainHz:Float):FloatArray {
+        return FloatArray(iq.size/2).also { fmDemodulateStatefulInto(iq,state,gainHz,it) }
     }
 
     /**
@@ -200,35 +167,11 @@ object NativeDsp {
      * Used by WfmDemodulator and NfmDemodulator to eliminate the per-block
      * FloatArray(n) allocation from the real-time DSP hot path.
      */
-    fun fmDemodulateStatefulInto(
-        iq: FloatArray,
-        state: FloatArray,
-        gainHz: Float,
-        out: FloatArray
-    ) {
-        val n = iq.size / 2
-        if (nativeAvailable) {
-            fmDiscriminator(iq, out, n, state[0], state[1], gainHz)
-            if (n > 0) {
-                state[0] = iq[2 * (n - 1)]
-                state[1] = iq[2 * (n - 1) + 1]
-            }
-        } else {
-            var prevPhase = Math.atan2(state[1].toDouble(), state[0].toDouble()).toFloat()
-            for (i in 0 until n) {
-                val ci = iq[2 * i]; val cq = iq[2 * i + 1]
-                val phase = Math.atan2(cq.toDouble(), ci.toDouble()).toFloat()
-                var diff = phase - prevPhase
-                if (diff > Math.PI.toFloat()) diff -= (2f * Math.PI.toFloat())
-                if (diff < -Math.PI.toFloat()) diff += (2f * Math.PI.toFloat())
-                out[i] = diff * gainHz
-                prevPhase = phase
-            }
-            if (n > 0) {
-                state[0] = iq[2 * (n - 1)]
-                state[1] = iq[2 * (n - 1) + 1]
-            }
-        }
+    fun fmDemodulateStatefulInto(iq:FloatArray,state:FloatArray,gainHz:Float,out:FloatArray) {
+        if(!nativeAvailable) { ReferenceDemodPrimitives.fmDemodulateStatefulInto(iq,state,gainHz,out);return }
+        val n=iq.size/2
+        fmDiscriminator(iq,out,n,state[0],state[1],gainHz)
+        if(n>0) { state[0]=iq[2*(n-1)];state[1]=iq[2*(n-1)+1] }
     }
 
     /**
@@ -242,48 +185,16 @@ object NativeDsp {
      *
      * Returns an interleaved FloatArray of the same length as [iq].
      */
-    fun applyFirDual(
-        iq: FloatArray,
-        taps: FloatArray,
-        bufI: FloatArray, bufQ: FloatArray,
-        bufPos: IntArray                    // bufPos[0] — updated in-place
-    ): FloatArray {
-        val n  = iq.size / 2
-        val out = FloatArray(iq.size)       // interleaved filtered I/Q
-        val tapLen = taps.size
-        var pos = bufPos[0]
-        for (i in 0 until n) {
-            bufI[pos] = iq[2 * i]
-            bufQ[pos] = iq[2 * i + 1]
-            var fI = 0f; var fQ = 0f
-            for (k in 0 until tapLen) {
-                val p = (pos - k + tapLen) % tapLen
-                fI += taps[k] * bufI[p]
-                fQ += taps[k] * bufQ[p]
-            }
-            out[2 * i]     = fI
-            out[2 * i + 1] = fQ
-            pos = (pos + 1) % tapLen
-        }
-        bufPos[0] = pos
-        return out
+    fun applyFirDual(iq:FloatArray,taps:FloatArray,bufI:FloatArray,bufQ:FloatArray,bufPos:IntArray):FloatArray {
+        return ReferenceDemodPrimitives.applyFirDual(iq,taps,bufI,bufQ,bufPos)
     }
 
     /**
      * AM envelope detector: magnitude of each IQ sample.
      */
-    fun amDetect(iq: FloatArray): FloatArray {
-        val n = iq.size / 2
-        val out = FloatArray(n)
-        if (nativeAvailable) {
-            amEnvelope(iq, out, n)
-        } else {
-            for (i in 0 until n) {
-                val I = iq[2 * i]; val Q = iq[2 * i + 1]
-                out[i] = kotlin.math.sqrt(I * I + Q * Q)
-            }
-        }
-        return out
+    fun amDetect(iq:FloatArray):FloatArray {
+        if(!nativeAvailable) return ReferenceDemodPrimitives.amDetect(iq)
+        return FloatArray(iq.size/2).also { amEnvelope(iq,it,it.size) }
     }
 
     /**

@@ -11,7 +11,7 @@ import kotlin.math.*
 /** Optional reproducible local speech-quality benchmark; no recording leaves the workspace. */
 class NoiseSpeechBenchmarkTest {
     @Test fun noisySpeechImprovesAfterVoiceLevelMatching() {
-        val folder = File("../build/audit/nr-fixtures")
+        val folder = File(System.getProperty("ninegradio.nrFixtureDir", "../build/audit/nr-fixtures"))
         assumeTrue("Generate the local speech fixture before running this benchmark", File(folder, "reference.f32").exists())
         fun read(name: String): FloatArray {
             val bytes = File(folder, name).readBytes()

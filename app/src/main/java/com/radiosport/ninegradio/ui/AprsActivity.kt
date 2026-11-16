@@ -197,10 +197,9 @@ class AprsActivity : RadioThemedActivity() {
                           "${deviceRate / 1000} kS/s  (≥820 kS/s for dual-watch)"
         }
 
-        // Keep both decoders' sample-rate caches in sync with the audio rate
-        // fed to them (always DEFAULT_AUDIO_RATE = 48 000 Hz after resampling).
-        decoderNA.setSampleRate(DspEngine.DEFAULT_AUDIO_RATE)
-        decoderEU.setSampleRate(DspEngine.DEFAULT_AUDIO_RATE)
+        // Decoder state belongs to the audio-feed worker; its first typed block
+        // configures the rate. Main-thread frequency changes must not reset a
+        // decoder while Default is processing its previous block.
     }
 
     // ─── Audio collection ─────────────────────────────────────────────────────
@@ -235,12 +234,23 @@ class AprsActivity : RadioThemedActivity() {
             // UI thread stays free and no audio blocks are dropped due to the
             // Main thread being busy rendering.
             launch(Dispatchers.Default) {
-                svc.dualAprsFlow.collect { (audioNA, audioEU) ->
+                val northAmerica=com.radiosport.ninegradio.pipeline.AudioContinuity()
+                val europe=com.radiosport.ninegradio.pipeline.AudioContinuity()
+                svc.dualAprsAudioBlocks.collect { (audioNA, audioEU) ->
+                    if(audioNA.epoch!=svc.dspEngine?.dualAprsGeneration) return@collect
                     // Each pair arrives at 48 kHz; feed to the respective decoder.
                     // Running on Default: both feed() calls are synchronous and
                     // sequential within this coroutine — no concurrent access.
-                    decoderNA.feed(audioNA)
-                    decoderEU.feed(audioEU)
+                    fun feed(decoder:AprsDecoder,tracker:com.radiosport.ninegradio.pipeline.AudioContinuity,
+                             block:com.radiosport.ninegradio.pipeline.AudioBlock) {
+                        val change=tracker.accept(block).change
+                        if(change==com.radiosport.ninegradio.pipeline.AudioContinuity.Change.STALE) return
+                        if(change!=com.radiosport.ninegradio.pipeline.AudioContinuity.Change.CONTINUOUS)
+                            decoder.setSampleRate(block.sampleRate)
+                        decoder.feed(block.samples)
+                    }
+                    feed(decoderNA,northAmerica,audioNA)
+                    feed(decoderEU,europe,audioEU)
                 }
             }
 

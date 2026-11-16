@@ -362,7 +362,7 @@ object DebugBus {
         )
     }
 
-    /** Called by RtlSdrDevice when SharedFlow.tryEmit() returns false (DROP_OLDEST fired). */
+    /** Missing blocks observed by the DSP consumer, independent of display/other consumers. */
     fun incrementIqFlowDrops(count: Long = 1) { iqFlowDropCount.addAndGet(count) }
     fun getIqFlowDropCount()=iqFlowDropCount.get()
     fun counter(stage: Int)=counters[stage].get()

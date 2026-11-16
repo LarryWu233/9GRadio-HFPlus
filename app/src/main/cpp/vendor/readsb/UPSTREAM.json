@@ -12,7 +12,12 @@
   },
   "androidChanges": [
     "readsb.h: use posix_memalign for API 26 compatibility",
-    "util.c: use existing POSIX pthread_join branch on Android",
+    "util.c: Android uses a mutex-protected condition wake followed by POSIX pthread_join, preserving upstream wake-before-join behavior without pthread_tryjoin_np",
+    "readsb.c: publish final aircraft.json for Android ifile shutdown after worker joins, using the existing JSON encoder",
+    "readsb.c: reader shutdown respects an already requested exitSoon, avoiding an EOF normal-exit/abnormal-exit race",
+    "sdr_ifile.c: Android stdin pipe uses bounded POSIX poll to observe shutdown while input is idle",
+    "readsb.c: Android signal handlers are installed after configuration defaults and exit event descriptors are initialized",
+    "readsb.c: Android exit signal handler only requests exit; timestamp logging stays on normal threads to avoid libc time-lock re-entry",
     "No changes to demod_2400.c, mode_s.c, crc.c, cpr.c or track.c"
   ]
 }

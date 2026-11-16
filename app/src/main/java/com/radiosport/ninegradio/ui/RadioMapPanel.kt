@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.maplibre.android.MapLibre
@@ -17,6 +18,9 @@ import org.maplibre.android.offline.*
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.expressions.Expression.*
 import org.maplibre.android.style.layers.PropertyFactory.*
 import org.maplibre.geojson.*
 import com.radiosport.ninegradio.data.RadioTarget
@@ -26,27 +30,29 @@ import java.net.URI
 
 /** Shared, account-free map surface. Coordinates entering this component are WGS84. */
 @OptIn(FlowPreview::class)
-class RadioMapPanel(private val activity: AppCompatActivity, private val protocol: String = "ALL", private val compact: Boolean = false) : FrameLayout(activity), androidx.lifecycle.DefaultLifecycleObserver {
+class RadioMapPanel(private val activity: AppCompatActivity, private val protocol: String = "ALL", private val compact: Boolean = false,
+                    sharedLocation:ReceiverLocationController?=null) : FrameLayout(activity), androidx.lifecycle.DefaultLifecycleObserver {
+    val receiverLocation=sharedLocation ?: ReceiverLocationController(activity)
+    private val ownsLocation=sharedLocation==null
     private val lifecycleScope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private var active=false
     private var started=false
     private var destroyed=false
     val nativeMap get()=map
-    private val locationPermission=activity.activityResultRegistry.register("map-location-$protocol", ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if(result.values.any { it }) readReceiverLocation() else status.text="未允许定位，可手动填写接收位置。"
-    }
     private lateinit var view: MapView
+    private lateinit var gestures: MapGestureFrame
     private lateinit var status: TextView
     private var map: MapLibreMap? = null
     private var centered = false
     private var targets = emptyList<RadioTarget>()
     private val trails = mutableMapOf<String, ArrayDeque<Point>>()
+    private var renderedPoints:List<Feature>?=null
+    private var renderedTrails:List<Feature>?=null
     private val preferences by lazy { activity.getSharedPreferences("radio_map", android.content.Context.MODE_PRIVATE) }
     private val offline by lazy { OfflineManager.getInstance(activity) }
     private val defaultStyle = "asset://maps/original-osm.json"
     private var fallback = false
     private var mapReady=false
-    private var locationSignal: androidx.core.os.CancellationSignal?=null
     private val emptyStyle = """{"version":8,"sources":{},"layers":[{"id":"background","type":"background","paint":{"background-color":"#0d1722"}}]}"""
 
     private val importer = activity.activityResultRegistry.register("map-import-$protocol", ActivityResultContracts.OpenDocument()) { uri ->
@@ -89,10 +95,9 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         root.addView(controls)
         status = TextView(activity).apply { text = "正在加载底图…"; setPadding(12, 8, 12, 8) }
         root.addView(status)
-        view = MapView(activity,MapLibreMapOptions.createFromAttributes(activity).textureMode(true))
-        view.onCreate(null)
-        view.addOnDidFinishLoadingMapListener { mapReady=true; updateMapStatus() }
-        val gestures=MapGestureFrame(activity).apply { addView(view,FrameLayout.LayoutParams(-1,-1)) }
+        // Pager pages are constructed before they are selected. Creating a TextureView
+        // here starts its renderer even though this panel has never been resumed.
+        gestures=MapGestureFrame(activity)
         root.addView(gestures, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(TextView(activity).apply {
             text = "© OpenStreetMap contributors"
@@ -112,6 +117,23 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             val size=(40*resources.displayMetrics.density).toInt()
             addView(options,FrameLayout.LayoutParams(size,size,android.view.Gravity.TOP or android.view.Gravity.END))
         }
+        lifecycleScope.launch {
+            combine(RadioTargets.aircraft, RadioTargets.stations,RadioTargets.vessels) { aircraft, stations,vessels ->
+                when(protocol) { "ADSB" -> aircraft; "APRS" -> stations; "AIS" -> vessels;else -> aircraft+stations+vessels }
+            }.sample(250).collect { updateTargets(it) }
+        }
+        lifecycleScope.launch {
+            MapNetwork.status.collect { updateMapStatus() }
+        }
+        lifecycleScope.launch { while(isActive) { delay(1000);if(started) updateTargets(targets) } }
+        lifecycleScope.launch { receiverLocation.position.collect { centerInitially();render() } }
+
+    }
+    private fun ensureMapCreated() {
+        if(::view.isInitialized) return
+        view=MapView(activity,MapLibreMapOptions.createFromAttributes(activity).textureMode(true))
+        view.onCreate(null)
+        view.addOnDidFinishLoadingMapListener { mapReady=true; updateMapStatus() }
         view.addOnDidFailLoadingMapListener {
             status.text = "底图加载失败，可选择已导入的离线地图；本地接收继续运行。"
             if (!fallback) { fallback = true; map?.setStyle(Style.Builder().fromJson(emptyStyle)) { installLayers(it) } }
@@ -125,24 +147,17 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             ready.cameraPosition = CameraPosition.Builder().target(LatLng(35.0, 105.0)).zoom(3.0).build()
             loadStyle(preferences.getString("style", defaultStyle) ?: defaultStyle)
             ready.addOnMapClickListener { point ->
-                val hits = ready.queryRenderedFeatures(ready.projection.toScreenLocation(point), "radio-points")
-                val id = hits.firstOrNull()?.takeIf { it.hasProperty("id") }?.getStringProperty("id")
-                val target = targets.firstOrNull { it.id == id }
+                val hits = ready.queryRenderedFeatures(ready.projection.toScreenLocation(point), "radio-points","radio-aircraft","radio-ships")
+                val target = hits.asSequence().mapNotNull { feature ->
+                    val id=feature.takeIf { it.hasProperty("id") }?.getStringProperty("id")
+                    targets.firstOrNull { it.id==id }
+                }.firstOrNull()
                 if (target != null) AlertDialog.Builder(activity).setTitle(target.label).setMessage(target.detail)
                     .setPositiveButton("关闭", null).show()
                 target != null
             }
         }
-        lifecycleScope.launch {
-            combine(RadioTargets.aircraft, RadioTargets.stations) { aircraft, stations ->
-                when(protocol) { "ADSB" -> aircraft; "APRS" -> stations; else -> aircraft+stations }
-            }.sample(250).collect { updateTargets(it) }
-        }
-        lifecycleScope.launch {
-            MapNetwork.status.collect { updateMapStatus() }
-        }
-        lifecycleScope.launch { while(isActive) { delay(1000); updateTargets(targets) } }
-
+        gestures.addView(view,FrameLayout.LayoutParams(-1,-1))
     }
     private fun loadStyle(url: String) {
         fallback = false
@@ -155,17 +170,49 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         }
     }
     private fun installLayers(style: Style) {
+        renderedPoints=null;renderedTrails=null
         style.addSource(GeoJsonSource("radio-data", FeatureCollection.fromFeatures(emptyArray<Feature>())))
         style.addSource(GeoJsonSource("radio-trails", FeatureCollection.fromFeatures(emptyArray<Feature>())))
         style.addLayer(LineLayer("radio-tracks", "radio-trails").withProperties(lineColor("#00b7d8"), lineWidth(2f)))
         style.addLayer(CircleLayer("radio-points", "radio-data").withProperties(
-            circleRadius(7f), circleColor("#ffb347"), circleStrokeColor("#17212b"), circleStrokeWidth(2f)))
+            circleRadius(7f), circleColor("#ffb347"), circleStrokeColor("#17212b"), circleStrokeWidth(2f)).withFilter(all(neq(get("kind"),literal("aircraft")),neq(get("kind"),literal("ship")))))
+        val size=(28*resources.displayMetrics.density).toInt()
+        fun icon(color:Int,resource:Int=com.radiosport.ninegradio.R.drawable.ic_aircraft):android.graphics.Bitmap {
+            val drawable=androidx.appcompat.content.res.AppCompatResources.getDrawable(activity,resource)!!.mutate()
+            val plane=drawable.toBitmap(size,size)
+            val stroke=resources.displayMetrics.density*.8f
+            val pad=kotlin.math.ceil(stroke.toDouble()).toInt()+1
+            val result=android.graphics.Bitmap.createBitmap(size+pad*2,size+pad*2,android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas=android.graphics.Canvas(result)
+            val paint=android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+            paint.colorFilter=android.graphics.PorterDuffColorFilter(android.graphics.Color.BLACK,android.graphics.PorterDuff.Mode.SRC_IN)
+            for((dx,dy) in listOf(-1f to 0f,1f to 0f,0f to -1f,0f to 1f,-1f to -1f,1f to -1f,-1f to 1f,1f to 1f))
+                canvas.drawBitmap(plane,pad+dx*stroke,pad+dy*stroke,paint)
+            paint.colorFilter=android.graphics.PorterDuffColorFilter(color,android.graphics.PorterDuff.Mode.SRC_IN)
+            canvas.drawBitmap(plane,pad.toFloat(),pad.toFloat(),paint);plane.recycle()
+            return result
+        }
+        fun darker(color:Int)=androidx.core.graphics.ColorUtils.blendARGB(color,android.graphics.Color.BLACK,.22f)
+        style.addImage("radio-aircraft-known",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioAccent))))
+        style.addImage("radio-aircraft-unknown",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioSecondary))))
+        style.addImage("radio-aircraft-stale",icon(0xffcf4444.toInt()))
+        style.addImage("radio-ship-known",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioAccent)),com.radiosport.ninegradio.R.drawable.ic_ship))
+        style.addImage("radio-ship-unknown",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioSecondary)),com.radiosport.ninegradio.R.drawable.ic_ship))
+        style.addImage("radio-ship-stale",icon(0xffcf4444.toInt(),com.radiosport.ninegradio.R.drawable.ic_ship))
+        style.addLayer(SymbolLayer("radio-aircraft","radio-data").withFilter(eq(get("kind"),literal("aircraft"))).withProperties(
+            iconImage(get("icon")),iconRotate(get("heading")),iconAllowOverlap(true),iconIgnorePlacement(true),
+            iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP)))
+        style.addLayer(SymbolLayer("radio-ships","radio-data").withFilter(eq(get("kind"),literal("ship"))).withProperties(
+            iconImage(get("icon")),iconRotate(get("heading")),iconAllowOverlap(true),iconIgnorePlacement(true),
+            iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP)))
+        centerInitially()
         render()
     }
     private fun updateTargets(values: List<RadioTarget>) {
         val now = System.currentTimeMillis()
         val stations=RadioTargets.stations.value.map { it.id }.toSet()
-        targets = values.filter { now - it.timeMs < (if(protocolIsAprs() || it.id in stations) 600_000 else 120_000) &&
+        targets = values.filter { now - (if(it.type!=RadioTarget.Type.STATION) it.positionTimeMs ?: it.timeMs else it.timeMs) <
+            (if(protocol=="AIS" || it.type==RadioTarget.Type.SHIP) 900_000 else if(protocolIsAprs() || it.id in stations) 600_000 else 120_000) &&
             it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 }
         updateMapStatus()
         trails.keys.retainAll(targets.map { it.id }.toSet())
@@ -175,15 +222,20 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             if (trail.lastOrNull() != point) trail.addLast(point)
             while (trail.size > 120) trail.removeFirst()
         }
-        if (!centered && targets.isNotEmpty()) {
-            centered = true
-            map?.cameraPosition = CameraPosition.Builder().target(LatLng(targets[0].latitude, targets[0].longitude)).zoom(7.0).build()
-        }
+        centerInitially()
         render()
     }
     private fun protocolIsAprs()=protocol=="APRS"
+    private fun centerInitially() {
+        val ready=map ?: return
+        if(centered || !started) return
+        val receiver=receiverLocation.position.value
+        val target=targets.firstOrNull()
+        val position=receiver?.let { LatLng(it.latitude,it.longitude) } ?: target?.let { LatLng(it.latitude,it.longitude) } ?: return
+        ready.cameraPosition=CameraPosition.Builder().target(position).zoom(if(receiver!=null) 8.0 else 7.0).build()
+        centered=true
+    }
     private fun updateMapStatus() {
-        if(locationSignal!=null) return
         val tile=MapNetwork.status.value
         status.text=if(tile.available==false) "地图暂不可用 · ${targets.size} 个已定位目标"
             else if(fallback) "底图不可用 · ${targets.size} 个已定位目标"
@@ -191,14 +243,20 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             else "底图加载中 · ${targets.size} 个已定位目标"
     }
     private fun render() {
-        val features = targets.map { target -> Feature.fromGeometry(Point.fromLngLat(target.longitude, target.latitude)).apply {
-            addStringProperty("id", target.id); addStringProperty("label", target.label)
-        } }.toMutableList()
-        if (preferences.contains("receiverLat")) features += Feature.fromGeometry(Point.fromLngLat(
-            preferences.getFloat("receiverLon", 0f).toDouble(), preferences.getFloat("receiverLat", 0f).toDouble()))
-        map?.style?.getSourceAs<GeoJsonSource>("radio-data")?.setGeoJson(FeatureCollection.fromFeatures(features))
+        if(!started) return
+        val features=targets.map { it.mapFeature() }.toMutableList()
+        receiverLocation.position.value?.let { receiver ->
+            features+=Feature.fromGeometry(Point.fromLngLat(receiver.longitude,receiver.latitude)).apply { addStringProperty("kind","receiver") }
+        }
+        if(features!=renderedPoints) {
+            map?.style?.getSourceAs<GeoJsonSource>("radio-data")?.setGeoJson(FeatureCollection.fromFeatures(features))
+            renderedPoints=features
+        }
         val lines = trails.values.filter { it.size > 1 }.map { Feature.fromGeometry(LineString.fromLngLats(it.toList())) }
-        map?.style?.getSourceAs<GeoJsonSource>("radio-trails")?.setGeoJson(FeatureCollection.fromFeatures(lines))
+        if(lines!=renderedTrails) {
+            map?.style?.getSourceAs<GeoJsonSource>("radio-trails")?.setGeoJson(FeatureCollection.fromFeatures(lines))
+            renderedTrails=lines
+        }
     }
     private fun sourceDialog() {
         AlertDialog.Builder(activity).setTitle("地图源").setItems(arrayOf("OpenStreetMap", "OpenFreeMap 浅色", "OpenFreeMap 深色", "自定义样式地址")) { _, choice ->
@@ -243,53 +301,17 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         })
     }
     fun receiverDialog() {
-        val input = EditText(activity).apply {
-            hint = "纬度，经度（WGS84）"
-            if (preferences.contains("receiverLat")) setText("${preferences.getFloat("receiverLat", 0f)}, ${preferences.getFloat("receiverLon", 0f)}")
-        }
-        AlertDialog.Builder(activity).setTitle("接收位置").setView(input).setPositiveButton("保存") { _, _ ->
-            val pair = input.text.toString().replace('，',',').split(',').map { it.trim().toDoubleOrNull() }
-            if (pair.size == 2 && pair[0] != null && pair[1] != null && pair[0]!! in -90.0..90.0 && pair[1]!! in -180.0..180.0) {
-                saveReceiverLocation(pair[0]!!,pair[1]!!)
-            } else status.text = "请输入有效的纬度、经度。"
-        }.setNeutralButton("读取当前位置") { _,_ -> readReceiverLocation() }.setNegativeButton("取消", null).show()
-    }
-    private fun saveReceiverLocation(lat: Double,lon: Double) {
-        preferences.edit().putFloat("receiverLat",lat.toFloat()).putFloat("receiverLon",lon.toFloat()).apply()
-        map?.cameraPosition=CameraPosition.Builder().target(LatLng(lat,lon)).zoom(8.0).build()
-        status.text="接收位置已更新"; render()
-    }
-    private fun readReceiverLocation() {
-        if(androidx.core.content.ContextCompat.checkSelfPermission(activity,android.Manifest.permission.ACCESS_COARSE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            locationPermission.launch(arrayOf(android.Manifest.permission.ACCESS_COARSE_LOCATION,android.Manifest.permission.ACCESS_FINE_LOCATION)); return
-        }
-        val manager=activity.getSystemService(android.content.Context.LOCATION_SERVICE) as android.location.LocationManager
-        val provider=listOf(android.location.LocationManager.NETWORK_PROVIDER,android.location.LocationManager.GPS_PROVIDER)
-            .firstOrNull { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) }
-        if(provider==null) { status.text="定位服务未启用，可手动填写接收位置。"; return }
-        locationSignal?.cancel()
-        val signal=androidx.core.os.CancellationSignal(); locationSignal=signal
-        status.text="正在读取接收位置…"
-        androidx.core.location.LocationManagerCompat.getCurrentLocation(manager,provider,signal,androidx.core.content.ContextCompat.getMainExecutor(activity)) { fix ->
-            if(!signal.isCanceled && !activity.isFinishing && !destroyed) {
-                locationSignal=null
-                if(fix!=null) saveReceiverLocation(fix.latitude,fix.longitude) else status.text="暂未取得位置，可手动填写。"
-            }
-        }
-        lifecycleScope.launch {
-            delay(12000)
-            if(locationSignal===signal) { signal.cancel(); locationSignal=null; status.text="定位超时，可手动填写接收位置。" }
-        }
+        receiverLocation.showDialog()
     }
     fun showOptions() {
         AlertDialog.Builder(activity).setTitle("地图设置").setItems(arrayOf("接收位置","地图源","离线地图")) { _,which ->
             when(which) { 0 -> receiverDialog(); 1 -> sourceDialog(); 2 -> offlineDialog() }
         }.show()
     }
-    fun setActive(value: Boolean) { active=value; updateLifecycle() }
+    fun setActive(value: Boolean) { active=value;if(ownsLocation) receiverLocation.setActive(value);updateLifecycle() }
     private fun updateLifecycle() {
         val wanted=active && isAttachedToWindow && activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && !destroyed
-        if(wanted && !started) { view.onStart(); view.onResume(); started=true }
+        if(wanted && !started) { ensureMapCreated(); view.onStart(); view.onResume(); started=true; render() }
         else if(!wanted && started) { view.onPause(); view.onStop(); started=false }
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); updateLifecycle() }
@@ -297,7 +319,9 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
     override fun onResume(owner: androidx.lifecycle.LifecycleOwner) { updateLifecycle() }
     override fun onPause(owner: androidx.lifecycle.LifecycleOwner) { if(started) { view.onPause(); view.onStop(); started=false } }
     override fun onDestroy(owner: androidx.lifecycle.LifecycleOwner) {
-        destroyed=true; setActive(false); locationSignal?.cancel(); lifecycleScope.cancel()
-        importer.unregister(); locationPermission.unregister(); view.onDestroy(); activity.lifecycle.removeObserver(this)
+        destroyed=true; setActive(false); lifecycleScope.cancel()
+        importer.unregister()
+        if(::view.isInitialized) view.onDestroy()
+        activity.lifecycle.removeObserver(this)
     }
 }

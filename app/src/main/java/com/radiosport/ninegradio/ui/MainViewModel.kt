@@ -150,6 +150,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _capabilities.value = caps
         syncFmStereoPreference(_demodMode.value)
+        _monitorRequested.value=prefs.getBoolean("monitor_${_demodMode.value.name}",true)
         _centerFreqHz.value = caps.browseFrequency(_centerFreqHz.value)
         _sampleRate.value = caps.nearestRate(_sampleRate.value)
         if(_demodMode.value==DemodMode.ADSB && caps.supportsMode(DemodMode.ADSB))
@@ -214,6 +215,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         serviceFlowJob?.cancel()
         serviceFlowJob = viewModelScope.launch {
+        launch { svc.amStatusFlow.collect { _amStatus.value=it } }
+        launch { svc.audioContent.state.collect { state ->
+            _dataContentActive.value=state.running && state.config?.let {
+                com.radiosport.ninegradio.modules.RadioModules.content(it).monitoring==com.radiosport.ninegradio.modules.MonitorPolicy.FORBIDDEN }==true
+        } }
         // Mirror connection state, and push all saved settings to hardware
         // the moment the device reaches Connected.  The RTL-SDR resets to its
         // hardware defaults on every open() — notably sample rate = 2 048 000 Hz —
@@ -271,20 +277,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // switching internally. This eliminates any race between dspEngine being
         // assigned and the connectionState emission being observed here.
         launch {
-            svc.spectrumFlow.collect { spectrum ->
+            _spectrumData.subscriptionCount.map { it>0 }.distinctUntilChanged().flatMapLatest { visible ->
+                if(visible) svc.spectrumFlow else emptyFlow()
+            }.collect { spectrum ->
                 _spectrumData.value = spectrum
                 svc.dspEngine?.fftEngine?.getPeakHold()?.let { _peakData.value = it }
             }
         }
 
         launch {
-            svc.statusFlow.collect { status ->
+            // Device counters can change for every USB block. Coalesce only the
+            // presentation copy off the main thread; service faults/control and
+            // all DSP/scanner measurements keep their original clocks.
+            svc.statusFlow.sample(100L).flowOn(Dispatchers.Default).collect { status ->
                 _deviceStatus.value = status
             }
         }
 
         launch {
-            svc.statsFlow.collect { stats ->
+            svc.statsFlow.sample(100L).flowOn(Dispatchers.Default).collect { stats ->
                 _dspStats.value = stats
             }
         }
@@ -320,6 +331,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             prefs.getString("demod", "NFM")) ?: "NFM") }.getOrDefault(DemodMode.NFM)
     )
     val demodMode: StateFlow<DemodMode> = _demodMode
+    private val _amSettings=MutableStateFlow(com.radiosport.ninegradio.dsp.AmPreferences.read(application))
+    val amSettings=_amSettings.asStateFlow()
+    private val _amStatus=MutableStateFlow(com.radiosport.ninegradio.dsp.AmStatus())
+    val amStatus=_amStatus.asStateFlow()
+    fun setAmSettings(settings:com.radiosport.ninegradio.dsp.AmSettings) {
+        val before=_amSettings.value
+        var width:Int?=null
+        if(_demodMode.value==DemodMode.AM && (before.detector.sideband==0)!=(settings.detector.sideband==0)) {
+            val current=_ifBandwidthHz.value.takeIf { it>0 } ?: if(before.detector.sideband==0) 10000 else 5000
+            width=if(settings.detector.sideband==0) current*2 else (current/2).coerceAtLeast(100)
+            _ifBandwidthHz.value=width
+            prefs.edit().putInt("ifBandwidth",width).putInt(modeKey(DemodMode.AM,"ifBandwidth"),width).apply()
+        }
+        _amSettings.value=settings
+        com.radiosport.ninegradio.dsp.AmPreferences.write(getApplication(),settings)
+        sdrService?.setAmSettings(settings,width)
+        scheduleSave()
+    }
+    private val _monitorRequested=MutableStateFlow(prefs.getBoolean("monitor_${_demodMode.value.name}",true))
+    private val _dataContentActive=MutableStateFlow(false)
+    val monitorAllowed=combine(_demodMode,_dataContentActive) { mode,data ->
+        com.radiosport.ninegradio.dsp.AudioRoutingPolicy.canMonitor(mode,data)
+    }.stateIn(viewModelScope,SharingStarted.Eagerly,com.radiosport.ninegradio.dsp.AudioRoutingPolicy.canMonitor(_demodMode.value))
+    val monitorEnabled=combine(monitorAllowed,_monitorRequested) { allowed,requested -> allowed && requested }
+        .stateIn(viewModelScope,SharingStarted.Eagerly,monitorAllowed.value && _monitorRequested.value)
+    fun setMonitorEnabled(enabled:Boolean) {
+        if(!com.radiosport.ninegradio.dsp.AudioRoutingPolicy.canMonitor(_demodMode.value,_dataContentActive.value)) return
+        _monitorRequested.value=enabled
+        prefs.edit().putBoolean("monitor_${_demodMode.value.name}",enabled).apply()
+        sdrService?.setMonitorEnabled(enabled)
+    }
 
     // Migrate any previously persisted rate to the nearest valid entry.
     // The RTL-SDR has a dead zone (~300–900 kS/s) where register ratios alias;
@@ -792,7 +834,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (!automatic && _autoDemod.value) setAutoDemod(false)
         if (!_capabilities.value.supportsMode(mode)) {
-            _messages.tryEmit("当前接收机不支持 ${mode.displayName}")
+            _messages.tryEmit(_capabilities.value.modeAvailability(mode).reason ?: "当前接收机不支持 ${mode.displayName}")
             return
         }
         if (!automatic) syncFmStereoPreference(mode)
@@ -800,6 +842,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val previousMode=_demodMode.value
         saveSettingsForMode(previousMode,previousFrequencyHz)
         _demodMode.value = mode
+        _monitorRequested.value=prefs.getBoolean("monitor_${mode.name}",true)
         if(mode==DemodMode.ADSB) configureAdsbRf()
         else if(previousMode==DemodMode.ADSB) restoreRfAfterAdsb(mode)
         // Manual type selection restores this device's last valid frequency.
@@ -961,7 +1004,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * @param hz  Desired IF bandwidth in Hz; clamped by DspEngine.
      */
     private fun validWidth(mode: DemodMode, hz: Int): Int =
-        if (mode in listOf(DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO)) {
+        if(mode==DemodMode.AIS) 75000 else if (mode in listOf(DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO)) {
             if(hz<50_000) 0 else hz.coerceAtMost(_capabilities.value.maxChannelBandwidth(_sampleRate.value).coerceAtLeast(50_000))
         } else hz.coerceAtLeast(0)
     fun setIfBandwidth(hz: Int) {
@@ -1188,7 +1231,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * running (no-op in that case).
      */
     fun rebuildVocoderDecoder() {
-        sdrService?.dspEngine?.rebuildVocoderDecoder()
+        sdrService?.rebuildVocoderDecoder()
     }
 
     // ─── RDS data ─────────────────────────────────────────────────────────────
