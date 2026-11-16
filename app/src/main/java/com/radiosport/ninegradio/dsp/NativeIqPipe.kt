@@ -60,6 +60,15 @@ internal class NativeIqPipe(private val create:(IqDecoderConfiguration)->Process
             flush()
             mutable.value=Status(running,samples.get(),messages.get(),missing.get(),driver.get(),error)
         } }
+        private fun fail(run:Run?,message:String) {
+            val current=synchronized(publicationLock) {
+                if(session===this && accepting && job.isActive && (run==null || native===run)) {
+                    flush();mutable.value=Status(false,samples.get(),messages.get(),missing.get(),driver.get(),message);true
+                } else false
+            }
+            // A retired reader's close/kill exception must not cancel its successor.
+            if(current) cancel()
+        }
         fun start() {
             replace()
             // Enrol before the owner starts capture. The first receive suspends;
@@ -98,7 +107,7 @@ internal class NativeIqPipe(private val create:(IqDecoderConfiguration)->Process
                     }
                     inputFinished=true;native?.child?.outputStream?.apply { flush();close() }
                 } catch(cancel:CancellationException) { throw cancel }
-                catch(error:Exception) { native?.let { update(it,false,"IQ 输入中断") };this@Session.cancel() }
+                catch(error:Exception) { fail(null,"IQ 输入中断") }
                 finally { runCatching { native?.child?.outputStream?.close() } }
             }
         }
@@ -132,7 +141,7 @@ internal class NativeIqPipe(private val create:(IqDecoderConfiguration)->Process
                     val exit=child.waitFor()
                     update(this@Run,false,if(inputFinished && exit==0) null else "解码组件已停止（$exit）")
                 } catch(cancel:CancellationException) { throw cancel }
-                catch(error:Exception) { update(this@Run,false,"解码结果读取失败");this@Session.cancel() }
+                catch(error:Exception) { fail(this@Run,"解码结果读取失败") }
             } }
             fun cancel() { reader?.cancel();child.destroyForcibly() }
             val released get()=!child.isAlive && reader?.isCompleted!=false
