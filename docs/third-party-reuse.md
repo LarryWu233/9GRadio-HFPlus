@@ -1,5 +1,13 @@
 # 成熟实现的复用记录
 
+## 架构预览 19：AM 频道选择性
+
+- 复用本项目预览 18 固定提交 `9558a8eb7fcf5b81809542451b64738ba69efdb2` 中的 `PolyphaseResampler` Blackman–Harris FIR 系数设计和 `cpp/include/volk_android.h` 的 VOLK 派生内积内核，GPL-3.0。两个文件保持原样，规范化 LF 的 SHA-256 在 `cpp/vendor/sources.json`。这里固定的是项目已包含的版本，不把现有头文件的上游提取版本说成已核实。
+- `channel_filter_jni.cpp` 只适配连续块的历史重叠、系数顺序和通道私有缓冲所有权，直接调用现有 `gnuradio_volk_32f_x2_dot_prod_32f`；未另写卷积、窗函数或滤波器设计。
+- 原源速率抽取滤波保留。AM 在降低后的频道采样率再做 96 taps 的 RF 选择，以避免固定短 FIR 在高输入采样率下的宽过渡带让相邻载波进入非线性检波。96 是完整的六组 16-float 内积，避免 ARM 路径的标量尾部；x86_64 使用既有标量内核。
+- 核心通过 `ComplexChannelFilter` 串行端口接入，和 `AmProcessor` 检波端口分开。输入为频道私有 IQ，可原地处理；原始 IQ 录制、独立测量和源数据不变。只作用于新 AM 路径，其他模式不启用；未切换重采样器、FFT 或音频后端。
+- 代价为 48 kHz 频道率下约 0.99 ms 的固定 FIR 群延迟。针对性混合载波、通带、任意块边界、重置及同源 CPU 对照见[预览 19 验证](validation/architecture-19.md)。
+
 ## 架构预览 18：可插拔 AM 检波
 
 - SAM 直接编译 Warren Pratt 的 [WDSP 2.11 amd.c / amd.h](https://github.com/TAPR/OpenHPSDR-wdsp/tree/e69de50d1d702216098019013899ad87534c64e0/wdsp%202.11/Source)，固定提交 `e69de50d1d702216098019013899ad87534c64e0`，GPL-2.0-or-later。原始文件 SHA-256 在 `app/src/main/cpp/vendor/sources.json`；许可随源码与 APK 提供。

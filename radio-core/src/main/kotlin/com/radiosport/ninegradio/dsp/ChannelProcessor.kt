@@ -12,7 +12,8 @@ data class ChannelConfiguration(val mode:DemodMode,val sourceRate:Int,val sinkRa
  */
 class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrimitives,
                        private val resamplers:ComplexIqResamplerFactory=ReferenceIqResamplers,
-                       private val amProcessor:AmProcessor?=null):AutoCloseable {
+                       private val amProcessor:AmProcessor?=null,
+                       private val amSelectivity:ComplexChannelFilter?=null):AutoCloseable {
     data class Output(val iq:FloatArray,val ifRate:Int,val demodulated:FloatArray,
         val mono:FloatArray,val decoderPcm:FloatArray,val sinkPcm:FloatArray,
         val rdsMultiplex:FloatArray?,val planChanged:Boolean)
@@ -52,7 +53,7 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
             return filter!!.process(input)
         }
     }
-    fun invalidateNarrow() { check(!closed);narrow?.close();narrow=null;narrowRates=0 to 0 }
+    fun invalidateNarrow() { check(!closed);narrow?.close();narrow=null;narrowRates=0 to 0;amSelectivity?.reset() }
     private fun invalidateWfm() { wfm?.close();wfm=null;wfmPlan=Triple(0,0,0) }
     fun outputRateChanged() { check(!closed);sink.reset();invalidateNarrow() }
     fun setMode(next:DemodMode) {
@@ -70,7 +71,7 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
     }
     override fun close() {
         if(closed) return
-        invalidateNarrow();invalidateWfm();cw.close();amProcessor?.close();closed=true
+        invalidateNarrow();invalidateWfm();cw.close();amProcessor?.close();amSelectivity?.close();closed=true
     }
     fun process(input:FloatArray,config:ChannelConfiguration):Output {
         check(!closed)
@@ -92,9 +93,13 @@ class ChannelProcessor(private val primitives:DemodPrimitives=ReferenceDemodPrim
                 val next=config.sourceRate to rate
                 if(narrow==null || narrowRates!=next || amFilterWidth!=fullWidth) {
                     val fresh=resamplers.create(config.sourceRate,rate,minOf(fullWidth/2.0,rate*.45))
-                    narrow?.close();narrow=fresh;narrowRates=next;amFilterWidth=fullWidth;changed=true
+                    narrow?.close();narrow=fresh;narrowRates=next;amFilterWidth=fullWidth;amSelectivity?.reset();changed=true
                 }
-                iq=narrow!!.process(input)
+                val decimated=narrow!!.process(input)
+                // At the low channel rate, the existing FIR design has a
+                // useful transition width. A source-rate decimator alone can
+                // leak adjacent AM carriers into the nonlinear detector.
+                iq=if(amSelectivity!=null && fullWidth<rate*.9) amSelectivity.process(decimated,rate,fullWidth) else decimated
             }
             mode==DemodMode.CW || mode==DemodMode.CWR -> {
                 rate=ChannelRatePolicy.narrow(config.sourceRate,config.sinkRate,mode,config.bandwidthHz,width)

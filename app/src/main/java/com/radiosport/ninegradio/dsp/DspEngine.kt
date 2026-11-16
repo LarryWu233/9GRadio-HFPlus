@@ -173,7 +173,7 @@ class DspEngine(private val device: IqSource,
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Current demodulator
-    private val channel=ChannelProcessor(AndroidDemodPrimitives,iqResamplers,NativeAmProcessor())
+    private val channel=ChannelProcessor(AndroidDemodPrimitives,iqResamplers,NativeAmProcessor(),NativeChannelFilter())
     @Volatile private var amSettings=AmSettings()
     private val _amStatus=MutableStateFlow(AmStatus())
     val amStatusFlow=_amStatus.asStateFlow()

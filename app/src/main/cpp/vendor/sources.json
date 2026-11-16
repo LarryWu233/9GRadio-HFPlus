@@ -124,5 +124,16 @@
     "license": "GPL-3.0-only",
     "upstream_file": "core/src/dsp/loop/agc.h",
     "changes": "Reuse existing vendored complex amplitude tracking; normalized target, gain ceiling, RF low-level hold and smoothed gain adapter. No wcpAGC adoption."
+  },
+  {
+    "name": "Existing VOLK-derived dot product and channel FIR design",
+    "repository": "https://github.com/LarryWu233/9GRadio-HFPlus",
+    "commit": "9558a8eb7fcf5b81809542451b64738ba69efdb2",
+    "license": "GPL-3.0",
+    "sha256_canonical_lf": {
+      "app/src/main/cpp/include/volk_android.h": "99fcad080c84043e6aa1da68ef8fbb676d7cca2bbf6baf51029c266be1459c4e",
+      "radio-core/src/main/kotlin/com/radiosport/ninegradio/dsp/PolyphaseResampler.kt": "e0d40cbe904b84e8841d2c2bdde2e8eede942aa7a186e67864b3620c08241286"
+    },
+    "changes": "Both baseline files unchanged. AM uses 96 existing-design taps at channel rate, with a JNI overlap/ownership adapter calling the existing VOLK-derived dot-product kernel. This pins the consumed project copy, not an unverified upstream VOLK revision."
   }
 ]
