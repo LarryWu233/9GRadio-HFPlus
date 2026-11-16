@@ -2,6 +2,8 @@
 
 Based on [preview 19](architecture-19.md), on the separate receiver-pipeline branch. Main remains unchanged and PR #1 stays draft. This stage implements the accepted small module-description/registration mechanism, using the existing data and lifetime ports.
 
+Post-release update: the unchanged APK subsequently passed the short HF+ four-detector observation after reconnection and USB authorization. See the [hardware follow-up](architecture-20-hardware.md); the initial attempt and verification snapshot below are retained.
+
 ## Change and scope
 
 - One portable catalog covers all 24 existing RF mode enum entries, plus CW audio, SSTV, SAT SSTV/APT and EiBi. It declares input domain/requirements, route, backend, monitoring policy, result kinds, picker/panel and content presets. Hidden compatibility entries do not imply new decoder support.
