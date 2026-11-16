@@ -8,11 +8,13 @@ import org.maplibre.geojson.Point
 fun RadioTarget.mapFeature(nowMs:Long=System.currentTimeMillis()):Feature = Feature.fromGeometry(Point.fromLngLat(longitude,latitude)).apply {
     addStringProperty("id",id);addStringProperty("label",label)
     val aircraft=type==RadioTarget.Type.AIRCRAFT
+    val ship=type==RadioTarget.Type.SHIP
     val heading=headingDegrees?.takeIf { it.isFinite() && it in 0.0..360.0 }?.rem(360.0)
-    addStringProperty("kind",if(aircraft) "aircraft" else "station")
+    addStringProperty("kind",if(aircraft) "aircraft" else if(ship) "ship" else "station")
     addNumberProperty("heading",heading ?: 0.0)
     addBooleanProperty("headingKnown",heading!=null)
-    val stale=aircraft && (positionTimeMs==null || nowMs-positionTimeMs>30_000)
+    val stale=(aircraft || ship) && (positionTimeMs==null || nowMs-positionTimeMs>(if(ship) 300_000 else 30_000))
     addBooleanProperty("positionStale",stale)
-    addStringProperty("icon",if(stale) "radio-aircraft-stale" else if(heading!=null) "radio-aircraft-known" else "radio-aircraft-unknown")
+    val prefix=if(ship) "radio-ship" else "radio-aircraft"
+    addStringProperty("icon",if(stale) "$prefix-stale" else if(heading!=null) "$prefix-known" else "$prefix-unknown")
 }

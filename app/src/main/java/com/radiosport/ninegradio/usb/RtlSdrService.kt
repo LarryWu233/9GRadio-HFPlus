@@ -80,7 +80,8 @@ class RtlSdrService : Service() {
             stopAudioContent("麦克风已暂停")
     }
     val adsbReceiver by lazy { com.radiosport.ninegradio.dsp.ReadsbReceiver(this) }
-    private val iqModules=com.radiosport.ninegradio.modules.RegisteredIqModules(mapOf("adsb" to { adsbReceiver }))
+    val aisReceiver by lazy { com.radiosport.ninegradio.dsp.AisReceiver(this) }
+    private val iqModules=com.radiosport.ninegradio.modules.RegisteredIqModules(mapOf("adsb" to { adsbReceiver },"ais" to { aisReceiver }))
     private val _moduleAvailability=MutableStateFlow(com.radiosport.ninegradio.modules.ModuleAvailability())
     val moduleAvailability=_moduleAvailability.asStateFlow()
     private val externalDecoder=com.radiosport.ninegradio.dsp.ExternalDecoderStream()
@@ -97,6 +98,7 @@ class RtlSdrService : Service() {
     private var monitorJob: Job? = null
     private var targetsJob: Job? = null
     private var adsbTargetsJob: Job? = null
+    private var aisTargetsJob:Job?=null
     private data class Tune(val hz: Long, val generation: Long, val immediate: Boolean,val sequence:Long)
     private val tuneIssued=AtomicLong()
     private val tuneCompleted=AtomicLong()
@@ -202,6 +204,12 @@ class RtlSdrService : Service() {
             } }
         }
         Log.i(TAG, "RtlSdrService created")
+        aisTargetsJob=scope.launch(start=CoroutineStart.UNDISPATCHED) {
+            aisReceiver.vessels.collect { vessels -> control {
+                if(aisReceiver.vessels.value===vessels)
+                    com.radiosport.ninegradio.data.RadioTargets.vessels.value=vessels.mapNotNull { com.radiosport.ninegradio.data.aisTarget(it) }
+            } }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -287,9 +295,10 @@ class RtlSdrService : Service() {
                 engine.setRecordingPlaybackMuted(playbackMonitorMuted)
                 audioContent.attach(engine)
                 val saved=getSharedPreferences("rtlsdr_prefs",MODE_PRIVATE)
-                val initialMode=requestedMode ?: runCatching { DemodMode.valueOf(saved.getString("device_${next.capabilities.id}_mode",
+                val initialMode=(next as? com.radiosport.ninegradio.source.FileIqSource)?.mode ?: requestedMode ?: runCatching { DemodMode.valueOf(saved.getString("device_${next.capabilities.id}_mode",
                     saved.getString("demod",if(next.capabilities.floatIq) "AM" else "NFM"))!!) }.getOrDefault(DemodMode.AM)
                 engine.setDemodMode(if(next.capabilities.supportsMode(initialMode)) initialMode else DemodMode.AM)
+                requestedMode=engine.controlSnapshot().mode
                 if (pendingFftSize > 0) engine.setFftSize(pendingFftSize)
                 engine.setFftDecimation(pendingFftDecimation)
                 engine.setNoiseBlankerEnabled(pendingNoiseBlanker)
@@ -314,6 +323,8 @@ class RtlSdrService : Service() {
                                     lat,lon,"${packet.source}\n$lat, $lon",System.currentTimeMillis()))
                     } }
                 }
+                updateIqModules()
+                val decoderState=iqModules.activeState
                 engine.start()
                 if (expected != generation.get()) { disconnectNow(); return@launch }
                 _connectionState.value = ConnectionState.Connected(next.getSourceName())
@@ -332,12 +343,16 @@ class RtlSdrService : Service() {
                             else -> status
                         }
                     }.filter { it.streamRestartRequired || !it.connected }.collect { status ->
+                        // Normal EOF drains native input/output before stop invalidates
+                        // results. Await off the serial controller so Close remains usable.
+                        val drained=if(engine.inputComplete.value && decoderState!=null)
+                            withTimeoutOrNull(5000) { decoderState.first { !it.running };true } ?: false else true
                         control {
                             if (source === next) {
                                 if(engine.inputComplete.value) audioContent.finishSoftwareInput()
                                 disconnectNow()
-                                if (status.error != null || status.streamRestartRequired)
-                                    _connectionState.value = ConnectionState.Error(status.error ?: "IQ stream stopped; reconnect the receiver")
+                                if (status.error != null || status.streamRestartRequired || !drained)
+                                    _connectionState.value = ConnectionState.Error(status.error ?: if(!drained) "解码器未能完成回放尾部处理" else "IQ stream stopped; reconnect the receiver")
                             }
                         }
                     }
@@ -365,6 +380,7 @@ class RtlSdrService : Service() {
         iqModules.stop()
         _moduleAvailability.value=com.radiosport.ninegradio.modules.ModuleAvailability()
         com.radiosport.ninegradio.data.RadioTargets.aircraft.value=emptyList()
+        com.radiosport.ninegradio.data.RadioTargets.vessels.value=emptyList()
         audioContent.attach(null)
         dspEngine = null
         source?.close()
@@ -391,8 +407,9 @@ class RtlSdrService : Service() {
     }
     fun pipelineDiagnostics():com.radiosport.ninegradio.pipeline.ReceiverDiagnostics? {
         val raw=adsbReceiver.status.value
-        val current=dspEngine?.pipelineDiagnostics()?.copy(rawDecoderInputMissingSamples=raw.inputMissingSamples,
-            rawDecoderDriverMissingSamples=raw.driverMissingSamples) ?: stoppedDiagnostics
+        val ais=if(requestedMode==DemodMode.AIS) aisReceiver.diagnostics.value else null
+        val current=dspEngine?.pipelineDiagnostics()?.copy(rawDecoderInputMissingSamples=ais?.missingSamples ?: raw.inputMissingSamples,
+            rawDecoderDriverMissingSamples=ais?.driverLostSamples ?: raw.driverMissingSamples) ?: stoppedDiagnostics
         return current?.copy(externalDecoderPendingRelease=externalDecoder.hasPendingRelease,
             externalDecoderDroppedPackets=externalDecoder.packetsDropped,externalDecoderStalePackets=externalDecoder.stalePackets)
     }

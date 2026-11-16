@@ -14,6 +14,8 @@ class RegisteredIqModules(private val factories:Map<String,()->IqDecoderModule<*
     init { factories.keys.forEach { require(registry[it].route==ModuleRoute.RAW_DECODER) } }
     val hasPendingRelease get()=active?.module?.hasPendingRelease==true
     val activeId get()=active?.id
+    /** Snapshot on the serial controller, then await EOF outside that controller. */
+    val activeState get()=active?.module?.state
     fun stop() {
         active?.let { old ->
             try { old.module.stop() } finally { if(!old.module.hasPendingRelease) active=null }

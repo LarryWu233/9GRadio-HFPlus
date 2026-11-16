@@ -6,7 +6,7 @@ import androidx.appcompat.app.AlertDialog
 
 /** Stable module IDs are independent from their visible positions. */
 class ModulePreferences(context: Context) {
-    companion object { val managed = (0..4).toList() + listOf(ControlsPagerAdapter.TAB_SCAN,ControlsPagerAdapter.TAB_RDF,15,16,17,18) }
+    companion object { val managed = (0..4).toList() + listOf(ControlsPagerAdapter.TAB_SCAN,ControlsPagerAdapter.TAB_RDF,15,16,17,18,ControlsPagerAdapter.TAB_AIS) }
     private val prefs = context.getSharedPreferences("screen_modules", Context.MODE_PRIVATE)
     val coreOrder: List<Int> get() {
         val saved = prefs.getString("order", "0,1,2,3,4,5")!!.split(',').mapNotNull { it.toIntOrNull() }
@@ -21,7 +21,7 @@ class ModulePreferences(context: Context) {
     fun showEditor(context: Context, applied: () -> Unit) {
         val order = coreOrder.filter { it!=ControlsPagerAdapter.TAB_SETTINGS }.toMutableList()
         val hidden = managed.filter { !visible(it) }.toMutableSet()
-        val labels = mapOf(0 to "调谐", 1 to "接收模式", 2 to "接收机与音频", 3 to "频谱与瀑布", 4 to "录音 / IQ", 5 to "设备与设置", 12 to "扫描 / ETM",13 to "测向仪",15 to "CW / CWR",16 to "SSTV",17 to "SAT",18 to "EiBi 节目表")
+        val labels = mapOf(0 to "调谐", 1 to "接收模式", 2 to "接收机与音频", 3 to "频谱与瀑布", 4 to "录音 / IQ", 5 to "设备与设置", 12 to "扫描 / ETM",13 to "测向仪",15 to "CW / CWR",16 to "SSTV",17 to "SAT",18 to "EiBi 节目表",19 to "AIS 船舶")
         val rows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         fun render() {
             rows.removeAllViews()

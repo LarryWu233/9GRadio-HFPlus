@@ -57,7 +57,8 @@ enum class DemodMode(
     // reported back in every DigitalFrame via DigitalFrame.Protocol so the
     // UI can display the actual mode.  Useful for scanning unknown digital
     // voice traffic without knowing the protocol in advance.
-    DIG  ("Dig",       12_500,   136_000_000L, 1_766_000_000L);
+    DIG  ("Dig",       12_500,   136_000_000L, 1_766_000_000L),
+    AIS  ("AIS",       75_000,   161_975_000L,   162_025_000L);
 
     /**
      * Default intermediate rate (Hz) used for the ComplexDecimator that narrows

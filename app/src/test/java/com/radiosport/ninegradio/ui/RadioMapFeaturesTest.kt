@@ -32,4 +32,11 @@ class RadioMapFeaturesTest {
         assertEquals("radio-aircraft-known",target.copy(positionTimeMs=49_000).mapFeature(50_000).getStringProperty("icon"))
         assertTrue(target.copy(positionTimeMs=null).mapFeature(50_000).getBooleanProperty("positionStale"))
     }
+    @Test fun shipsUseTheirOwnHeadingAndPositionAgeCategory() {
+        val ship=RadioTarget("ais:1","Vessel",1.0,2.0,"",600_000,RadioTarget.Type.SHIP,180.0,0)
+        assertEquals("radio-ship-known",ship.mapFeature(1000).getStringProperty("icon"))
+        assertEquals("ship",ship.mapFeature(1000).getStringProperty("kind"))
+        assertEquals("radio-ship-stale",ship.mapFeature(600_000).getStringProperty("icon"))
+        assertEquals("radio-ship-unknown",ship.copy(headingDegrees=null,positionTimeMs=600_000).mapFeature(600_000).getStringProperty("icon"))
+    }
 }

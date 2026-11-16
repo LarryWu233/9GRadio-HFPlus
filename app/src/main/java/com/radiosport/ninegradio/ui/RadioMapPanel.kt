@@ -118,8 +118,8 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             addView(options,FrameLayout.LayoutParams(size,size,android.view.Gravity.TOP or android.view.Gravity.END))
         }
         lifecycleScope.launch {
-            combine(RadioTargets.aircraft, RadioTargets.stations) { aircraft, stations ->
-                when(protocol) { "ADSB" -> aircraft; "APRS" -> stations; else -> aircraft+stations }
+            combine(RadioTargets.aircraft, RadioTargets.stations,RadioTargets.vessels) { aircraft, stations,vessels ->
+                when(protocol) { "ADSB" -> aircraft; "APRS" -> stations; "AIS" -> vessels;else -> aircraft+stations+vessels }
             }.sample(250).collect { updateTargets(it) }
         }
         lifecycleScope.launch {
@@ -147,7 +147,7 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
             ready.cameraPosition = CameraPosition.Builder().target(LatLng(35.0, 105.0)).zoom(3.0).build()
             loadStyle(preferences.getString("style", defaultStyle) ?: defaultStyle)
             ready.addOnMapClickListener { point ->
-                val hits = ready.queryRenderedFeatures(ready.projection.toScreenLocation(point), "radio-points","radio-aircraft")
+                val hits = ready.queryRenderedFeatures(ready.projection.toScreenLocation(point), "radio-points","radio-aircraft","radio-ships")
                 val target = hits.asSequence().mapNotNull { feature ->
                     val id=feature.takeIf { it.hasProperty("id") }?.getStringProperty("id")
                     targets.firstOrNull { it.id==id }
@@ -175,10 +175,10 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         style.addSource(GeoJsonSource("radio-trails", FeatureCollection.fromFeatures(emptyArray<Feature>())))
         style.addLayer(LineLayer("radio-tracks", "radio-trails").withProperties(lineColor("#00b7d8"), lineWidth(2f)))
         style.addLayer(CircleLayer("radio-points", "radio-data").withProperties(
-            circleRadius(7f), circleColor("#ffb347"), circleStrokeColor("#17212b"), circleStrokeWidth(2f)).withFilter(neq(get("kind"),literal("aircraft"))))
+            circleRadius(7f), circleColor("#ffb347"), circleStrokeColor("#17212b"), circleStrokeWidth(2f)).withFilter(all(neq(get("kind"),literal("aircraft")),neq(get("kind"),literal("ship")))))
         val size=(28*resources.displayMetrics.density).toInt()
-        fun icon(color:Int):android.graphics.Bitmap {
-            val drawable=androidx.appcompat.content.res.AppCompatResources.getDrawable(activity,com.radiosport.ninegradio.R.drawable.ic_aircraft)!!.mutate()
+        fun icon(color:Int,resource:Int=com.radiosport.ninegradio.R.drawable.ic_aircraft):android.graphics.Bitmap {
+            val drawable=androidx.appcompat.content.res.AppCompatResources.getDrawable(activity,resource)!!.mutate()
             val plane=drawable.toBitmap(size,size)
             val stroke=resources.displayMetrics.density*.8f
             val pad=kotlin.math.ceil(stroke.toDouble()).toInt()+1
@@ -196,7 +196,13 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
         style.addImage("radio-aircraft-known",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioAccent))))
         style.addImage("radio-aircraft-unknown",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioSecondary))))
         style.addImage("radio-aircraft-stale",icon(0xffcf4444.toInt()))
+        style.addImage("radio-ship-known",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioAccent)),com.radiosport.ninegradio.R.drawable.ic_ship))
+        style.addImage("radio-ship-unknown",icon(darker(UiThemes.color(activity,com.radiosport.ninegradio.R.attr.radioSecondary)),com.radiosport.ninegradio.R.drawable.ic_ship))
+        style.addImage("radio-ship-stale",icon(0xffcf4444.toInt(),com.radiosport.ninegradio.R.drawable.ic_ship))
         style.addLayer(SymbolLayer("radio-aircraft","radio-data").withFilter(eq(get("kind"),literal("aircraft"))).withProperties(
+            iconImage(get("icon")),iconRotate(get("heading")),iconAllowOverlap(true),iconIgnorePlacement(true),
+            iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP)))
+        style.addLayer(SymbolLayer("radio-ships","radio-data").withFilter(eq(get("kind"),literal("ship"))).withProperties(
             iconImage(get("icon")),iconRotate(get("heading")),iconAllowOverlap(true),iconIgnorePlacement(true),
             iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP)))
         centerInitially()
@@ -205,7 +211,8 @@ class RadioMapPanel(private val activity: AppCompatActivity, private val protoco
     private fun updateTargets(values: List<RadioTarget>) {
         val now = System.currentTimeMillis()
         val stations=RadioTargets.stations.value.map { it.id }.toSet()
-        targets = values.filter { now - (if(it.type==RadioTarget.Type.AIRCRAFT) it.positionTimeMs ?: it.timeMs else it.timeMs) < (if(protocolIsAprs() || it.id in stations) 600_000 else 120_000) &&
+        targets = values.filter { now - (if(it.type!=RadioTarget.Type.STATION) it.positionTimeMs ?: it.timeMs else it.timeMs) <
+            (if(protocol=="AIS" || it.type==RadioTarget.Type.SHIP) 900_000 else if(protocolIsAprs() || it.id in stations) 600_000 else 120_000) &&
             it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 }
         updateMapStatus()
         trails.keys.retainAll(targets.map { it.id }.toSet())

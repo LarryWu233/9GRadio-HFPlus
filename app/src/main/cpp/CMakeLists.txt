@@ -8,6 +8,7 @@ add_compile_options(
     "-fdebug-prefix-map=${NINEGRADIO_SOURCE_ROOT}=/src/9gradio")
 include(readsb.cmake)
 include(audio_content.cmake)
+include(ais.cmake)
 
 # Pinned upstream sources and their licenses are kept under vendor/.
 set(USB_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libusb)

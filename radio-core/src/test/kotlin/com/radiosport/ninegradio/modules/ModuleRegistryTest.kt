@@ -11,8 +11,8 @@ class ModuleRegistryTest {
         assertEquals(DemodMode.entries.toSet(),RadioModules.registry.all.mapNotNull { it.mode }.toSet())
         assertEquals(listOf(DemodMode.AM,DemodMode.NFM,DemodMode.WFM,DemodMode.WFM_STEREO,DemodMode.USB,DemodMode.LSB,
             DemodMode.CW,DemodMode.CWR,DemodMode.DSB,DemodMode.APRS,DemodMode.ACARS,DemodMode.ADSB,DemodMode.RAW,
-            DemodMode.DMR,DemodMode.YSF,DemodMode.DSTAR,DemodMode.DIG),RadioModules.modeChoices.map { it.mode })
-        assertEquals(setOf(DemodMode.ADSB,DemodMode.APRS,DemodMode.ACARS,DemodMode.FLEX,DemodMode.RAW),DemodMode.entries.filter { AudioRoutingPolicy.dataOnly(it) }.toSet())
+            DemodMode.DMR,DemodMode.YSF,DemodMode.DSTAR,DemodMode.DIG,DemodMode.AIS),RadioModules.modeChoices.map { it.mode })
+        assertEquals(setOf(DemodMode.ADSB,DemodMode.APRS,DemodMode.ACARS,DemodMode.FLEX,DemodMode.RAW,DemodMode.AIS),DemodMode.entries.filter { AudioRoutingPolicy.dataOnly(it) }.toSet())
         assertFalse(AudioRoutingPolicy.needsProtocolPcm(DemodMode.ADSB))
         assertTrue(AudioRoutingPolicy.needsProtocolPcm(DemodMode.APRS))
         assertTrue(AudioRoutingPolicy.canMonitor(DemodMode.DMR))
@@ -23,6 +23,8 @@ class ModuleRegistryTest {
         val hf=ModuleSourceSupport(listOf(500L..31000000L,64000000L..260000000L),listOf(768000),setOf(IqSampleFormat.FLOAT_32),660000)
         assertTrue(RadioModules.mode(DemodMode.ADSB).availability(rtl).available)
         assertFalse(RadioModules.mode(DemodMode.ADSB).availability(hf).available)
+        assertTrue(RadioModules.mode(DemodMode.AIS).availability(hf).available)
+        assertTrue(RadioModules.mode(DemodMode.AIS).availability(rtl).available)
         assertTrue(RadioModules.mode(DemodMode.AM).availability(hf).available)
         assertTrue(RadioModules.mode(DemodMode.ACARS).availability(hf).available)
         assertTrue(RadioModules.mode(DemodMode.DMR).availability(hf).available)

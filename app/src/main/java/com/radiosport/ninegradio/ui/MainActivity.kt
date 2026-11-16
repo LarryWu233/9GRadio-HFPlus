@@ -99,6 +99,7 @@ class MainActivity : RadioThemedActivity() {
     // Tabbed controls drawer
     private lateinit var pagerAdapter: ControlsPagerAdapter
     private var contentController: ContentModuleController?=null
+    private var aisController:AisModuleController?=null
     private val contentMicPermission = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted -> contentController?.microphoneResult(granted) }
     private val contentWavPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> contentController?.wavResult(uri) }
     private val contentCsvPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri -> contentController?.csvResult(uri) }
@@ -316,6 +317,7 @@ class MainActivity : RadioThemedActivity() {
             sdrService = (binder as RtlSdrService.LocalBinder).getService()
             bound = true
             contentController?.bindService()
+            aisController?.bindService()
             // If device is already connected (ViewModel connected it before us), apply settings now.
             if (viewModel.connectionState.value is RtlSdrService.ConnectionState.Connected) {
                 if (viewModel.isV4 && !viewModel.allowOutOfBand.value) {
@@ -824,10 +826,11 @@ class MainActivity : RadioThemedActivity() {
         val mode=viewModel.demodMode.value
         val raw=viewModel.ifBandwidthHz.value
         val width=raw.takeIf { it>0 } ?: mode.defaultBwHz
-        val allowed=mode!=DemodMode.ADSB
+        val allowed=mode!=DemodMode.ADSB && mode!=DemodMode.AIS
         binding.tvTuningStep.text="BW\n${formatIfBw(width,false)}"
         binding.tvTuningStep.contentDescription="BW ${formatIfBw(width,raw==0)}"
         binding.tvTuningStep.isEnabled=allowed
+        binding.tvTuningStep.tooltipText=if(mode==DemodMode.AIS) "AIS 双频道带宽由解码器管理" else null
         binding.btnStepUp.isEnabled=allowed; binding.btnStepDown.isEnabled=allowed
     }
     private fun changePlotBandwidth(direction:Int) {
@@ -892,7 +895,7 @@ class MainActivity : RadioThemedActivity() {
             { graphDragMode }, { viewModel.centerFreqHz.value }, { binding.spectrumView.visibleBandwidthHz() },
             { binding.frequencyView.tuningStepHz }, { binding.spectrumView.frequencyAtPixel(it) },
             { graphTune(it) }, { viewModel.finishTuning(); savePlotZoom() }, { plotZoom }, { setPlotZoom(it, false) },
-            { binding.spectrumView.bandwidthEdgeHit(it) }, { x ->
+            { viewModel.demodMode.value!=DemodMode.AIS && binding.spectrumView.bandwidthEdgeHit(it) }, { x ->
                 val range=bwRangeFor(viewModel.demodMode.value)
                 val hz=BW_STEPS[nearestBwIdx(binding.spectrumView.bandwidthAtPixel(x),range)]
                 if(hz==viewModel.ifBandwidthHz.value) false else { viewModel.setIfBandwidth(hz); true }
@@ -1092,9 +1095,9 @@ class MainActivity : RadioThemedActivity() {
                 contentController?.explicitRfMode(mode)
                 val hasHistory=viewModel.rememberedModeFrequency(mode)!=null
                 viewModel.setDemodMode(mode)
+                if(viewModel.modeStationMemory.value && !hasHistory) descriptor.preset?.let { viewModel.setFrequency(it.frequencyHz) }
                 selectDemodChip(viewModel.demodMode.value)
                 if (mode == DemodMode.ADSB) {
-                    if(viewModel.modeStationMemory.value && !hasHistory) viewModel.setFrequency(1_090_000_000)
                     updateAdsbTabVisibility(mode)
                 }
                 if(hasHistory || !viewModel.modeStationMemory.value) regionalReception.cancelPendingAutoTune()
@@ -2207,7 +2210,7 @@ class MainActivity : RadioThemedActivity() {
                 ControlsPagerAdapter.TAB_DISPLAY to R.drawable.ic_waterfall_display,
                 ControlsPagerAdapter.TAB_RECORDING to R.drawable.ic_record_radio,
                 ControlsPagerAdapter.TAB_SETTINGS to R.drawable.ic_module_settings, ControlsPagerAdapter.TAB_SCAN to R.drawable.ic_scan_sweep,
-                ControlsPagerAdapter.TAB_RDF to android.R.drawable.ic_menu_compass)
+                ControlsPagerAdapter.TAB_RDF to android.R.drawable.ic_menu_compass,ControlsPagerAdapter.TAB_AIS to R.drawable.ic_ship)
             val labels = mapOf(ControlsPagerAdapter.TAB_TUNE to R.string.tab_tune,
                 ControlsPagerAdapter.TAB_MODE to R.string.tab_mode,
                 ControlsPagerAdapter.TAB_RF to R.string.tab_rf,
@@ -2217,7 +2220,7 @@ class MainActivity : RadioThemedActivity() {
                 ControlsPagerAdapter.TAB_RDF to R.string.tab_rdf)
             if (pos in icons) {
                 tab.setIcon(icons.getValue(pos))
-                tab.contentDescription = getString(labels.getValue(pos))
+                tab.contentDescription = labels[pos]?.let { getString(it) } ?: ControlsPagerAdapter.TAB_TITLES[pos]
                 androidx.appcompat.widget.TooltipCompat.setTooltipText(tab.view, tab.contentDescription)
             } else tab.text = ControlsPagerAdapter.TAB_TITLES[pos]
             if (pos in ModulePreferences.managed && !ModulePreferences(this).visible(pos)) tab.view.visibility = View.GONE
@@ -2259,6 +2262,11 @@ class MainActivity : RadioThemedActivity() {
             { contentWavPicker.launch(arrayOf("audio/*","application/octet-stream")) },
             { contentCsvPicker.launch(arrayOf("text/*","application/octet-stream")) })
         pager.post { contentController?.setup() }
+        aisController=AisModuleController(this,pagerAdapter,viewModel,{ sdrService },receiverLocation,
+            { module -> moduleTab(module)?.select();binding.controlViewPager.setCurrentItem(pagerAdapter.positionOf(module),false) },
+            { shown -> moduleTab(ControlsPagerAdapter.TAB_AIS)?.view?.visibility=if(shown) View.VISIBLE else View.GONE },
+            { resizePagerToCurrentPage() },{ setPanelFullscreen(!panelFullscreen) })
+        pager.post { aisController?.setup() }
 
         // Mode tab: build the demodulation-mode chip group once it's inflated.
         pager.post { setupDemodModeChips() }
@@ -2379,6 +2387,10 @@ class MainActivity : RadioThemedActivity() {
             page.findViewById<View>(R.id.etmContainer)?.isVisible==true) {
             val viewport=binding.controlsScrollView.height-binding.controlsScrollView.paddingBottom-binding.controlsScrollView.paddingTop
             if(etm.resizeTable(viewport,page.measuredHeight,panelFullscreen)) page.measure(widthSpec,heightSpec)
+        }
+        if(position==ControlsPagerAdapter.TAB_AIS) {
+            val viewport=binding.controlsScrollView.height-binding.controlsScrollView.paddingBottom-binding.controlsScrollView.paddingTop
+            if(aisController?.resizeTable(viewport,page.measuredHeight,panelFullscreen)==true) page.measure(widthSpec,heightSpec)
         }
         val target = page.measuredHeight
         if (target <= 0) return
@@ -2756,6 +2768,7 @@ class MainActivity : RadioThemedActivity() {
             BW_STEPS.indexOfLast { it <= viewModel.capabilities.value.maxChannelBandwidth(viewModel.sampleRate.value) }.coerceAtLeast(27))
         DemodMode.DRM  -> Pair(14, 21)  // 2.4 kHz - 5 kHz
         DemodMode.ADSB -> Pair(27, 29)  // 50 kHz - 200 kHz
+        DemodMode.AIS  -> Pair(27, 29)  // Decoder owns the fixed dual-channel passband.
         DemodMode.RAW  -> Pair(0,  29)  // full range -- pass-through
     }
 
@@ -2809,6 +2822,7 @@ class MainActivity : RadioThemedActivity() {
      * observeViewModel() (mode / IF-bandwidth observers).
      */
     private fun channelHighlightHz(mode: DemodMode, ifBwHz: Int): Long {
+        if(mode==DemodMode.AIS) return 75000
         val visible = when(mode) {
             DemodMode.AM, DemodMode.NFM, DemodMode.USB, DemodMode.LSB,
             DemodMode.CW, DemodMode.CWR, DemodMode.DSB, DemodMode.APRS,
@@ -3152,6 +3166,7 @@ class MainActivity : RadioThemedActivity() {
                 // Show/hide APRS drawer tab
                 observeAprsMode(mode)
                 updateAdsbTabVisibility(mode)
+                aisController?.modeChanged(mode)
                 // Show/hide ACARS drawer tab
                 observeAcarsMode(mode)
                 // Show/hide digital voice protocol drawer tabs
@@ -4199,7 +4214,9 @@ class MainActivity : RadioThemedActivity() {
         if(!::pagerAdapter.isInitialized) return
         val module=pagerAdapter.moduleAt(binding.controlViewPager.currentItem)
         if(::etm.isInitialized) etm.setVisible(module==ControlsPagerAdapter.TAB_SCAN)
+        aisController?.setActive(module==ControlsPagerAdapter.TAB_AIS && viewModel.demodMode.value==DemodMode.AIS)
         receiverLocation.setActive(module==ControlsPagerAdapter.TAB_ADSB ||
+            module==ControlsPagerAdapter.TAB_AIS ||
             module==ControlsPagerAdapter.TAB_SCAN ||
             (module==ControlsPagerAdapter.TAB_APRS && findViewById<View>(R.id.aprsMapHost)?.visibility==View.VISIBLE))
         pagerAdapter.getViewAt(ControlsPagerAdapter.TAB_ADSB)?.let { page ->

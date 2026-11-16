@@ -5,8 +5,9 @@ import kotlinx.coroutines.flow.Flow
 enum class IqSampleFormat { UNSIGNED_8,FLOAT_32 }
 data class IqDecoderConfiguration(val sampleRate:Int,val format:IqSampleFormat)
 data class DecoderModuleState(val running:Boolean=false,val error:String?=null)
-data class IqDecoderRequirements(val sampleRates:Set<Int>,val formats:Set<IqSampleFormat>) {
-    fun accepts(config:IqDecoderConfiguration)=config.sampleRate in sampleRates && config.format in formats
+data class IqDecoderRequirements(val sampleRates:Set<Int>,val formats:Set<IqSampleFormat>,val sampleRateRange:IntRange?=null) {
+    fun acceptsRate(rate:Int)=sampleRateRange?.let { rate in it } ?: (rate in sampleRates)
+    fun accepts(config:IqDecoderConfiguration)=acceptsRate(config.sampleRate) && config.format in formats
 }
 
 /** Raw-IQ adapter boundary, not runtime plugin discovery.

@@ -6,10 +6,10 @@ import com.radiosport.ninegradio.pipeline.*
 
 enum class ModuleInput(val label:String) { CHANNEL_IQ("频道 IQ"), RAW_IQ("原始 IQ"), PROTOCOL_PCM("协议基带音频"), AUDIO("音频"), NONE("无需采样输入") }
 enum class ModuleRoute(val label:String) { MONITOR("监听"), RAW_DECODER("原始 IQ 解码"), PCM_DECODER("协议音频解码"), DIGITAL_VOICE("数字语音"), CAPTURE("IQ 录制"), CONTENT("音频内容解码"), REFERENCE("节目查询"), LEGACY("兼容路径") }
-enum class ModuleBackend { EXISTING_DEMOD, READSB, APRS, ACARS, PAGING, DIGITAL_VOICE, RAW_CAPTURE, MORSE, ROBOT36, APT, EIBI, LEGACY }
+enum class ModuleBackend { EXISTING_DEMOD, READSB, APRS, ACARS, PAGING, DIGITAL_VOICE, RAW_CAPTURE, MORSE, ROBOT36, APT, EIBI, LEGACY, AIS_CATCHER }
 enum class MonitorPolicy { REMEMBERED, FORBIDDEN }
 enum class ModulePicker { ANALOG, DIGITAL, CONTENT, HIDDEN }
-enum class ModulePanel { APRS, ACARS, ADSB, DMR, YSF, DSTAR, DIG, CW, SSTV, SAT, EIBI }
+enum class ModulePanel { APRS, ACARS, ADSB, DMR, YSF, DSTAR, DIG, CW, SSTV, SAT, EIBI, AIS }
 enum class ModuleResult(val label:String) { AUDIO("监听声音"), VOICE("解码语音"), POSITIONS("位置数据"), MESSAGES("消息"), TEXT("文本"), IMAGE("图像"), PROGRAMMES("节目表"), IQ("原始 IQ"), RDS("RDS 信息") }
 data class PcmRequirement(val sampleRate:Int=48000,val channels:Int=1)
 data class RfPreset(val frequencyHz:Long,val mode:DemodMode,val bandwidthHz:Int)
@@ -35,7 +35,8 @@ data class ModuleDescriptor(val id:String,val label:String,val input:ModuleInput
                 val format=rawIq.formats.joinToString(" / ") { if(it==IqSampleFormat.UNSIGNED_8) "8 位" else "浮点" }
                 return ModuleAvailability("$label 需要${format}原始 IQ")
             }
-            if(source.sampleRates.none { it in rawIq.sampleRates }) {
+            if(source.sampleRates.none { rawIq.acceptsRate(it) }) {
+                rawIq.sampleRateRange?.let { return ModuleAvailability("$label 需要 ${it.first}–${it.last} S/s 采样率") }
                 val rates=rawIq.sampleRates.sorted().joinToString(" / ") { "%.3f".format(java.util.Locale.ROOT,it/1e6) }
                 return ModuleAvailability("$label 需要 $rates MS/s 采样率")
             }
@@ -69,6 +70,7 @@ class ModuleRegistry(entries:List<ModuleDescriptor>) {
 
 object RadioModules {
     const val ADSB_SAMPLE_RATE=2400000
+    val AIS_REQUIREMENTS=IqDecoderRequirements(emptySet(),setOf(IqSampleFormat.UNSIGNED_8,IqSampleFormat.FLOAT_32),96000..12288000)
     private fun rf(mode:DemodMode,picker:ModulePicker=ModulePicker.HIDDEN,
         route:ModuleRoute=ModuleRoute.MONITOR,backend:ModuleBackend=ModuleBackend.EXISTING_DEMOD,
         panel:ModulePanel?=null,results:Set<ModuleResult> = setOf(ModuleResult.AUDIO),silent:Boolean=false)=
@@ -90,10 +92,13 @@ object RadioModules {
         rf(DemodMode.APRS,ModulePicker.DIGITAL,ModuleRoute.PCM_DECODER,ModuleBackend.APRS,ModulePanel.APRS,setOf(ModuleResult.POSITIONS,ModuleResult.MESSAGES),true),
         rf(DemodMode.ACARS,ModulePicker.DIGITAL,ModuleRoute.PCM_DECODER,ModuleBackend.ACARS,ModulePanel.ACARS,setOf(ModuleResult.MESSAGES),true),
         rf(DemodMode.ADSB,ModulePicker.DIGITAL,ModuleRoute.RAW_DECODER,ModuleBackend.READSB,ModulePanel.ADSB,setOf(ModuleResult.POSITIONS),true)
-            .copy(receiveRanges=listOf(1090000000L..1090000000L),rangeLabel=" 1090 MHz",rawIq=IqDecoderRequirements(setOf(ADSB_SAMPLE_RATE),setOf(IqSampleFormat.UNSIGNED_8))),
+            .copy(receiveRanges=listOf(1090000000L..1090000000L),rangeLabel=" 1090 MHz",rawIq=IqDecoderRequirements(setOf(ADSB_SAMPLE_RATE),setOf(IqSampleFormat.UNSIGNED_8)),preset=RfPreset(1090000000,DemodMode.ADSB,1000000)),
         rf(DemodMode.RAW,ModulePicker.DIGITAL,ModuleRoute.CAPTURE,ModuleBackend.RAW_CAPTURE,results=setOf(ModuleResult.IQ),silent=true),
         voice(DemodMode.DMR,ModulePicker.DIGITAL,ModulePanel.DMR),voice(DemodMode.YSF,ModulePicker.DIGITAL,ModulePanel.YSF),
         voice(DemodMode.DSTAR,ModulePicker.DIGITAL,ModulePanel.DSTAR),voice(DemodMode.DIG,ModulePicker.DIGITAL,ModulePanel.DIG),
+        rf(DemodMode.AIS,ModulePicker.DIGITAL,ModuleRoute.RAW_DECODER,ModuleBackend.AIS_CATCHER,ModulePanel.AIS,
+            setOf(ModuleResult.POSITIONS,ModuleResult.MESSAGES),true).copy(rawIq=AIS_REQUIREMENTS,
+            receiveRanges=listOf(161975000L..162025000L),rangeLabel=" AIS 双频道",preset=RfPreset(162000000,DemodMode.AIS,75000)),
         rf(DemodMode.FM,results=setOf(ModuleResult.AUDIO,ModuleResult.RDS)),
         // Existing hidden/compatibility entries; these do not add DRM/FLEX decoding.
         rf(DemodMode.DRM,route=ModuleRoute.LEGACY,backend=ModuleBackend.LEGACY),

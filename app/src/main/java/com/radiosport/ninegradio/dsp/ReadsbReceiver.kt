@@ -112,11 +112,13 @@ class ReadsbReceiver(private val context: Context):com.radiosport.ninegradio.pip
         }
         fun start() {
             replaceNative()
-            // ATOMIC installs the pipe's finally block even if Stop wins before
-            // this IO worker is first dispatched. The body still runs on IO.
-            scope.launch(start=CoroutineStart.ATOMIC) {
+            // Register before capture starts and install finally immediately.
+            // Once the first receive suspends, writes resume on IO.
+            scope.launch(start=CoroutineStart.UNDISPATCHED) {
+                var first=true
                 try {
                     source.iqFlow.collect { block ->
+                        if(first) { first=false;yield() }
                         ensureActive()
                         check(block is IqBlock.Unsigned8) { "readsb 输入格式发生变化" }
                         check(block.metadata.sampleRate==0 || block.metadata.sampleRate==SAMPLE_RATE) { "readsb 输入采样率发生变化" }

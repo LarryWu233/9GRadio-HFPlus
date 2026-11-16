@@ -1,0 +1,737 @@
+/*
+	Copyright(c) 2021-2026 jvde.github@gmail.com
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#include <cctype>
+#include <string>
+#include <cstring>
+#include <cmath>
+
+#include <cstdlib>
+#include <cstdint>
+
+#include "Parser.h"
+#include "Keys.h"
+#include "SWAR.h"
+#include "Convert.h"
+
+// Verification mode: also run the authoritative linear search and assert the
+// fast path returns the same value. Turn off for production after validation.
+#define VERIFY_KEY_LOOKUP 0
+
+namespace JSON
+{
+	// Generated from KeyDefs.h — one branch per X() entry whose input dict
+	// field is non-empty. The `sizeof(input) > 1` guard lets the compiler
+	// dead-code-eliminate the ~470 empty-input branches at compile time.
+	// Each remaining memcmp is folded into constant-size integer compares.
+	static inline int lookupInputKey(const char *s, int len)
+	{
+#define X(name, full, min, sparse, aprs, setting, input, unit, desc, lookup) \
+	if (sizeof(input) > 1 && sizeof(input) - 1 == (size_t)len &&             \
+		memcmp(s, input, sizeof(input) - 1) == 0)                            \
+		return AIS::name;
+#include "KeyDefs.h"
+#undef X
+		return -1;
+	}
+
+	// Parser -- Build JSON object from String
+
+	// a line naming a secret is not repeated in a message: messages reach the log
+	static bool namesSecret(std::string line)
+	{
+		for (char &c : line)
+			c = (char)std::tolower((unsigned char)c);
+		for (const char *word : {"pass", "pwd", "salt", "secret", "key", "conn_str", "uuid", "url"})
+			if (line.find(word) != std::string::npos)
+				return true;
+		return false;
+	}
+
+	[[noreturn]] void Parser::error(const std::string &err, int pos, bool syntax)
+	{
+		const int char_limit = 40;
+		const int len = (int)(pend - p_start);
+		pos = MAX(0, MIN(pos, len));
+
+		int line = 1, line_start = 0;
+		for (int i = 0; i < pos; i++)
+			if (p_start[i] == '\n')
+			{
+				line++;
+				line_start = i + 1;
+			}
+		int line_end = pos;
+		while (line_end < len && p_start[line_end] != '\n' && p_start[line_end] != '\r')
+			line_end++;
+		const bool lines = line > 1 || line_end < len;
+
+		const int from = MAX(line_start, pos - char_limit);
+		const int to = MIN(line_end, pos + char_limit);
+		std::string context;
+		if (!namesSecret(std::string(p_start + line_start, p_start + line_end)))
+			context.assign(p_start + from, p_start + to);
+		for (char &c : context)
+			if (c == '\t')
+				c = ' ';
+		const std::size_t first = context.find_first_not_of(' ');
+		context = first == std::string::npos ? "" : context.substr(first, context.find_last_not_of(' ') - first + 1);
+		if (!context.empty())
+		{
+			if (from > line_start && first == 0)
+				context = "..." + context;
+			if (to < line_end)
+				context += "...";
+		}
+
+		std::string where = lines ? "line " + std::to_string(line) : "column " + std::to_string(pos - line_start + 1);
+		throw std::runtime_error(where + ": " + (syntax ? "syntax error, " : "") + err +
+								 (context.empty() ? "" : ", near: " + context));
+	}
+
+	[[noreturn]] void Parser::error(const char *err, int pos)
+	{
+		error(std::string(err), pos);
+	}
+
+	// JIT Tokenizer - lexes one token per call
+
+	void Parser::next()
+	{
+		skip_whitespace();
+
+		if (p >= pend)
+		{
+			currentType = TokenType::End;
+			tokenStart = tokenEnd = p;
+			return;
+		}
+
+		char c = *p;
+
+		switch (c)
+		{
+		case '{':
+			currentType = TokenType::LeftBrace;
+			p++;
+			break;
+		case '}':
+			currentType = TokenType::RightBrace;
+			p++;
+			break;
+		case '[':
+			currentType = TokenType::LeftBracket;
+			p++;
+			break;
+		case ']':
+			currentType = TokenType::RightBracket;
+			p++;
+			break;
+		case ':':
+			currentType = TokenType::Colon;
+			p++;
+			break;
+		case ',':
+			currentType = TokenType::Comma;
+			p++;
+			break;
+		case 't':
+			if (p + 4 <= pend && memcmp(p, "true", 4) == 0)
+			{
+				currentType = TokenType::True;
+				tokenStart = p;
+				tokenEnd = p + 4;
+				p += 4;
+			}
+			else
+				error("illegal identifier", (int)(p - p_start));
+			break;
+		case 'f':
+			if (p + 5 <= pend && memcmp(p, "false", 5) == 0)
+			{
+				currentType = TokenType::False;
+				tokenStart = p;
+				tokenEnd = p + 5;
+				p += 5;
+			}
+			else
+				error("illegal identifier", (int)(p - p_start));
+			break;
+		case 'n':
+			if (p + 4 <= pend && memcmp(p, "null", 4) == 0)
+			{
+				currentType = TokenType::Null;
+				tokenStart = p;
+				tokenEnd = p + 4;
+				p += 4;
+			}
+			else
+				error("illegal identifier", (int)(p - p_start));
+			break;
+
+		case '\"':
+		{
+			p++;
+			tokenStart = p;
+			tokenEscaped = false;
+
+			// Word-sized fast scan: stop on '"' (end of string), '\\' (escape),
+			// or any byte < 0x20 (control char, illegal unescaped per JSON spec).
+			constexpr size_t m_quote = SWAR::mask('"');
+			constexpr size_t m_bslash = SWAR::mask('\\');
+
+			SWAR_SKIP_PTR(p, pend,
+				SWAR::has_byte(word, m_quote)
+				| SWAR::has_byte(word, m_bslash)
+				| SWAR::has_byte_lt(word, 0x20));
+			while (p < pend && *p != '\"' && *p != '\\' && (unsigned char)*p >= 0x20)
+				p++;
+
+			if (p < pend && *p == '\"')
+			{
+				tokenEnd = p;
+				p++;
+			}
+			else
+			{
+				parse_string_escaped();
+				tokenEscaped = true;
+			}
+
+			currentType = TokenType::String;
+			break;
+		}
+
+		case '-':
+		case '0':
+		case '1':
+		case '2':
+		case '3':
+		case '4':
+		case '5':
+		case '6':
+		case '7':
+		case '8':
+		case '9':
+		{
+			bool floating = false;
+			bool scientific = false;
+			tokenStart = p;
+
+			do
+			{
+				if (*p == '.')
+				{
+					if (floating || tokenStart == p || (unsigned char)(p[-1] - '0') >= 10)
+						error("malformed number", (int)(p - p_start));
+					else
+						floating = true;
+				}
+				else if ((*p == 'e' || *p == 'E') && !scientific)
+				{
+					if ((unsigned char)(p[-1] - '0') >= 10 && p[-1] != '.')
+						error("malformed number", (int)(p - p_start));
+
+					scientific = floating = true;
+					p++;
+					if (p != pend && (*p == '+' || *p == '-'))
+						p++;
+
+					if (p == pend || (unsigned char)(*p - '0') >= 10)
+						error("malformed number", (int)(p - p_start));
+				}
+
+				p++;
+
+			} while (p != pend && ((unsigned char)(*p - '0') < 10 || *p == '.' || *p == 'e' || *p == 'E'));
+
+			tokenEnd = p;
+			currentType = floating ? TokenType::FloatingPoint : TokenType::Integer;
+			break;
+		}
+
+		default:
+			error("illegal character", (int)(p - p_start));
+			break;
+		}
+	}
+
+	// Cold path: decode a string literal that contains escape sequences.
+	// Entered with p pointing at the first '\\' inside the string, tokenStart
+	// at the opening-quote+1. On return, escapedText holds the decoded value,
+	// p is past the closing quote, and tokenStart/tokenEnd are nulled.
+	void Parser::parse_string_escaped()
+	{
+		escapedText.clear();
+		escapedText.append(tokenStart, p - tokenStart);
+
+		while (p != pend && *p != '\"' && *p != '\n' && *p != '\r')
+		{
+			char ch = *p;
+			if (ch == '\\')
+			{
+				if (++p == pend)
+					error("line ends in string literal escape sequence", (int)(p - p_start));
+				ch = *p;
+				switch (ch)
+				{
+				case '\"':
+				case '\\':
+				case '/':
+					break;
+				case 'b':
+					ch = '\b';
+					break;
+				case 'f':
+					ch = '\f';
+					break;
+				case 'n':
+					ch = '\n';
+					break;
+				case 'r':
+					ch = '\r';
+					break;
+				case 't':
+					ch = '\t';
+					break;
+				case 'u':
+				{
+					if (p + 4 >= pend)
+						error("line ends in string literal unicode escape sequence", (int)(p - p_start));
+					auto hex4 = [&](const char *q)
+					{
+						int v = 0;
+						for (int i = 0; i < 4; i++)
+						{
+							int d = Util::Convert::hexValue(q[i]);
+							if (d < 0)
+								error("illegal unicode escape sequence", (int)(p - p_start));
+							v = (v << 4) | d;
+						}
+						return v;
+					};
+					unsigned cp = hex4(p + 1);
+					p += 4;
+					// a surrogate pair is one code point spread over two escapes
+					if (cp >= 0xD800 && cp <= 0xDBFF && p + 6 < pend && p[1] == '\\' && p[2] == 'u')
+					{
+						unsigned lo = hex4(p + 3);
+						if (lo >= 0xDC00 && lo <= 0xDFFF)
+						{
+							cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+							p += 6;
+						}
+					}
+					// the code point as UTF-8, as the rest of the text is
+					if (cp < 0x80)
+						ch = (char)cp;
+					else
+					{
+						if (cp < 0x800)
+							escapedText += (char)(0xC0 | (cp >> 6));
+						else
+						{
+							if (cp < 0x10000)
+								escapedText += (char)(0xE0 | (cp >> 12));
+							else
+							{
+								escapedText += (char)(0xF0 | (cp >> 18));
+								escapedText += (char)(0x80 | ((cp >> 12) & 0x3F));
+							}
+							escapedText += (char)(0x80 | ((cp >> 6) & 0x3F));
+						}
+						ch = (char)(0x80 | (cp & 0x3F));
+					}
+					break;
+				}
+				default:
+					error("illegal escape sequence", (int)(p - p_start));
+				}
+			}
+			escapedText += ch;
+			p++;
+		}
+
+		tokenStart = nullptr;
+		tokenEnd = nullptr;
+
+		if (p == pend || *p != '\"')
+			error("line ends in string literal", (int)(p - p_start));
+		p++;
+	}
+
+	// Specialized tokenizer for object-member position: the next token must be
+	// a string key or '}'. Skips escape detection — keys never contain escapes
+	// in this protocol — so the SWAR scan only watches for the closing quote.
+	void Parser::next_key()
+	{
+		skip_whitespace();
+
+		if (p >= pend)
+		{
+			currentType = TokenType::End;
+			tokenStart = tokenEnd = p;
+			return;
+		}
+
+		char c = *p;
+		if (c == '}')
+		{
+			currentType = TokenType::RightBrace;
+			p++;
+			return;
+		}
+		if (c != '\"')
+		{
+			next();
+			return;
+		}
+
+		p++;
+		tokenStart = p;
+		tokenEscaped = false;
+
+		constexpr size_t m_quote = SWAR::mask('"');
+		SWAR_SKIP_PTR(p, pend, SWAR::has_byte(word, m_quote));
+		while (p < pend && *p != '\"')
+			p++;
+
+		tokenEnd = p;
+		if (p == pend)
+			error("line ends in string literal", (int)(p - p_start));
+		p++;
+		currentType = TokenType::String;
+	}
+
+	// Parsing functions
+
+	[[noreturn]] void Parser::error_parser(const std::string &err, bool syntax)
+	{
+		error(err, (int)(tokenStart - p_start), syntax);
+	}
+
+	std::string Parser::tokenString() const
+	{
+		if (tokenEscaped)
+			return escapedText;
+		return std::string(tokenStart, tokenEnd - tokenStart);
+	}
+
+	int Parser::search()
+	{
+		if (dict == JSON_DICT_INPUT)
+		{
+			const char *str = tokenEscaped ? escapedText.data() : tokenStart;
+			int len = tokenEscaped ? (int)escapedText.size() : (int)(tokenEnd - tokenStart);
+
+			int fast = lookupInputKey(str, len);
+#if VERIFY_KEY_LOOKUP
+			int slow = linearSearch();
+			if (fast != slow)
+			{
+				throw std::runtime_error(
+					"key lookup mismatch: fast=" + std::to_string(fast) +
+					" slow=" + std::to_string(slow) +
+					" key=\"" + std::string(str, (size_t)len) + "\"");
+			}
+#endif
+			return fast;
+		}
+
+		return linearSearch();
+	}
+
+	void Parser::skip_value()
+	{
+		switch (currentType)
+		{
+		case TokenType::LeftBrace:
+		{
+			if (++depth > max_depth)
+				error_parser("nested deeper than " + std::to_string(max_depth) + " levels", false);
+			next();
+			while (is_match(TokenType::String))
+			{
+				next();
+				must_match(TokenType::Colon, "expected ':'");
+				next();
+				skip_value();
+				next();
+				if (!is_match(TokenType::Comma))
+					break;
+				next();
+			}
+			must_match(TokenType::RightBrace, "expected ',' or '}'");
+			depth--;
+			break;
+		}
+		case TokenType::LeftBracket:
+		{
+			if (++depth > max_depth)
+				error_parser("nested deeper than " + std::to_string(max_depth) + " levels", false);
+			next();
+			while (!is_match(TokenType::RightBracket))
+			{
+				skip_value();
+				next();
+				if (!is_match(TokenType::Comma))
+					break;
+				next();
+			}
+			must_match(TokenType::RightBracket, "expected ',' or ']'");
+			depth--;
+			break;
+		}
+		case TokenType::String:
+		case TokenType::Integer:
+		case TokenType::FloatingPoint:
+		case TokenType::True:
+		case TokenType::False:
+		case TokenType::Null:
+			break;
+		default:
+			error_parser("unexpected token while skipping value");
+			break;
+		}
+	}
+
+	Value Parser::parse_value(Pool *pool)
+	{
+		Value v = Value();
+		v.setNull();
+		switch (currentType)
+		{
+		case TokenType::Integer:
+		{
+			int64_t val = 0;
+			bool neg = (*tokenStart == '-');
+			bool overflow = false;
+			for (const char *s = tokenStart + neg; s < tokenEnd; s++)
+			{
+				int d = *s - '0';
+				if (val > (INT64_MAX - d) / 10)
+				{
+					overflow = true;
+					break;
+				}
+				val = val * 10 + d;
+			}
+			if (overflow)
+				v.setInt(neg ? INT64_MIN : INT64_MAX);
+			else
+				v.setInt(neg ? -val : val);
+			break;
+		}
+		case TokenType::FloatingPoint:
+		{
+			// One integer mantissa with a decimal exponent: while the mantissa stays
+			// below 2^53 and the power of ten is exact, a single IEEE division or
+			// multiplication is correctly rounded on every platform.
+			const char *s = tokenStart;
+			bool neg = (*s == '-');
+			if (neg)
+				s++;
+			const char *digits = s;
+
+			uint64_t mantissa = 0;
+			int exp10 = 0;
+			bool exact = true;
+			while (s < tokenEnd && *s >= '0' && *s <= '9')
+			{
+				if (mantissa < 100000000000000000ULL)
+					mantissa = mantissa * 10 + (*s - '0');
+				else
+					exact = false;
+				s++;
+			}
+
+			if (s < tokenEnd && *s == '.')
+			{
+				s++;
+				while (s < tokenEnd && *s >= '0' && *s <= '9')
+				{
+					if (mantissa < 100000000000000000ULL)
+					{
+						mantissa = mantissa * 10 + (*s - '0');
+						exp10--;
+					}
+					else
+						exact = false;
+					s++;
+				}
+			}
+
+			if (s < tokenEnd && (*s == 'e' || *s == 'E'))
+			{
+				s++;
+				bool eneg = false;
+				if (s < tokenEnd && (*s == '+' || *s == '-'))
+				{
+					eneg = (*s == '-');
+					s++;
+				}
+
+				int exp = 0;
+				while (s < tokenEnd && *s >= '0' && *s <= '9')
+				{
+					if (exp < 400)
+						exp = exp * 10 + (*s - '0');
+					s++;
+				}
+				exp10 += eneg ? -exp : exp;
+			}
+
+			static const double pow10_table[] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+			double val;
+			if (exact && mantissa <= 9007199254740992ULL && exp10 >= -22 && exp10 <= 22)
+			{
+				val = (double)mantissa;
+				if (exp10 < 0)
+					val /= pow10_table[-exp10];
+				else
+					val *= pow10_table[exp10];
+			}
+			else
+				val = std::strtod(std::string(digits, tokenEnd).c_str(), nullptr);
+
+			v.setFloat(neg ? -val : val);
+			break;
+		}
+		case TokenType::True:
+			v.setBool(true);
+			break;
+		case TokenType::LeftBrace:
+		{
+			if (++depth > max_depth)
+				error_parser("nested deeper than " + std::to_string(max_depth) + " levels", false);
+			JSON *child = pool->addObject();
+			parse_into_core(child, pool);
+			v.setObject(child);
+			depth--;
+			break;
+		}
+		case TokenType::False:
+			v.setBool(false);
+			break;
+		case TokenType::Null:
+			v.setNull();
+			break;
+		case TokenType::String:
+			if (tokenEscaped)
+				v.setString(pool->addString(escapedText.data(), escapedText.size()));
+			else
+				v.setString(pool->addString(tokenStart, tokenEnd - tokenStart));
+			break;
+		case TokenType::LeftBracket:
+		{
+			if (++depth > max_depth)
+				error_parser("nested deeper than " + std::to_string(max_depth) + " levels", false);
+			std::vector<Value> *arr = pool->addArray();
+
+			next();
+
+			while (!is_match(TokenType::RightBracket))
+			{
+				arr->push_back(parse_value(pool));
+				next();
+				if (!is_match(TokenType::Comma))
+					break;
+				next();
+				if (is_match(TokenType::RightBracket))
+					error_parser("comma cannot be followed by ']'");
+			}
+
+			must_match(TokenType::RightBracket, "expected ',' or ']'");
+			v.setArray(arr);
+			depth--;
+		}
+
+		break;
+		case TokenType::End:
+			error_parser("unexpected end of file");
+
+		default:
+			error_parser("value parse not implemented");
+			break;
+		}
+		return v;
+	}
+
+	void Parser::parse_into_core(JSON *o, Pool *pool)
+	{
+		must_match(TokenType::LeftBrace, "expected '{'");
+		next_key();
+
+		while (is_match(TokenType::String))
+		{
+			int idx = search();
+			if (preserveUnknownKeys && (idx < 0 || tokenString() != AIS::KeyMap[idx][dict].p))
+				idx = pool->extraKey(tokenString());
+			if (idx < 0 && !skipUnknownKeys && !preserveUnknownKeys)
+				error_parser("unknown key \"" + tokenString() + "\"", false);
+			if (preserveUnknownKeys && (*o)[idx])
+				error_parser("duplicate key \"" + tokenString() + "\"", false);
+
+			next();
+			must_match(TokenType::Colon, "expected \':\'");
+			next();
+
+			if (idx < 0 && !preserveUnknownKeys)
+				skip_value();
+			else
+				o->Add(idx, parse_value(pool));
+
+			next();
+
+			if (!is_match(TokenType::Comma))
+				break;
+			next_key();
+			if (!is_match(TokenType::String))
+				error_parser("comma needs to be followed by property");
+		}
+
+		must_match(TokenType::RightBrace, "expected ',' or '}'");
+	}
+
+	Document Parser::parse(const std::string &j)
+	{
+		Document doc;
+		p_start = j.data();
+		p = p_start;
+		pend = p_start + j.size();
+		depth = 0;
+		next();
+		parse_into_core(&doc.root, &doc.pool);
+		next();
+		must_match(TokenType::End, "expected END");
+		return doc;
+	}
+
+	void Parser::parse_into(JSON &target, Pool &pool, const std::string &j)
+	{
+		p_start = j.data();
+		p = p_start;
+		pend = p_start + j.size();
+		target.clear();
+		pool.clear();
+		depth = 0;
+		next();
+		parse_into_core(&target, &pool);
+		next();
+		must_match(TokenType::End, "expected END");
+	}
+}

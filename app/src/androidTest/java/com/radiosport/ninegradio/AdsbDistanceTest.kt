@@ -27,6 +27,13 @@ class AdsbDistanceTest {
             val known=tracker.update(listOf(ac))
             assertTrue(known.currentMaxKm!! in 110.0..112.0)
             assertEquals(known.currentMaxKm!!,known.recordKm!!,0.01)
+            val ships=AdsbDistanceTracker(context,"ais_record_")
+            assertNull(ships.updateTargets(emptyList()).recordKm)
+            val vessel=com.radiosport.ninegradio.data.RadioTarget("ais:1","",0.5,0.0,"",0)
+            val maritime=ships.updateTargets(listOf(vessel))
+            assertTrue(maritime.currentMaxKm!! in 55.0..56.0)
+            assertEquals(known.recordKm!!,tracker.update(emptyList()).recordKm!!,0.01)
+            ships.reset()
             prefs.edit().putFloat("receiverLat",0.0001f).commit() // GPS drift, same receiver site.
             assertEquals(known.recordKm!!,tracker.update(listOf(ac)).recordKm!!,0.001)
             val empty=tracker.update(emptyList())

@@ -1,0 +1,279 @@
+/*
+	Copyright(c) 2021-2026 jvde.github@gmail.com
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+#pragma once
+#include <algorithm>
+#include <cstdint>
+#include <ctime>
+#include <map>
+#include <string>
+#include <vector>
+#include <utility>
+#include <functional>
+
+#include "Common.h"
+#include "Keys.h"
+#include "JSON.h"
+#include "Writer.h"
+
+// Receiving stations told to the tracker over the control channel: one record
+// per station id, sequenced on the object feed's counter so the feed lists a
+// station only when it changed. A withdrawn station leaves a tombstone. The
+// registry keeps the order stations were first told in, the configuration's.
+class StationRegistry
+{
+public:
+	// a station stays until withdrawn; a row's ttl only keeps a client from ageing it out
+	enum { KEEP_S = 315360000 };
+	// what the control feed may add: far above any network's count, and each record short
+	static const std::size_t MAX_FEED_STATIONS = 16384, MAX_FEED_NAME = 128, MAX_FEED_COUNTRY = 8, MAX_TOMBSTONES = 1024;
+
+	// how a station is doing, as the host that runs it judges: unknown where the host cannot
+	// tell, receiving, quiet (nothing heard for a while), or down (its receivers are lost)
+	enum State { STATE_UNKNOWN = 0, STATE_RECEIVING, STATE_QUIET, STATE_DOWN };
+	static const char *stateName(int state)
+	{
+		return state == STATE_RECEIVING ? "receiving" : state == STATE_QUIET ? "quiet" : state == STATE_DOWN ? "down" : nullptr;
+	}
+
+	struct Station
+	{
+		int id = 0;
+		std::string name, country;
+		FLOAT32 lat = LAT_UNDEFINED, lon = LON_UNDEFINED;
+		float alt = ALTITUDE_UNDEFINED; // metres, of the antenna
+		uint32_t mmsi = 0;
+		bool gps = true;
+		int inputs = 0;
+		bool share_loc = false; // its position may leave this machine: servers, the API, the map
+		bool online = false;
+		int state = STATE_UNKNOWN;
+		std::time_t last = 0;
+		float rate = 0;
+		uint64_t seq = 0;
+	};
+
+	// `placed`, when given, gets the station as the line said it, and whether it is gone
+	void apply(const JSON::JSON &o, uint64_t &next_seq, Station *placed = nullptr, bool *placed_gone = nullptr)
+	{
+		Station s;
+		s.share_loc = true; // whoever tells a station on a feed has let its position out
+		bool gone = false;
+		for (const auto &p : o.getMembers())
+		{
+			const JSON::Value &v = p.Get();
+			switch (p.Key())
+			{
+			case AIS::KEY_ID: s.id = (int)v.getInt(); break;
+			case AIS::KEY_NAME: s.name = v.getString().substr(0, MAX_FEED_NAME); break;
+			case AIS::KEY_COUNTRY: s.country = v.getString().substr(0, MAX_FEED_COUNTRY); break;
+			case AIS::KEY_LAT: s.lat = (FLOAT32)v.getFloat(LAT_UNDEFINED); break;
+			case AIS::KEY_LON: s.lon = (FLOAT32)v.getFloat(LON_UNDEFINED); break;
+			case AIS::KEY_MMSI: s.mmsi = (uint32_t)v.getInt(); break;
+			case AIS::KEY_ONLINE: s.online = v.getBool(); break;
+			case AIS::KEY_LAST_SEEN: s.last = (std::time_t)v.getInt(); break;
+			case AIS::KEY_RATE: s.rate = (float)v.getFloat(); break;
+			case AIS::KEY_GONE: gone = v.getBool(); break;
+			default: break;
+			}
+		}
+		// what anyone on the feed can say stays bounded; the configuration's stations do not count
+		if (!gone && stations.size() >= MAX_FEED_STATIONS && !stations.count(s.id))
+			return;
+		put(s, gone, next_seq);
+		if (placed)
+			*placed = s;
+		if (placed_gone)
+			*placed_gone = gone;
+	}
+
+	// A station from the configuration, kept the same way as one the control feed tells
+	void define(const Station &s, uint64_t &next_seq) { put(s, false, next_seq); }
+	// the same, sequenced on the registry's own counter, for a registry that feeds no object feed
+	void define(const Station &s) { put(s, false, own_seq); }
+
+	void put(Station s, bool gone, uint64_t &next_seq)
+	{
+		if (s.id < 0)
+			return;
+		auto it = stations.find(s.id);
+		if (gone)
+		{
+			if (it == stations.end())
+				return;
+			unmap(it->second);
+			stations.erase(it);
+			order.erase(std::remove(order.begin(), order.end(), s.id), order.end());
+			tombstones.push_back(std::make_pair(s.id, ++next_seq));
+			if (tombstones.size() > MAX_TOMBSTONES)
+				tombstones.erase(tombstones.begin(), tombstones.begin() + MAX_TOMBSTONES / 4);
+			return;
+		}
+		if (it != stations.end())
+		{
+			Station &cur = it->second;
+			// what only says the station is alive rides along without a new sequence number
+			if (cur.lat == s.lat && cur.lon == s.lon && cur.alt == s.alt && cur.name == s.name && cur.country == s.country && cur.mmsi == s.mmsi && cur.gps == s.gps && cur.share_loc == s.share_loc && cur.online == s.online && cur.state == s.state)
+			{
+				cur.last = s.last;
+				cur.rate = s.rate;
+				cur.inputs = s.inputs;
+				return;
+			}
+			unmap(cur);
+		}
+		else
+			order.push_back(s.id);
+		s.seq = ++next_seq;
+		if (s.mmsi)
+			by_mmsi[s.mmsi] = s.id;
+		stations[s.id] = s;
+		tombstones.erase(std::remove_if(tombstones.begin(), tombstones.end(), [&](const std::pair<int, uint64_t> &t) { return t.first == s.id; }), tombstones.end());
+	}
+
+	// the rows that changed after `since`, in the object feed's row shape; kind 8 is a station
+	// `heard` says when a station last delivered a message, when the host counts that
+	// `shown` leaves out a station the reader does not see
+	// `located` says which stations' positions go out, each station's own share_loc without it
+	void writeRows(JSON::Writer &w, uint64_t since, const std::function<std::time_t(int)> &heard = nullptr,
+				   const std::function<bool(int)> &shown = nullptr, const std::function<bool(int)> &located = nullptr) const
+	{
+		char id[24];
+		for (const auto &kv : stations)
+		{
+			const Station &s = kv.second;
+			if (s.seq <= since || (shown && !shown(s.id)))
+				continue;
+			const bool at = located ? located(s.id) : s.share_loc;
+			snprintf(id, sizeof(id), "s%d", s.id);
+			w.beginObject().kv("id", id).kv("kind", 8).kv("seq", (long long)s.seq)
+				.kv("lat", at ? s.lat : LAT_UNDEFINED).kv("lon", at ? s.lon : LON_UNDEFINED).kv("label", s.name).kv("count", 0)
+				.kv("t", (long long)s.last).kv("first", (long long)s.last);
+			writeFields(w, at ? s.mmsi : 0, s.online, s.rate, s.country, heard ? heard(s.id) : 0, s.state);
+			w.endObject();
+		}
+	}
+
+	// the station part of a row, after the fields every object row has
+	// heard: the station's last message, 0 when the host cannot tell; a connected station
+	// that has gone quiet is drawn apart from one that is receiving
+	static void writeFields(JSON::Writer &w, uint32_t mmsi, bool online, float rate, const std::string &country, std::time_t heard = 0, int state = STATE_UNKNOWN)
+	{
+		w.kv("ttl", KEEP_S).kv("mmsi", mmsi).kv("online", online).kv("rate", rate).kv("country", country);
+		if (heard > 0)
+			w.kv("heard", (long long)heard);
+		if (stateName(state))
+			w.kv("state", stateName(state));
+	}
+
+	// a station's state; a change gives its row a new sequence number, so the next poll of the
+	// object feed carries it, and only then: a station that keeps receiving is not sent again
+	void setState(int id, int state, uint64_t &next_seq)
+	{
+		auto it = stations.find(id);
+		if (it == stations.end() || it->second.state == state)
+			return;
+		Station s = it->second;
+		s.state = state;
+		put(s, false, next_seq);
+	}
+	int stateOf(int id) const
+	{
+		auto it = stations.find(id);
+		return it == stations.end() ? STATE_UNKNOWN : it->second.state;
+	}
+
+	void writeRemoved(JSON::Writer &w, uint64_t since) const
+	{
+		char id[24];
+		for (const auto &ts : tombstones)
+			if (ts.second > since)
+			{
+				snprintf(id, sizeof(id), "s%d", ts.first);
+				w.val(id);
+			}
+	}
+
+	// by id
+	template <typename F>
+	void forEach(F f) const
+	{
+		for (const auto &kv : stations)
+			f(kv.second);
+	}
+	// in the order they were first told
+	std::vector<Station> ordered() const
+	{
+		std::vector<Station> out;
+		out.reserve(order.size());
+		for (int id : order)
+			out.push_back(stations.at(id));
+		return out;
+	}
+
+	const Station *find(int id) const
+	{
+		auto it = stations.find(id);
+		return it == stations.end() ? nullptr : &it->second;
+	}
+
+	// the station riding a vessel, -1 for none
+	int idFor(uint32_t mmsi) const
+	{
+		auto it = by_mmsi.find(mmsi);
+		return it == by_mmsi.end() ? -1 : it->second;
+	}
+
+	// the record behind a station's key; one riding a vessel answers with that vessel's
+	// position, so a card or a search lands where the map draws it, and says so
+	// `located` -1 takes the station's own share_loc
+	bool writeOne(JSON::Writer &w, int id, bool riding = false, FLOAT32 at_lat = LAT_UNDEFINED, FLOAT32 at_lon = LON_UNDEFINED, std::time_t heard = 0,
+				  int located = -1) const
+	{
+		auto it = stations.find(id);
+		if (it == stations.end())
+			return false;
+		const Station &s = it->second;
+		const bool at = located < 0 ? s.share_loc : located > 0;
+		riding = riding && at;
+		w.key("station").beginObject().kv("id", s.id).kv("name", s.name)
+			.kv("lat", riding ? at_lat : at ? s.lat : LAT_UNDEFINED).kv("lon", riding ? at_lon : at ? s.lon : LON_UNDEFINED)
+			.kv("mmsi", at ? s.mmsi : 0).kv("online", s.online).kv("last", (long long)s.last).kv("rate", s.rate).kv("country", s.country);
+		if (heard > 0)
+			w.kv("heard", (long long)heard);
+		if (stateName(s.state))
+			w.kv("state", stateName(s.state));
+		if (riding)
+			w.kv("riding", true);
+		w.endObject();
+		return true;
+	}
+
+private:
+	void unmap(const Station &cur)
+	{
+		auto m = by_mmsi.find(cur.mmsi);
+		if (m != by_mmsi.end() && m->second == cur.id)
+			by_mmsi.erase(m);
+	}
+
+	std::map<int, Station> stations;
+	std::vector<int> order;
+	std::map<uint32_t, int> by_mmsi;
+	std::vector<std::pair<int, uint64_t>> tombstones;
+	uint64_t own_seq = 0;
+};

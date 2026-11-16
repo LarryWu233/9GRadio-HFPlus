@@ -44,7 +44,7 @@ class AudioContentUiTest {
                     controller.select(16)
                     assertEquals(14_230_000L,vm.centerFreqHz.value)
                     assertEquals(DemodMode.USB,vm.demodMode.value)
-                    assertEquals(19,ControlsPagerAdapter.TAB_COUNT)
+                    assertEquals(20,ControlsPagerAdapter.TAB_COUNT)
                     val adapter=field<ControlsPagerAdapter>(a,"pagerAdapter")
                     for(i in 15..18) assertNotNull(adapter.getViewAt(i))
                     val panel=adapter.getViewAt(16)!!

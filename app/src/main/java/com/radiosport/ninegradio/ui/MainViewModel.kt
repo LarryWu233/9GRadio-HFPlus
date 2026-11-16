@@ -1004,7 +1004,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * @param hz  Desired IF bandwidth in Hz; clamped by DspEngine.
      */
     private fun validWidth(mode: DemodMode, hz: Int): Int =
-        if (mode in listOf(DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO)) {
+        if(mode==DemodMode.AIS) 75000 else if (mode in listOf(DemodMode.FM, DemodMode.WFM, DemodMode.WFM_STEREO)) {
             if(hz<50_000) 0 else hz.coerceAtMost(_capabilities.value.maxChannelBandwidth(_sampleRate.value).coerceAtLeast(50_000))
         } else hz.coerceAtLeast(0)
     fun setIfBandwidth(hz: Int) {
